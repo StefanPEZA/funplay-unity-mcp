@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
+using Funplay.Editor.State;
 using Funplay.Editor.Tools.Helpers;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -20,43 +21,177 @@ namespace Funplay.Editor.Tools.Builtins
     [ToolProvider("Scene")]
     internal static class SceneFunctions
     {
-        [Description("Save the current scene")]
+        [Description("Save one loaded scene: the active scene, or the loaded scene given by name or Assets/... path. " +
+                     "Never opens a dialog; an untitled scene must first be saved with an explicit path (create_new_scene). " +
+                     "Returns the saved scene path. Use save_all_scenes to save every dirty scene.")]
         [SceneEditingTool]
-        public static string SaveScene()
+        public static object SaveScene(
+            [ToolParam("Name or Assets/... path of a loaded scene; default is the active scene", Required = false)] string path = null)
         {
-            var scene = EditorSceneManager.GetActiveScene();
-            bool saved = EditorSceneManager.SaveScene(scene);
-            return saved ? $"Saved scene '{scene.name}'" : ToolResultFormatter.Error("SCENE_SAVE_FAILED", new { scene = scene.name });
+            var blocker = GetSceneMutationBlocker();
+            if (blocker != null)
+                return blocker;
+
+            Scene scene;
+            if (string.IsNullOrWhiteSpace(path))
+                scene = EditorSceneManager.GetActiveScene();
+            else if (!TryResolveLoadedScene(path, out scene, out var resolveError))
+                return resolveError;
+
+            if (string.IsNullOrEmpty(scene.path))
+                return Response.Error("UNTITLED_SCENE_REQUIRES_PATH", new
+                {
+                    scene = BuildSceneSummary(scene),
+                    hint = "save_scene never opens a Save As dialog. Create the scene with create_new_scene (which saves it to a path) or save it with execute_code and EditorSceneManager.SaveScene(scene, path)."
+                });
+
+            var wasDirty = scene.isDirty;
+            bool saved;
+            try
+            {
+                saved = EditorSceneManager.SaveScene(scene);
+            }
+            catch (Exception ex)
+            {
+                return Response.Error("SCENE_SAVE_FAILED", new { scene = scene.path, message = ex.Message });
+            }
+
+            if (!saved)
+                return Response.Error("SCENE_SAVE_FAILED", new { scene = scene.path });
+
+            return Response.Success($"Saved scene '{scene.name}'", new
+            {
+                saved = new[] { scene.path },
+                was_dirty = wasDirty,
+                remaining_dirty = CollectDirtySceneSummaries()
+            });
         }
 
-        [Description("Open an existing scene by path")]
+        [Description("Open an existing scene by path (single mode: replaces the loaded scenes). Never shows a dialog: " +
+                     "when loaded scenes have unsaved changes, dirty_scenes decides: 'fail' (default) returns " +
+                     "SCENES_HAVE_UNSAVED_CHANGES with the list, 'save' saves them first, 'discard' drops their changes.")]
         [SceneEditingTool]
-        public static string OpenScene(
-            [ToolParam("Path to the scene asset (e.g. 'Assets/Scenes/Main.unity')")] string path)
+        public static object OpenScene(
+            [ToolParam("Path to the scene asset (e.g. 'Assets/Scenes/Main.unity')")] string path,
+            [ToolParam("What to do with unsaved changes in loaded scenes: fail (default), save or discard", Required = false)] string dirty_scenes = "fail")
         {
-            if (!System.IO.File.Exists(path))
-                return ToolResultFormatter.Error("SCENE_FILE_NOT_FOUND", new { path });
+            var blocker = GetSceneMutationBlocker();
+            if (blocker != null)
+                return blocker;
 
-            EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo();
-            EditorSceneManager.OpenScene(path);
-            return $"Opened scene: {path}";
+            if (!TryResolveSceneAssetPath(path, out var assetPath, out var pathError))
+                return pathError;
+
+            var dirtyError = HandleDirtyScenes(dirty_scenes, out var discarded, out var savedScenes);
+            if (dirtyError != null)
+                return dirtyError;
+
+            try
+            {
+                var scene = EditorSceneManager.OpenScene(assetPath, OpenSceneMode.Single);
+                if (!scene.IsValid() || !scene.isLoaded)
+                    return Response.Error("SCENE_LOAD_FAILED", new { path = assetPath });
+
+                return Response.Success($"Opened scene: {assetPath}", new
+                {
+                    scene = BuildSceneSummary(scene),
+                    saved_before_open = savedScenes,
+                    discarded_changes = discarded
+                });
+            }
+            catch (Exception ex)
+            {
+                return Response.Error("SCENE_LOAD_FAILED", new { path = assetPath, message = ex.Message });
+            }
         }
 
-        [Description("Create a new empty scene")]
+        [Description("Create a new scene with the default camera and light, save it to save_path/name.unity and open it " +
+                     "(replaces the loaded scenes). Never shows a dialog: dirty_scenes decides about unsaved changes in loaded " +
+                     "scenes as for open_scene ('fail' by default).")]
         [SceneEditingTool]
-        public static string CreateNewScene(
+        public static object CreateNewScene(
             [ToolParam("Name for the new scene")] string name,
-            [ToolParam("Path to save (e.g. 'Assets/Scenes/')", Required = false)] string save_path = "Assets/Scenes/")
+            [ToolParam("Path to save (e.g. 'Assets/Scenes/')", Required = false)] string save_path = "Assets/Scenes/",
+            [ToolParam("What to do with unsaved changes in loaded scenes: fail (default), save or discard", Required = false)] string dirty_scenes = "fail")
         {
-            EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo();
+            var blocker = GetSceneMutationBlocker();
+            if (blocker != null)
+                return blocker;
+
+            if (string.IsNullOrWhiteSpace(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+                return Response.Error("INVALID_SCENE_NAME", new { name });
+
+            var folder = (save_path ?? "Assets/Scenes/").Replace('\\', '/').TrimEnd('/');
+            var fullPath = folder + "/" + name + ".unity";
+            if (!TryResolveSceneAssetPath(fullPath, out _, out _, requireExisting: false))
+                return Response.Error("INVALID_SCENE_PATH", new { path = fullPath, hint = "save_path must be a folder under Assets/." });
+            if (File.Exists(fullPath))
+                return Response.Error("SCENE_ALREADY_EXISTS", new { path = fullPath, hint = "Pick another name or open the existing scene with open_scene." });
+
+            var dirtyError = HandleDirtyScenes(dirty_scenes, out var discarded, out var savedScenes);
+            if (dirtyError != null)
+                return dirtyError;
+
             var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
+            Directory.CreateDirectory(folder);
+            if (!EditorSceneManager.SaveScene(scene, fullPath))
+                return Response.Error("SCENE_SAVE_FAILED", new { path = fullPath });
 
-            if (!System.IO.Directory.Exists(save_path))
-                System.IO.Directory.CreateDirectory(save_path);
+            return Response.Success($"Created and saved new scene: {fullPath}", new
+            {
+                scene = BuildSceneSummary(scene),
+                saved_before_open = savedScenes,
+                discarded_changes = discarded
+            });
+        }
 
-            var fullPath = $"{save_path}{name}.unity";
-            EditorSceneManager.SaveScene(scene, fullPath);
-            return $"Created and saved new scene: {fullPath}";
+        /// <summary>
+        /// Applies the dirty_scenes policy before a single-mode scene replacement, without any dialog.
+        /// Returns an error response, or null to proceed.
+        /// </summary>
+        internal static object HandleDirtyScenes(string policy, out List<object> discarded, out List<string> saved)
+        {
+            discarded = new List<object>();
+            saved = new List<string>();
+            var mode = string.IsNullOrWhiteSpace(policy) ? "fail" : policy.Trim().ToLowerInvariant();
+            if (mode != "fail" && mode != "save" && mode != "discard")
+                return Response.Error("INVALID_DIRTY_SCENES_POLICY", new { dirty_scenes = policy, allowed = new[] { "fail", "save", "discard" } });
+
+            var dirty = CollectDirtyScenes();
+            if (dirty.Count == 0)
+                return null;
+
+            switch (mode)
+            {
+                case "fail":
+                    return Response.Error("SCENES_HAVE_UNSAVED_CHANGES", new
+                    {
+                        scenes = BuildSceneSummaries(dirty),
+                        hint = "Save the intended scenes (save_scene/save_all_scenes), or pass dirty_scenes='save' or 'discard'."
+                    });
+                case "save":
+                    foreach (var scene in dirty)
+                    {
+                        if (string.IsNullOrEmpty(scene.path))
+                            return Response.Error("UNTITLED_SCENE_REQUIRES_PATH", new
+                            {
+                                scene = BuildSceneSummary(scene),
+                                hint = "An untitled scene can't be saved without a dialog. Pass dirty_scenes='discard' or save it to a path first."
+                            });
+                    }
+                    foreach (var scene in dirty)
+                    {
+                        if (!EditorSceneManager.SaveScene(scene))
+                            return Response.Error("SCENE_SAVE_FAILED", new { scene = scene.path, saved_so_far = saved });
+                        saved.Add(scene.path);
+                    }
+                    return null;
+                default:
+                    // OpenScene(Single)/NewScene(Single) replace every loaded scene without prompting,
+                    // so their unsaved changes are dropped; report what is lost.
+                    discarded.AddRange(BuildSceneSummaries(dirty));
+                    return null;
+            }
         }
 
         [Description("Get information about every loaded scene (the active scene plus any additively loaded ones), " +
@@ -313,10 +448,18 @@ namespace Funplay.Editor.Tools.Builtins
             });
         }
 
-        [Description("Enter play mode in the editor")]
+        [Description("Enter play mode in the editor. Edited USS/UXML/scripts are not picked up until Unity refreshes; pass refresh_assets=true (or use prepare_editor(target=play, refresh_assets=true)) to import and compile them first and get a task to follow with get_task.")]
         [SceneEditingTool]
-        public static object EnterPlayMode()
+        public static object EnterPlayMode(
+            [ToolParam("Import changed files (USS/UXML/scripts) and wait for compilation first, through a durable prepare_editor(target=play) task. Use when files were edited outside Unity.", Required = false)] bool refresh_assets = false,
+            [ToolParam("Idempotency key for the refresh_assets task (recommended with refresh_assets)", Required = false)] string request_key = null)
         {
+            // Auto-refresh only runs when the Editor regains focus, so files edited by an agent stay
+            // stale; the prepare_editor route refreshes, waits for compilation (surviving reloads) and
+            // then enters Play. Not the default: a refresh can compile, reload or block on errors.
+            if (refresh_assets)
+                return TaskStatusService.Attach("editor", EditorOperationService.Start("play", true, 120, request_key));
+
             var domainReloadExpected = IsDomainReloadExpectedForPlayModeTransition(
                 EditorSettings.enterPlayModeOptionsEnabled,
                 EditorSettings.enterPlayModeOptions);
@@ -458,7 +601,8 @@ namespace Funplay.Editor.Tools.Builtins
         private static bool TryResolveSceneAssetPath(
             string requestedPath,
             out string assetPath,
-            out object error)
+            out object error,
+            bool requireExisting = true)
         {
             assetPath = null;
             error = null;
@@ -480,6 +624,12 @@ namespace Funplay.Editor.Tools.Builtins
                     expected = "A project-relative scene asset path under Assets/ ending in .unity"
                 });
                 return false;
+            }
+
+            if (!requireExisting)
+            {
+                assetPath = normalized;
+                return true;
             }
 
             var sceneAsset = AssetDatabase.LoadAssetAtPath<SceneAsset>(normalized);

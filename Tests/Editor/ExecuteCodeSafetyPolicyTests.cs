@@ -17,6 +17,10 @@ namespace Funplay.Editor.Tests
         {
             AssertBlocked("File.Delete(\"Assets/test.txt\");", false, "File.Delete");
             AssertBlocked("while (true) { }", false, "while");
+            AssertBlocked("AssetDatabase.DeleteAsset(\"Assets/a.png\");", false, "DeleteAsset");
+            AssertBlocked("AssetDatabase.DeleteAssets(paths, failed);", false, "DeleteAsset");
+            AssertBlocked("AssetDatabase.MoveAssetToTrash(\"Assets/a.png\");", false, "DeleteAsset");
+            AssertBlocked("AssetDatabase.MoveAssetsToTrash(paths, failed);", false, "DeleteAsset");
         }
 
         [Test]

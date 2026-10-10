@@ -1,0 +1,189 @@
+add_component
+add_component_to_many
+add_layer
+add_tag
+analyze_scene_complexity ro idempotent
+assign_animator idempotent
+assign_material idempotent
+audit_ui ro idempotent
+bake_lightmaps destructive
+cancel_editor_operation idempotent
+cancel_task idempotent
+cancel_test_run idempotent
+cancel_ui_audit idempotent
+capture_editor_window
+capture_game_view
+capture_multiview
+capture_scene_view
+capture_simulator_view
+clear_execute_code_history destructive
+click_ui_toolkit_element
+close_prefab_stage idempotent
+configure_ui_defaults idempotent
+configure_ui_toolkit_panel idempotent
+copy_asset
+copy_component
+create_animation_clip
+create_animator_controller
+create_button
+create_canvas
+create_game_object
+create_image
+create_material
+create_new_scene destructive
+create_panel_settings
+create_prefab
+create_primitive
+create_project_ui
+create_script
+create_scriptable_object
+create_text
+create_ui_toolkit_panel
+delete_asset destructive idempotent
+delete_game_object destructive idempotent
+director_evaluate
+duplicate_game_object
+edit_script destructive
+end_ui_preview_session
+enter_play_mode idempotent
+execute_code destructive openworld
+execute_menu_item
+exists ro idempotent
+exit_play_mode idempotent
+extract_recording_frames destructive
+find_assets ro idempotent
+find_broken_references ro idempotent
+find_game_objects ro idempotent
+find_project_types ro idempotent
+find_references ro idempotent
+focus_on_object idempotent
+frame_debugger_disable idempotent
+frame_debugger_enable idempotent
+frame_debugger_get_events ro idempotent
+get_active_tool ro idempotent
+get_animator_state ro idempotent
+get_asset_import_settings ro idempotent
+get_build_settings ro idempotent
+get_camera_properties ro idempotent
+get_compilation_errors ro idempotent
+get_component_properties ro idempotent
+get_console_logs
+get_counters ro idempotent
+get_editor_operation ro idempotent
+get_editor_state ro idempotent
+get_execute_code_history ro idempotent
+get_frame_timing ro idempotent
+get_game_object_info ro idempotent
+get_hierarchy ro idempotent
+get_layers ro idempotent
+get_lighting_settings ro idempotent
+get_material_properties ro idempotent
+get_mesh_info ro idempotent
+get_object_memory ro idempotent
+get_object_screen_bounds ro idempotent
+get_performance_snapshot ro idempotent
+get_prefab_stage ro idempotent
+get_project_settings ro idempotent
+get_recording_frame ro idempotent
+get_reload_recovery_status ro idempotent
+get_scene_info ro idempotent
+get_scriptable_object ro idempotent
+get_selection ro idempotent
+get_tags ro idempotent
+get_task ro idempotent
+get_test_job ro idempotent
+get_time_scale ro idempotent
+get_tool_capabilities ro idempotent
+get_top_memory_objects ro idempotent
+get_ui_audit ro idempotent
+get_ui_defaults ro idempotent
+get_ui_preview_session ro idempotent
+get_ui_toolkit_info ro idempotent
+get_undo_state ro idempotent
+get_visual_coordinates ro idempotent
+get_visual_tree ro idempotent
+get_windows ro idempotent
+inspect_ui_sprites ro idempotent
+install_package destructive openworld
+instantiate_prefab
+list_components ro idempotent
+list_directory ro idempotent
+list_dirty_scenes ro idempotent
+list_editor_operations ro idempotent
+list_packages ro idempotent
+list_scenes ro idempotent
+load_scene_additive
+log_message
+mark_recording
+memory_compare_snapshots ro idempotent
+memory_list_full_snapshots ro idempotent
+memory_list_snapshots ro idempotent
+memory_open_snapshot_in_profiler
+memory_query_references ro idempotent
+memory_query_top_objects ro idempotent
+memory_take_full_snapshot
+memory_take_snapshot
+open_prefab_stage idempotent
+open_scene destructive idempotent
+particle_control
+paste_component_values
+patch_script destructive
+physics2d_overlap_point ro idempotent
+physics_overlap ro idempotent
+physics_raycast ro idempotent
+pick_ui_toolkit_element ro idempotent
+ping_asset ro idempotent
+play_animator_state
+prepare_editor idempotent
+profiler_start
+profiler_status ro idempotent
+profiler_stop
+raycast_at_point ro idempotent
+read_file ro idempotent
+record_game_view
+redo destructive
+remove_package destructive openworld
+remove_tag destructive idempotent
+rename_asset destructive
+rename_game_object
+replay_execute_code destructive openworld
+request_recompile
+run_tests
+save_all_scenes destructive idempotent
+save_prefab_stage destructive idempotent
+save_scene destructive idempotent
+scroll_ui_toolkit
+search_files ro idempotent
+select_object idempotent
+set_active idempotent
+set_active_tool idempotent
+set_animator_parameter idempotent
+set_asset_import_settings destructive idempotent
+set_camera_culling_mask idempotent
+set_camera_projection idempotent
+set_camera_settings idempotent
+set_component_properties idempotent
+set_component_property idempotent
+set_lighting_settings idempotent
+set_material_property idempotent
+set_parent idempotent
+set_prefab_properties idempotent
+set_prefab_property idempotent
+set_scriptable_object_properties idempotent
+set_selection idempotent
+set_tag_and_layer idempotent
+set_time_scale idempotent
+set_transform idempotent
+show_dialog
+simulate_key_combo
+simulate_key_press
+simulate_mouse_click
+simulate_mouse_drag
+simulate_ui_scroll
+start_ui_preview_session
+undo destructive
+unload_scene destructive
+unpack_prefab destructive
+validate_menu_item ro idempotent
+wait_for_compilation
+write_file destructive idempotent

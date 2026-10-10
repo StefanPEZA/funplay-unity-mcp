@@ -16,7 +16,6 @@ namespace Funplay.Editor.Tools.Builtins
     internal static class VisualFeedbackFunctions
     {
         [Description("Select a GameObject in the scene hierarchy and inspector")]
-        [ReadOnlyTool]
         public static string SelectObject(
             [ToolParam("GameObject name, hierarchy path, or instance ID. Finds inactive objects too.")] string name)
         {
@@ -30,7 +29,6 @@ namespace Funplay.Editor.Tools.Builtins
         }
 
         [Description("Focus the Scene View camera on a specific GameObject")]
-        [ReadOnlyTool]
         public static string FocusOnObject(
             [ToolParam("GameObject name, hierarchy path, or instance ID. Finds inactive objects too.")] string name)
         {
@@ -60,7 +58,6 @@ namespace Funplay.Editor.Tools.Builtins
         }
 
         [Description("Log a message to the Unity console")]
-        [ReadOnlyTool]
         public static string LogMessage(
             [ToolParam("Message to log")] string message,
             [ToolParam("Log type: info, warning, error", Required = false)] string log_type = "info")
@@ -75,7 +72,6 @@ namespace Funplay.Editor.Tools.Builtins
         }
 
         [Description("Display a dialog box to the user")]
-        [ReadOnlyTool]
         public static string ShowDialog(
             [ToolParam("Dialog title")] string title,
             [ToolParam("Dialog message")] string message)
@@ -91,7 +87,6 @@ namespace Funplay.Editor.Tools.Builtins
                      "case-insensitive text filtering, collapsing repeated identical messages into one " +
                      "'message (xN)' line so spammy warnings don't drown out unique entries, and optionally " +
                      "including each entry's stack trace (truncated separately from the message).")]
-        [ReadOnlyTool]
         public static string GetConsoleLogs(
             [ToolParam("Filter by log type: 'all', 'log', 'warning', 'error'", Required = false)] string log_type = "all",
             [ToolParam("Maximum number of entries to return", Required = false)] int count = 30,

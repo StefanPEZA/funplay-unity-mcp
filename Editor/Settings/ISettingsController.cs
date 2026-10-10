@@ -23,8 +23,23 @@ namespace Funplay.Editor.Settings
         string MCPToolExportProfile { get; set; }
         bool MCPCoreToolsConfigured { get; }
         string[] MCPCoreTools { get; set; }
+        /// <summary>True when the Full profile excludes at least one tool.</summary>
         bool MCPFullToolsConfigured { get; }
-        string[] MCPFullTools { get; set; }
+
+        /// <summary>Tools switched off in the Full profile. Tools not listed, including ones added later, are exposed.</summary>
+        string[] MCPFullToolsExcluded { get; set; }
+        /// <summary>UI framework pack for Core: "auto" (use <see cref="MCPDetectedUiPack"/>), "ugui", "uitk" or "both".</summary>
+        string MCPUiPack { get; set; }
+
+        /// <summary>Result of the one-time project scan ("ugui", "uitk", "both"); empty until detected.</summary>
+        string MCPDetectedUiPack { get; set; }
+
+        /// <summary>Optional packs added to the default Core list (animation, performance, lighting, packages).</summary>
+        string[] MCPOptionalCorePacks { get; set; }
+
+        /// <summary>Turn on Run In Background for the duration of Play Mode so an unfocused Editor keeps ticking.</summary>
+        bool KeepPlayModeRunningInBackground { get; set; }
+
         string MCPSelectedConfigTarget { get; set; }
         bool ExecuteCodeSafetyChecksEnabled { get; set; }
         bool ExecuteCodeStrictFilesystemSafetyEnabled { get; set; }

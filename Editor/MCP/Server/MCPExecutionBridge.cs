@@ -72,13 +72,7 @@ namespace Funplay.Editor.MCP.Server
                         return ToolResultFormatter.Error("TOOL_DISABLED", new { tool = toolName });
 
                     var profile = MCPToolExportPolicy.Parse(_settings.MCPToolExportProfile);
-                    if (!MCPToolExportPolicy.IsToolAllowed(
-                            toolName,
-                            profile,
-                            _settings.MCPCoreToolsConfigured,
-                            _settings.MCPCoreTools,
-                            _settings.MCPFullToolsConfigured,
-                            _settings.MCPFullTools))
+                    if (!MCPToolExportPolicy.IsToolAllowed(toolName, _settings))
                     {
                         var error = ToolResultFormatter.Error("TOOL_NOT_EXPOSED", new
                         {

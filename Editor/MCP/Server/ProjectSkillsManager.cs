@@ -39,7 +39,7 @@ namespace Funplay.Editor.MCP.Server
         {
             new SkillDefinition(
                 "unity-mcp-workflow",
-                "1.0.6",
+                "1.0.7",
                 "Unity MCP Workflow",
                 "Efficient workflow for using Unity MCP to edit, import, compile, inspect, and test Unity projects, including screenshot and Game View recording verification.",
                 true,
@@ -69,7 +69,7 @@ namespace Funplay.Editor.MCP.Server
                     "After source/resource edits use `prepare_editor` with the intended edit/play target and a unique request_key; retain data.task.task_id and use `get_task` with bounded waiting and the last revision. Require operation.status=ready, current_editor.ready=true and the expected current mode before validation.",
                     "Check compiler errors, console exceptions and project initialization separately from Editor preparation.",
                     "After a dropped connection, retry the operation status read using the same ID/key. Historical reload recovery and HTTP reachability alone do not establish current readiness.",
-                    "`request_recompile` is rejected while Unity is in Play Mode — Unity does not process script compilation or domain reloads while playing. Call `exit_play_mode` first, then retry `request_recompile`.",
+                    "`request_recompile` is rejected while Unity is in Play Mode — Unity does not process script compilation or domain reloads while playing. Use `prepare_editor(target=edit)` instead: it exits Play Mode, refreshes and recompiles.",
                     "If an arbitrary edit is interrupted, its result remains unknown until exact object/asset readback establishes what executed; preparation IDs do not make arbitrary scripts replay-safe.",
                     "Read back exact values from Unity after changes, not only success messages.",
                     "Test actual behavior in Unity through hierarchy, console logs, Play Mode, UI interactions, screenshots, or targeted `execute_code` checks.",
@@ -1300,7 +1300,7 @@ $@"{ManagedMarker}
 - In `execute_code`, null-guard every lookup and return explicit missing path/object/component messages; do not run self-healing fallback loops.
 - For Unity object references, do not use `??=` for lazy rebinding; use explicit `if (field == null) field = Resolve();`.
 - After edits use `prepare_editor` with the intended mode and a unique request_key; use the returned task_id with `get_task`, wait_seconds and after_revision until operation.status=ready and current_editor confirms readiness and mode, then check console errors. Honor poll_after_ms on unchanged results.
-- `request_recompile` is rejected while Unity is in Play Mode. Call `exit_play_mode` first, then retry.
+- `request_recompile` is rejected while Unity is in Play Mode. Use `prepare_editor(target=edit)` instead: it exits Play Mode, refreshes and recompiles.
 - On disconnect, retry the same operation status read by ID/key. Historical reload recovery or HTTP reachability alone does not establish current readiness.
 - An interrupted arbitrary mutation has unknown outcome until exact object/asset readback confirms it; never automatically replay it.
 - Avoid changing `Library/`, `Temp/`, `Logs/`, or `obj/`.
@@ -1348,7 +1348,7 @@ $@"{ManagedMarker}
 - In `execute_code`, null-guard every lookup and return explicit missing path/object/component messages; do not run self-healing fallback loops.
 - For Unity object references, do not use `??=` for lazy rebinding; use explicit `if (field == null) field = Resolve();`.
 - After edits use `prepare_editor` with the intended mode and a unique request_key; use the returned task_id with `get_task`, wait_seconds and after_revision until operation.status=ready and current_editor confirms readiness and mode, then check console errors. Honor poll_after_ms on unchanged results.
-- `request_recompile` is rejected while Unity is in Play Mode. Call `exit_play_mode` first, then retry.
+- `request_recompile` is rejected while Unity is in Play Mode. Use `prepare_editor(target=edit)` instead: it exits Play Mode, refreshes and recompiles.
 - On disconnect, retry the same operation status read by ID/key. Historical reload recovery or HTTP reachability alone does not establish current readiness.
 - An interrupted arbitrary mutation has unknown outcome until exact object/asset readback confirms it; never automatically replay it.
 - If a Claude Code session reports another `funplay-*` MCP server entry as unreachable, check whether its name matches this project's own before treating Funplay as broken. Funplay registers one independent entry per Unity project, but Claude Code's connection check surfaces every registered entry on the machine regardless of which project the session is in — a different project's entry being disconnected is expected when that project's Editor isn't currently open, and it should not be deleted, since it may still be in active use by that project.
@@ -1416,6 +1416,7 @@ $@"{ManagedMarker}
         private static string RestoreLegacyWorkflowWording(string block, bool claude)
         {
             return block
+                .Replace("Use `prepare_editor(target=edit)` instead: it exits Play Mode, refreshes and recompiles.", "Call `exit_play_mode` first, then retry.")
                 .Replace("Prefer structured MCP tools; use `execute_code` for project-specific gaps.", "Use `execute_code` as the primary Unity automation tool.")
                 .Replace("Prefer structured MCP operations; use `execute_code` only for project-specific orchestration not covered by them.", "Use `execute_code` for non-trivial Unity orchestration.")
                 .Replace("Prefer structured query/audit/edit tools in Core; low-frequency configuration and preview management remain in Full. Use `get_tool_capabilities` to check exposure; respect customized allowlists.", "With default `core` exposure, use the focused workflow tools. With default `full` exposure, prefer specific MCP tools for simple editor operations.")

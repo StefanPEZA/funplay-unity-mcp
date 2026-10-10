@@ -78,11 +78,30 @@ namespace Funplay.Editor.MCP.Server
             }
         }
 
+        /// <summary>Protocol versions this server speaks, newest first. Tool annotations need 2025-03-26.</summary>
+        internal static readonly string[] SupportedProtocolVersions = { "2025-06-18", "2025-03-26", "2024-11-05" };
+
+        /// <summary>
+        /// Version negotiation: echo the client's requested version when supported; otherwise answer
+        /// with the newest supported one (spec behaviour), so newer clients still get a version they
+        /// can decide on.
+        /// </summary>
+        internal static string NegotiateProtocolVersion(MCPRequest request)
+        {
+            if (request?.Params != null &&
+                request.Params.TryGetValue("protocolVersion", out var requested) &&
+                requested is string version &&
+                Array.IndexOf(SupportedProtocolVersions, version) >= 0)
+                return version;
+
+            return SupportedProtocolVersions[0];
+        }
+
         private MCPResponse HandleInitialize(MCPRequest request)
         {
             var result = new Dictionary<string, object>
             {
-                ["protocolVersion"] = "2024-11-05",
+                ["protocolVersion"] = NegotiateProtocolVersion(request),
                 ["serverInfo"] = new Dictionary<string, object>
                 {
                     ["name"] = _serverName,

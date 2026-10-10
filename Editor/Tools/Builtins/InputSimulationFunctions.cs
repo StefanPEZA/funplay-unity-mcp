@@ -15,12 +15,12 @@ namespace Funplay.Editor.Tools.Builtins
     [ToolProvider("InputSimulation")]
     internal static class InputSimulationFunctions
     {
-        [Description("Simulate keyboard input in Play Mode. Queues key events that the Unity Input System will process. Supports key names like W, A, S, D, Space, LeftShift, E, Q, and number keys.")]
-        [ReadOnlyTool]
+        [Description("Simulate keyboard input in Play Mode. Queues key events that the Unity Input System will process. Supports key names like W, A, S, D, Space, LeftShift, E, Q, and number keys. For a chord (e.g. Ctrl+Z) pass keys instead of key: all keys go down together and are released together.")]
         public static string SimulateKeyPress(
-            [ToolParam("Key name, for example W, Space, LeftShift, E, or 1")] string key,
+            [ToolParam("Key name, for example W, Space, LeftShift, E, or 1", Required = false)] string key = null,
             [ToolParam("Duration in seconds to hold the key. Use 0 for a tap.", Required = false)] float duration = 0f,
-            [ToolParam("Action type: press, release, or tap", Required = false)] string action = "tap")
+            [ToolParam("Action type: press, release, or tap", Required = false)] string action = "tap",
+            [ToolParam("Chord: JSON array or comma-separated key names held together, e.g. [\"LeftCtrl\",\"Z\"]. Replaces key.", Required = false)] string keys = null)
         {
             if (!EditorApplication.isPlaying)
                 return ToolResultFormatter.ErrorMessage("PLAY_MODE_REQUIRED", "SimulateKeyPress only works in Play Mode.");
@@ -30,6 +30,11 @@ namespace Funplay.Editor.Tools.Builtins
                 var keyboard = EnsureKeyboard();
                 if (keyboard == null)
                     return ToolResultFormatter.ErrorMessage("INPUT_DEVICE_NOT_FOUND", "No keyboard device found in Input System");
+
+                if (!string.IsNullOrWhiteSpace(keys))
+                    return PressChord(keyboard, ParseKeyList(keys), duration, action);
+                if (string.IsNullOrWhiteSpace(key))
+                    return ToolResultFormatter.ErrorMessage("KEY_REQUIRED", "Pass key, or keys for a chord.");
 
                 var keyControl = FindKey(keyboard, key);
                 if (keyControl == null)
@@ -54,7 +59,6 @@ namespace Funplay.Editor.Tools.Builtins
         }
 
         [Description("Simulate multiple keys held simultaneously in Play Mode, for example W plus LeftShift.")]
-        [ReadOnlyTool]
         public static string SimulateKeyCombo(
             [ToolParam("Comma-separated key names, for example 'W,LeftShift' or 'A,Space'")] string keys,
             [ToolParam("Duration in seconds to hold the combo", Required = false)] float duration = 0.5f)
@@ -170,6 +174,75 @@ namespace Funplay.Editor.Tools.Builtins
             {
                 return ToolResultFormatter.Exception(ex);
             }
+        }
+
+        /// <summary>Key names from a JSON array (["LeftCtrl","Z"]) or a comma/plus-separated list ("LeftCtrl,Z").</summary>
+        internal static string[] ParseKeyList(string keys)
+        {
+            var text = (keys ?? string.Empty).Trim();
+            if (text.StartsWith("[", StringComparison.Ordinal))
+            {
+                var parsed = Newtonsoft.Json.JsonConvert.DeserializeObject<string[]>(text) ?? Array.Empty<string>();
+                return Array.FindAll(Array.ConvertAll(parsed, k => (k ?? string.Empty).Trim()), k => k.Length > 0);
+            }
+            return Array.FindAll(Array.ConvertAll(text.Split(',', '+'), k => k.Trim()), k => k.Length > 0);
+        }
+
+        private static string PressChord(Keyboard keyboard, string[] keyNames, float duration, string action)
+        {
+            if (keyNames.Length == 0)
+                return ToolResultFormatter.ErrorMessage("KEY_REQUIRED", "keys is empty.");
+
+            var controls = new KeyControl[keyNames.Length];
+            for (var i = 0; i < keyNames.Length; i++)
+            {
+                controls[i] = FindKey(keyboard, keyNames[i]);
+                if (controls[i] == null)
+                    return ToolResultFormatter.ErrorMessage("KEY_NOT_RECOGNIZED", $"Key '{keyNames[i]}' not recognized. Examples: LeftCtrl, LeftShift, Z, Space, Escape, 1");
+            }
+
+            var label = string.Join("+", keyNames);
+            switch ((action ?? "tap").Trim().ToLowerInvariant())
+            {
+                case "press":
+                    QueueKeysState(keyboard, controls, true);
+                    return $"Keys '{label}' pressed (held down)";
+                case "release":
+                    QueueKeysState(keyboard, controls, false);
+                    return $"Keys '{label}' released";
+            }
+
+            QueueKeysState(keyboard, controls, true);
+            var hold = duration <= 0f ? 0f : Mathf.Clamp(duration, 0.01f, 5f);
+            int frameToRelease = Time.frameCount + 2;
+            double releaseTime = EditorApplication.timeSinceStartup + hold;
+            EditorApplication.CallbackFunction release = null;
+            release = () =>
+            {
+                if (Time.frameCount < frameToRelease && EditorApplication.isPlaying && hold <= 0f)
+                    return;
+                if (EditorApplication.timeSinceStartup < releaseTime && EditorApplication.isPlaying)
+                    return;
+
+                EditorApplication.update -= release;
+                var kb = Keyboard.current;
+                if (kb != null)
+                    QueueKeysState(kb, Array.ConvertAll(keyNames, n => FindKey(kb, n)), false);
+            };
+            EditorApplication.update += release;
+            return hold <= 0f ? $"Keys '{label}' tapped together" : $"Keys '{label}' held for {hold:F2}s";
+        }
+
+        private static void QueueKeysState(Keyboard keyboard, KeyControl[] controls, bool pressed)
+        {
+            if (keyboard == null || controls == null)
+                return;
+
+            QueueStateEvent(keyboard, eventPtr =>
+            {
+                foreach (var control in controls)
+                    control?.WriteValueIntoEvent(pressed ? 1f : 0f, eventPtr);
+            });
         }
 
         private static string TapKey(Keyboard keyboard, KeyControl keyControl, string key, float duration)

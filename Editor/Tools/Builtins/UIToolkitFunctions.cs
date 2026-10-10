@@ -265,7 +265,7 @@ namespace Funplay.Editor.Tools.Builtins
         [ReadOnlyTool]
         public static object GetVisualTree(
             [ToolParam("Panel host GameObject name/path/ID; omitted reads every host", Required = false)] string target = null,
-            [ToolParam("Compound selector Type#name.class; omitted returns the tree", Required = false)] string selector = null,
+            [ToolParam("Selector: Type#name.class compounds, descendant (space) or child (>) combinators, :nth-of-type(n)/:nth-child(n); omitted returns the tree", Required = false)] string selector = null,
             [ToolParam("Exact element text, case-insensitive", Required = false)] string text = null,
             [ToolParam("Maximum depth below each root, 0..64", Required = false)] int max_depth = 24,
             [ToolParam("Maximum elements returned across hosts, 1..2000", Required = false)] int max_elements = 300,
@@ -368,9 +368,9 @@ namespace Funplay.Editor.Tools.Builtins
         [Description("Click a UI Toolkit element in Play Mode by selector (Type#name.class), exact text and/or element_path from get_visual_tree, optionally scoped to one host. A text match on a Button's inner Label clicks the Button. Requires a unique, displayed, enabled match; clicks the visible part of an element partly clipped by a ScrollView/overflow, refuses ELEMENT_CLIPPED when fully clipped (scroll_into_view scrolls it in first) and ELEMENT_COVERED when another element receives the pointer, unless allow_covered. Dispatches pointer move/down/up through the panel like real mouse input (Clickable, :hover/:active, ClickEvent). Reports clicked, handler_invoked and click_event_received. Works without an EventSystem.")]
         public static object ClickUiToolkitElement(
             [ToolParam("Panel host GameObject name/path/ID", Required = false)] string target = null,
-            [ToolParam("Compound selector Type#name.class", Required = false)] string selector = null,
+            [ToolParam("Selector: Type#name.class compounds joined by space (descendant) or > (child), optional :nth-of-type(n)/:nth-child(n), e.g. '#settings .row > Button'", Required = false)] string selector = null,
             [ToolParam("Exact element text, case-insensitive", Required = false)] string text = null,
-            [ToolParam("Element path from get_visual_tree (requires a single host; shifts when the tree changes)", Required = false)] string element_path = null,
+            [ToolParam("Element path relative to one host: child indices from get_visual_tree (shift when the tree changes) or '/'-separated selectors over direct children, e.g. '#menu/Button:nth-of-type(2)'", Required = false)] string element_path = null,
             [ToolParam("left, right or middle", Required = false)] string button = "left",
             [ToolParam("Click even when another element covers the center", Required = false)] bool allow_covered = false,
             [ToolParam("Scroll enclosing ScrollViews so a clipped element is in view before clicking", Required = false)] bool scroll_into_view = false)
@@ -383,9 +383,9 @@ namespace Funplay.Editor.Tools.Builtins
         [Description("Scroll a UI Toolkit ScrollView (Edit or Play Mode; scroll state is not saved). Without deltas, scrolls every ScrollView around the matched element until it is in view (ScrollView.ScrollTo): the fix for ELEMENT_CLIPPED from click_ui_toolkit_element. With delta_x/delta_y (panel pixels; positive scrolls right/down), offsets the matched ScrollView, or the nearest one around the matched element; the ScrollView clamps the offset. Match by selector (Type#name.class), exact text and/or element_path as for clicks. Reports offsets and the element's visible_fraction afterwards.")]
         public static object ScrollUiToolkit(
             [ToolParam("Panel host GameObject name/path/ID", Required = false)] string target = null,
-            [ToolParam("Compound selector Type#name.class", Required = false)] string selector = null,
+            [ToolParam("Selector: Type#name.class compounds joined by space (descendant) or > (child), optional :nth-of-type(n)/:nth-child(n), e.g. '#settings .row > Button'", Required = false)] string selector = null,
             [ToolParam("Exact element text, case-insensitive", Required = false)] string text = null,
-            [ToolParam("Element path from get_visual_tree (requires a single host; shifts when the tree changes)", Required = false)] string element_path = null,
+            [ToolParam("Element path relative to one host: child indices from get_visual_tree (shift when the tree changes) or '/'-separated selectors over direct children, e.g. '#menu/Button:nth-of-type(2)'", Required = false)] string element_path = null,
             [ToolParam("Horizontal scroll in panel pixels; 0 with delta_y 0 scrolls the element into view", Required = false)] float delta_x = 0,
             [ToolParam("Vertical scroll in panel pixels, positive scrolls down", Required = false)] float delta_y = 0)
         {
@@ -551,7 +551,10 @@ namespace Funplay.Editor.Tools.Builtins
             {
                 if (hosts.Count != 1) throw new UIToolkitException("TARGET_REQUIRED", "element_path is relative to one host; pass target.");
                 var root = UIToolkitPanels.GetRoot(hosts[0]) ?? throw new UIToolkitException("ROOT_NOT_READY", "The panel host has not built its visual tree.");
-                var element = UIToolkitPanels.ResolvePath(root, elementPath) ?? throw new UIToolkitException("ELEMENT_NOT_FOUND", "element_path does not resolve in the current tree.");
+                var element = UIToolkitPanels.ResolvePath(root, elementPath) ?? throw new UIToolkitException("ELEMENT_NOT_FOUND",
+                    UIToolkitPanels.IsIndexPath(elementPath)
+                        ? "element_path no longer resolves (paths are child indices and shift when a panel brings an element to the front); re-read get_visual_tree or use a selector."
+                        : "element_path does not resolve in the current tree (each '/' segment is a child index or a selector over direct children).");
                 var resolved = filter.IsEmpty ? element : filter.ClickTarget(element);
                 if (resolved == null) throw new UIToolkitException("ELEMENT_NOT_FOUND", "The element at element_path does not match selector/text.");
                 matches.Add((hosts[0], ReferenceEquals(resolved, element) ? elementPath : UIToolkitPanels.PathOf(root, resolved) ?? elementPath, resolved));

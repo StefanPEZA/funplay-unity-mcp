@@ -168,7 +168,6 @@ namespace Funplay.Editor.Tools.Builtins
 
         [Description("Capture a fresh screenshot of the Game View (what the main camera sees). Requests a Game View repaint and waits for Editor frames before readback. " +
                      "Returns a base64-encoded PNG image, or a saved file path when save_to_file=true.")]
-        [ReadOnlyTool]
         public static async Task<string> CaptureGameView(
             [ToolParam("Width of the screenshot in pixels", Required = false)] int width = 0,
             [ToolParam("Height of the screenshot in pixels", Required = false)] int height = 0,
@@ -217,7 +216,6 @@ namespace Funplay.Editor.Tools.Builtins
 
         [Description("Capture the Unity Device Simulator screen. Optionally selects a Simulator device and draws a Safe Area outline over the captured image. " +
                      "If the Simulator view has to be opened or the device changes, retry once after Unity renders the next editor frame.")]
-        [ReadOnlyTool]
         public static async Task<string> CaptureSimulatorView(
             [ToolParam("Width of the screenshot in pixels. Default uses the simulator screen texture size. If only width is provided, height preserves source aspect.", Required = false)] int width = 0,
             [ToolParam("Height of the screenshot in pixels. Default uses the simulator screen texture size. If only height is provided, width preserves source aspect.", Required = false)] int height = 0,
@@ -283,7 +281,6 @@ namespace Funplay.Editor.Tools.Builtins
         [Description("Capture a screenshot of the Scene View (the editor's scene camera perspective). By default, active Screen Space Overlay canvases " +
                      "from the current Stage are composited into the image; set include_ui=false for the previous camera-only behavior. " +
                      "Returns a base64-encoded PNG image, or a saved file path when save_to_file=true.")]
-        [ReadOnlyTool]
         public static string CaptureSceneView(
             [ToolParam("Width of the screenshot in pixels", Required = false)] int width = 0,
             [ToolParam("Height of the screenshot in pixels", Required = false)] int height = 0,
@@ -329,7 +326,6 @@ namespace Funplay.Editor.Tools.Builtins
                      "Target defaults to the active scene's bounds center; pass target_name to focus on a specific GameObject. " +
                      "Each capture is rendered with a temporary camera (current scene cameras are not modified). " +
                      "Returns base64 PNG images in data.captures[] together with the angle metadata of each.")]
-        [ReadOnlyTool]
         public static object CaptureMultiview(
             [ToolParam("GameObject name, hierarchy path, or instance ID to focus on (finds inactive objects too). Empty/null uses the active scene's bounds center.", Required = false)] string target_name = null,
             [ToolParam("Capture mode: surround (6 axis views, default) or orbit (azimuth × elevations grid).", Required = false)] string mode = "surround",
@@ -471,7 +467,6 @@ namespace Funplay.Editor.Tools.Builtins
                      "identified by its title or type name. Captures directly from the window's render surface via the editor's " +
                      "internal GUIView, so the window does not need to be unoccluded on screen (it does need to be open). " +
                      "Returns a base64-encoded PNG image, or a saved file path when save_to_file=true.")]
-        [ReadOnlyTool]
         public static string CaptureEditorWindow(
             [ToolParam("Window title (e.g. 'Inspector', 'MCP Server') or window type name (e.g. 'ConsoleWindow'). " +
                        "Case-insensitive. Exact title match wins, then title contains, then type name.")] string window,

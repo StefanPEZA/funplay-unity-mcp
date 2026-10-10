@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using Funplay.Editor.MCP.Server;
 using Funplay.Editor.Services;
 using UnityEngine;
 
@@ -14,7 +15,7 @@ namespace Funplay.Editor.Settings
         private const string SettingsDirectoryName = "UserSettings";
         private const string SettingsFileName = "FunplayMcpSettings.json";
         private const int DefaultPort = 8765;
-        private const int CurrentSettingsVersion = 1;
+        private const int CurrentSettingsVersion = 2;
         // Target names ("Claude Code") never contain '|'.
         private const string LastClientConfigKeySeparator = "|";
         private const string DefaultToolExportProfile = "core";
@@ -152,24 +153,72 @@ namespace Funplay.Editor.Settings
             get
             {
                 lock (_lock)
-                    return _settings.fullToolsCustom;
+                    return _settings.fullToolsExcluded != null && _settings.fullToolsExcluded.Count > 0;
             }
         }
 
-        public string[] MCPFullTools
+        public string[] MCPFullToolsExcluded
         {
             get
             {
                 lock (_lock)
-                    return _settings.fullTools?.ToArray() ?? Array.Empty<string>();
+                    return _settings.fullToolsExcluded?.ToArray() ?? Array.Empty<string>();
             }
             set
             {
-                UpdateSettings(data =>
-                {
-                    data.fullToolsCustom = value != null;
-                    data.fullTools = NormalizeToolNames(value);
-                });
+                UpdateSettings(data => data.fullToolsExcluded = NormalizeToolNames(value) ?? new List<string>());
+            }
+        }
+
+        public string MCPUiPack
+        {
+            get
+            {
+                lock (_lock)
+                    return _settings.uiPack;
+            }
+            set
+            {
+                UpdateSettings(data => data.uiPack = value);
+            }
+        }
+
+        public string MCPDetectedUiPack
+        {
+            get
+            {
+                lock (_lock)
+                    return _settings.detectedUiPack;
+            }
+            set
+            {
+                UpdateSettings(data => data.detectedUiPack = value);
+            }
+        }
+
+        public string[] MCPOptionalCorePacks
+        {
+            get
+            {
+                lock (_lock)
+                    return _settings.optionalCorePacks?.ToArray() ?? Array.Empty<string>();
+            }
+            set
+            {
+                UpdateSettings(data => data.optionalCorePacks = NormalizeToolNames(value) ?? new List<string>());
+            }
+        }
+
+        public bool KeepPlayModeRunningInBackground
+        {
+            get
+            {
+                lock (_lock)
+                    return _settings.keepPlayModeRunningInBackground;
+            }
+            set
+            {
+                UpdateSettings(data => data.keepPlayModeRunningInBackground = value);
             }
         }
 
@@ -461,12 +510,18 @@ namespace Funplay.Editor.Settings
 
             // Loading persists the normalized data, so each migration above runs once and cannot
             // later re-derive a value the user has since changed.
+            if (settings.settingsVersion < 2)
+                MigrateToolExposureLists(settings);
+
             settings.settingsVersion = CurrentSettingsVersion;
 
             settings.mcpBrokerMonoPath = settings.mcpBrokerMonoPath ?? string.Empty;
             settings.toolExportProfile = NormalizeToolExportProfile(settings.toolExportProfile);
             settings.coreTools = settings.coreToolsCustom ? NormalizeToolNames(settings.coreTools) : null;
-            settings.fullTools = settings.fullToolsCustom ? NormalizeToolNames(settings.fullTools) : null;
+            settings.fullToolsExcluded = NormalizeToolNames(settings.fullToolsExcluded) ?? new List<string>();
+            settings.optionalCorePacks = NormalizeToolNames(settings.optionalCorePacks) ?? new List<string>();
+            settings.uiPack = NormalizeUiPackChoice(settings.uiPack);
+            settings.detectedUiPack = NormalizeDetectedUiPack(settings.detectedUiPack);
             settings.selectedConfigTarget = NormalizeSelectedConfigTarget(settings.selectedConfigTarget);
             if (!settings.executeCodeSafetyChecksConfigured)
             {
@@ -493,6 +548,37 @@ namespace Funplay.Editor.Settings
                 settings.mcpRecentActivityExpandedByDefault = DefaultMCPRecentActivityExpandedByDefault;
                 settings.mcpRecentActivityExpansionConfigured = true;
             }
+        }
+
+        /// <summary>
+        /// Before 0.8.5 Full was stored as an allow list, which froze the tool set at the time of saving.
+        /// Converts it to exclusions so tools added later are exposed, and drops a custom Core list that
+        /// is just the old default so the current default applies.
+        /// </summary>
+        private static void MigrateToolExposureLists(SettingsData settings)
+        {
+            if (settings.fullToolsCustom && settings.fullTools != null)
+                settings.fullToolsExcluded = MCPToolExposureMigration.LegacyFullAllowListToExclusions(settings.fullTools).ToList();
+            settings.fullToolsCustom = false;
+            settings.fullTools = null;
+
+            if (settings.coreToolsCustom && MCPToolExposureMigration.IsLegacyDefaultCoreList(settings.coreTools))
+            {
+                settings.coreToolsCustom = false;
+                settings.coreTools = null;
+            }
+        }
+
+        private static string NormalizeUiPackChoice(string value)
+        {
+            var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
+            return normalized == "ugui" || normalized == "uitk" || normalized == "both" ? normalized : "auto";
+        }
+
+        private static string NormalizeDetectedUiPack(string value)
+        {
+            var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
+            return normalized == "ugui" || normalized == "uitk" || normalized == "both" ? normalized : string.Empty;
         }
 
         private static string NormalizeToolExportProfile(string value)
@@ -533,8 +619,17 @@ namespace Funplay.Editor.Settings
             public string toolExportProfile = DefaultToolExportProfile;
             public bool coreToolsCustom = false;
             public List<string> coreTools;
+            /// <summary>Legacy (before settings version 2) Full allow list; read once by the migration.</summary>
             public bool fullToolsCustom = false;
             public List<string> fullTools;
+            /// <summary>Tools switched off in the Full profile; everything else, including tools added later, is exposed.</summary>
+            public List<string> fullToolsExcluded;
+            /// <summary>"auto", "ugui", "uitk" or "both".</summary>
+            public string uiPack = "auto";
+            /// <summary>One-time project scan result; empty until detected (then "Re-detect" re-runs it).</summary>
+            public string detectedUiPack = string.Empty;
+            public List<string> optionalCorePacks;
+            public bool keepPlayModeRunningInBackground = true;
             public string selectedConfigTarget = DefaultSelectedConfigTarget;
             public bool executeCodeSafetyChecksEnabled = DefaultExecuteCodeSafetyChecksEnabled;
             public bool executeCodeSafetyChecksConfigured = false;

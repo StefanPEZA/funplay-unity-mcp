@@ -209,14 +209,14 @@ namespace Funplay.Editor.Tests
         public void FullToolProfile_RetainsSimulatorScreenshot()
         {
             Assert.IsFalse(MCPToolExportPolicy.DefaultCoreTools.Contains("capture_simulator_view"));
-            Assert.IsTrue(MCPToolExportPolicy.IsToolAllowed("capture_simulator_view", MCPToolExportProfile.Full, false, null, false, null));
+            Assert.IsTrue(MCPToolExportPolicy.IsToolAllowed("capture_simulator_view", MCPToolExportProfile.Full, false, null, null));
         }
 
         [Test]
         public void CoreKeepsRaycastWhileFullRetainsEditorWindowCapture()
         {
             Assert.IsFalse(MCPToolExportPolicy.DefaultCoreTools.Contains("capture_editor_window"));
-            Assert.IsTrue(MCPToolExportPolicy.IsToolAllowed("capture_editor_window", MCPToolExportProfile.Full, false, null, false, null));
+            Assert.IsTrue(MCPToolExportPolicy.IsToolAllowed("capture_editor_window", MCPToolExportProfile.Full, false, null, null));
             Assert.IsTrue(MCPToolExportPolicy.DefaultCoreTools.Contains("raycast_at_point"));
         }
 

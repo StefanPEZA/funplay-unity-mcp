@@ -22,7 +22,6 @@ namespace Funplay.Editor.Tools.Builtins
         [Description("Force Unity to refresh and wait until script compilation is complete without blocking the editor thread. " +
                      "Use this after editing scripts to ensure the latest code is active before entering Play Mode. " +
                      "Returns compilation errors if any, or a success message.")]
-        [ReadOnlyTool]
         public static async Task<string> WaitForCompilation(
             [ToolParam("Force a reimport/refresh before waiting", Required = false)] bool force_refresh = true,
             [ToolParam("Maximum seconds to wait for compilation", Required = false)] int timeout_seconds = 30)
@@ -72,7 +71,6 @@ namespace Funplay.Editor.Tools.Builtins
                      "Treat this as required after any external code or asset change. " +
                      "Call it after modifying .cs, .asmdef, .shader, prefabs, scenes, ScriptableObjects, or other Assets files, and before running tests, entering Play Mode, executing follow-up tools, or assuming Unity has imported the latest state. " +
                      "It forces Unity to import external file changes and handles any resulting script compilation or domain reload recovery.")]
-        [ReadOnlyTool]
         public static async Task<string> RequestRecompile(
             [ToolParam("Maximum seconds to wait for compilation", Required = false)] int timeout_seconds = 30)
         {
@@ -80,7 +78,7 @@ namespace Funplay.Editor.Tools.Builtins
             {
                 return ToolResultFormatter.Error("PLAY_MODE_ACTIVE", new
                 {
-                    hint = "Unity does not process script recompilation or domain reloads while playing. Call exit_play_mode first, then retry request_recompile."
+                    hint = "Unity does not process script recompilation or domain reloads while playing. Call prepare_editor(target=edit) first (it exits Play Mode and recompiles), or exit_play_mode and retry request_recompile."
                 });
             }
 

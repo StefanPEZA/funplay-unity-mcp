@@ -43,7 +43,6 @@ namespace Funplay.Editor.Tools.Builtins
                      "shows up in the window's snapshot list. WARNING: in-editor captures include editor-owned memory " +
                      "and can be hundreds of MB to several GB on large projects; the capture stalls the editor for a " +
                      "few seconds while it runs.")]
-        [ReadOnlyTool]
         public static async Task<string> MemoryTakeFullSnapshot(
             [ToolParam("Base file name (timestamp and .snap extension are appended). Default 'mcp'.", Required = false)] string name = null,
             [ToolParam("Comma-separated capture flags: ManagedObjects, NativeObjects, NativeAllocations, " +
@@ -167,7 +166,6 @@ namespace Funplay.Editor.Tools.Builtins
                      "reference-chain analysis. Accepts an absolute path or a file name from the snapshot folder " +
                      "(see memory_list_full_snapshots). Requires the com.unity.memoryprofiler package. " +
                      "Combine with capture_editor_window('Memory Profiler') to inspect the loaded analysis visually.")]
-        [ReadOnlyTool]
         public static string MemoryOpenSnapshotInProfiler(
             [ToolParam("Absolute .snap path, or a file name inside the snapshot folder (with or without the .snap extension).")] string snapshot)
         {

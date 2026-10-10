@@ -24,11 +24,12 @@ namespace Funplay.Editor.MCP.Server
             var mcpTools = new List<Dictionary<string, object>>();
             var tools = ToolSchemaBuilder.BuildAll();
             var profile = MCPToolExportPolicy.Parse(_settings?.MCPToolExportProfile);
+            var coreTools = MCPToolExportPolicy.GetEffectiveCoreTools(_settings);
 
             tools.Sort((left, right) =>
             {
-                var leftRank = MCPToolExportPolicy.GetSortRank(left.function.name, profile);
-                var rightRank = MCPToolExportPolicy.GetSortRank(right.function.name, profile);
+                var leftRank = MCPToolExportPolicy.GetSortRank(left.function.name, profile, coreTools);
+                var rightRank = MCPToolExportPolicy.GetSortRank(right.function.name, profile, coreTools);
                 var compareRank = leftRank.CompareTo(rightRank);
                 return compareRank != 0
                     ? compareRank
@@ -39,13 +40,7 @@ namespace Funplay.Editor.MCP.Server
 
             foreach (var tool in tools)
             {
-                if (!MCPToolExportPolicy.IsToolAllowed(
-                        tool.function.name,
-                        profile,
-                        _settings?.MCPCoreToolsConfigured ?? false,
-                        _settings?.MCPCoreTools,
-                        _settings?.MCPFullToolsConfigured ?? false,
-                        _settings?.MCPFullTools))
+                if (!MCPToolExportPolicy.IsToolAllowed(tool.function.name, _settings))
                     continue;
 
                 var mcpTool = new Dictionary<string, object>
@@ -54,10 +49,32 @@ namespace Funplay.Editor.MCP.Server
                     ["description"] = MCPToolExportPolicy.BuildDescriptionPrefix(tool.function.name, profile) + tool.function.description,
                     ["inputSchema"] = ConvertParametersToJsonSchema(tool.function.parameters)
                 };
+                var annotations = ConvertAnnotations(tool.annotations);
+                if (annotations != null)
+                    mcpTool["annotations"] = annotations;
                 mcpTools.Add(mcpTool);
             }
 
             return mcpTools;
+        }
+
+        internal static Dictionary<string, object> ConvertAnnotations(Funplay.Editor.Api.Models.ToolAnnotationsDef annotations)
+        {
+            if (annotations == null)
+                return null;
+
+            var result = new Dictionary<string, object>();
+            if (!string.IsNullOrEmpty(annotations.title))
+                result["title"] = annotations.title;
+            if (annotations.readOnlyHint.HasValue)
+                result["readOnlyHint"] = annotations.readOnlyHint.Value;
+            if (annotations.destructiveHint.HasValue)
+                result["destructiveHint"] = annotations.destructiveHint.Value;
+            if (annotations.idempotentHint.HasValue)
+                result["idempotentHint"] = annotations.idempotentHint.Value;
+            if (annotations.openWorldHint.HasValue)
+                result["openWorldHint"] = annotations.openWorldHint.Value;
+            return result.Count > 0 ? result : null;
         }
 
         private Dictionary<string, object> ConvertParametersToJsonSchema(
@@ -76,7 +93,9 @@ namespace Funplay.Editor.MCP.Server
                 if (prop.Value.@enum != null && prop.Value.@enum.Count > 0)
                     propertySchema["enum"] = prop.Value.@enum;
 
-                if (!string.IsNullOrEmpty(prop.Value.@default))
+                if (prop.Value.defaultValue != null)
+                    propertySchema["default"] = prop.Value.defaultValue;
+                else if (!string.IsNullOrEmpty(prop.Value.@default))
                     propertySchema["default"] = prop.Value.@default;
 
                 properties[prop.Key] = propertySchema;

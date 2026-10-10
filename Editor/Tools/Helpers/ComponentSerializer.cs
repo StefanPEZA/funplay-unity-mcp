@@ -246,8 +246,14 @@ namespace Funplay.Editor.Tools.Helpers
                 var fr = new FieldResult { Field = prop.Name };
                 try
                 {
-                    var serializedProperty = so.FindProperty(prop.Name);
-                    if (serializedProperty == null)
+                    // C# names (panelSettings) must find the serialized m_PanelSettings; a miss used to
+                    // fall through to reflection, which built a fresh nameless object for references.
+                    var serializedProperty = FindSerializedProperty(so, prop.Name, out var findError);
+                    if (serializedProperty == null && findError != null)
+                    {
+                        fr.Error = findError;
+                    }
+                    else if (serializedProperty == null)
                     {
                         // Reflection fallback for non-serialized public properties (e.g. Renderer.material, Time.timeScale-style)
                         if (TryWriteViaReflection(component, prop.Name, prop.Value, out var reflectionError))
@@ -528,11 +534,12 @@ namespace Funplay.Editor.Tools.Helpers
                 assetPath = value.ToObject<string>();
             }
 
+            var expectedTypeName = GetReferencedTypeName(p);
             UnityEngine.Object resolved = null;
             if (!string.IsNullOrWhiteSpace(instanceId))
                 resolved = ObjectIdHelper.ToObject(instanceId);
             if (resolved == null && !string.IsNullOrEmpty(assetPath))
-                resolved = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
+                resolved = LoadAssetForType(assetPath, candidate => expectedTypeName == null || IsTypeNamed(candidate.GetType(), expectedTypeName));
 
             if (resolved == null)
             {
@@ -543,7 +550,45 @@ namespace Funplay.Editor.Tools.Helpers
             }
 
             p.objectReferenceValue = resolved;
+            // Unity silently stores null when the object doesn't fit the field's type.
+            if (p.objectReferenceValue != resolved)
+            {
+                error = $"Field '{p.propertyPath}' expects {expectedTypeName ?? "a different type"}, got {resolved.GetType().Name} '{resolved.name}'; the reference was not assigned.";
+                return false;
+            }
             return true;
+        }
+
+        /// <summary>"PanelSettings" from a PPtr property type such as "PPtr&lt;$PanelSettings&gt;"; null when unknown.</summary>
+        private static string GetReferencedTypeName(SerializedProperty p)
+        {
+            var type = p.type ?? string.Empty;
+            if (!type.StartsWith("PPtr<", StringComparison.Ordinal) || !type.EndsWith(">", StringComparison.Ordinal))
+                return null;
+            var name = type.Substring(5, type.Length - 6).TrimStart('$');
+            return name.Length == 0 || name == "Object" ? null : name;
+        }
+
+        private static bool IsTypeNamed(Type type, string name)
+        {
+            for (var t = type; t != null && t != typeof(object); t = t.BaseType)
+                if (t.Name == name) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// The main asset at <paramref name="assetPath"/> when it fits, else the first sub-asset that does
+        /// (e.g. a Sprite inside a texture, a PanelSettings inside a multi-object .asset).
+        /// </summary>
+        private static UnityEngine.Object LoadAssetForType(string assetPath, Func<UnityEngine.Object, bool> fits)
+        {
+            var main = AssetDatabase.LoadMainAssetAtPath(assetPath);
+            if (main != null && fits(main))
+                return main;
+            foreach (var candidate in AssetDatabase.LoadAllAssetsAtPath(assetPath))
+                if (candidate != null && fits(candidate))
+                    return candidate;
+            return main;
         }
 
         private static bool TryWriteArray(SerializedProperty arrayProp, JArray array, out string error)
@@ -633,10 +678,27 @@ namespace Funplay.Editor.Tools.Helpers
             if (targetType == typeof(Vector4) && TryParseVector(token, 4, out var v4)) return new Vector4(v4[0], v4[1], v4[2], v4[3]);
             if (typeof(UnityEngine.Object).IsAssignableFrom(targetType))
             {
-                string id = null;
+                // Never token.ToObject a UnityEngine.Object: Newtonsoft would construct a fresh,
+                // nameless instance that then gets saved embedded in the scene.
+                if (token.Type == JTokenType.Null) return null;
+                string id = null, path = null;
                 if (token.Type == JTokenType.Integer) id = token.ToString();
-                else if (token is JObject jo && jo.TryGetValue("fileID", out var f)) id = f.ToString();
-                if (!string.IsNullOrWhiteSpace(id)) return ObjectIdHelper.ToObject(id);
+                else if (token.Type == JTokenType.String) path = token.ToObject<string>();
+                else if (token is JObject jo)
+                {
+                    if (jo.TryGetValue("fileID", out var f) || jo.TryGetValue("instanceId", out f)) id = f.ToString();
+                    if (jo.TryGetValue("assetPath", out var ap)) path = ap.ToObject<string>();
+                }
+
+                UnityEngine.Object resolved = null;
+                if (!string.IsNullOrWhiteSpace(id)) resolved = ObjectIdHelper.ToObject(id);
+                if (resolved == null && !string.IsNullOrWhiteSpace(path))
+                    resolved = LoadAssetForType(path, targetType.IsInstanceOfType);
+                if (resolved == null)
+                    throw new ArgumentException($"Object reference for {targetType.Name} must be {{\"fileID\": <instanceId>}} or {{\"assetPath\": \"Assets/...\"}} and resolve to an existing object.");
+                if (!targetType.IsInstanceOfType(resolved))
+                    throw new ArgumentException($"Expected {targetType.Name}, got {resolved.GetType().Name} '{resolved.name}'.");
+                return resolved;
             }
             return token.ToObject(targetType);
         }

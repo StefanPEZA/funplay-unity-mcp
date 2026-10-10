@@ -284,13 +284,11 @@ Guidance:
                     body =
 $@"Goal: confirm scripts compile cleanly{(paths != null ? $" after editing: {paths}" : " after external edits")}.
 
-1. If in Play Mode, exit_play_mode first; request_recompile is rejected in Play Mode.
-2. request_recompile
-3. wait_for_compilation
-4. get_compilation_errors; if errors remain, patch the smallest safe regions and repeat from step 2.
-5. get_console_logs(group_duplicates=true) to catch load-time/initialization errors the compile check does not surface.
+1. prepare_editor(target=edit, refresh_assets=true, request_key=<unique>): exits Play Mode if needed, imports the changes and waits for compilation. If it does not finish in that call, follow data.task.task_id with get_task(wait_seconds, after_revision).
+2. get_compilation_errors; if errors remain, patch the smallest safe regions and repeat from step 1 with a new request_key.
+3. get_console_logs(group_duplicates=true) to catch load-time/initialization errors the compile check does not surface.
 
-Guidance: a domain reload can interrupt the request. If a call is interrupted, poll get_reload_recovery_status for the real outcome before assuming failure.";
+Guidance: a domain reload can interrupt the request. After a lost response, read get_task(kind=editor, request_key=<same key>) for the real outcome before assuming failure; never replay the edit.";
                     break;
                 }
 
@@ -301,12 +299,11 @@ Guidance: a domain reload can interrupt the request. If a call is interrupted, p
                     body =
 $@"Goal: reach a stable Play Mode to validate{(goal != null ? $": {goal}" : " a runtime change")}.
 
-1. If already playing, exit_play_mode first for a clean start.
-2. enter_play_mode
-3. The HTTP server briefly drops during the domain reload. Poll get_reload_recovery_status until it reports ready BEFORE issuing the next tool call.
-4. Run the validation (inspect objects, read get_console_logs(group_duplicates=true)), then exit_play_mode when done.
+1. prepare_editor(target=play, refresh_assets=true, request_key=<unique>): exits a running Play session first, imports edited files (USS/UXML/scripts), compiles and enters Play Mode.
+2. The HTTP server may briefly drop during a domain reload. Follow data.task.task_id with get_task(wait_seconds, after_revision), or get_task(kind=editor, request_key=<same key>) after a lost response, until operation.status=ready BEFORE issuing the next tool call.
+3. Run the validation (inspect objects, read get_console_logs(group_duplicates=true)), then prepare_editor(target=edit, refresh_assets=false) when done.
 
-Guidance: treat any result between enter_play_mode and a confirmed recovery as unknown. Confirm via get_reload_recovery_status plus a readback; do not assume the interrupted tool failed or succeeded.";
+Guidance: treat any result between the Play request and a confirmed ready task as unknown. Confirm via get_task plus a readback; do not assume the interrupted tool failed or succeeded.";
                     break;
                 }
 
@@ -336,11 +333,11 @@ Guidance: treat a user-supplied name as a hint, not a path; inspect before mutat
 $@"Goal: build a minimal playable prototype from: {idea}.
 
 1. Build the environment (create_primitive / create_game_object) and ensure a camera exists.
-2. Add input + control: create_script for behaviour, then request_recompile, wait_for_compilation, and get_compilation_errors before using the new types.
+2. Add input + control: create_script for behaviour, then prepare_editor(target=edit, request_key=<unique>) and get_compilation_errors before using the new types.
 3. Add minimal helper UI if needed, in the project's framework: uGUI (create_canvas / create_text / create_button) or UI Toolkit (UXML + create_ui_toolkit_panel; PanelRenderer on Unity 6.6+).
-4. enter_play_mode.
-5. Poll get_reload_recovery_status until the server is ready, then inspect runtime objects and get_console_logs(group_duplicates=true).
-6. Capture a Game View image when visual verification matters, then exit_play_mode.
+4. prepare_editor(target=play, request_key=<unique>); follow the task with get_task until operation.status=ready.
+5. Inspect runtime objects and get_console_logs(group_duplicates=true).
+6. Capture a Game View image when visual verification matters, then prepare_editor(target=edit, refresh_assets=false).
 
 Guidance: keep the scene minimal; save only the assets you intentionally create and read them back to confirm.";
                     break;

@@ -69,19 +69,62 @@ namespace Funplay.Editor.Tests
         }
 
         [Test]
-        public void SelectorParsesTypeNameAndClassesAndRejectsCombinators()
+        public void SelectorParsesTypeNameAndClassesAndRejectsListsAndAttributes()
         {
             var selector = UIToolkitPanels.Selector.Parse("Button#play.primary.big", null);
             Assert.AreEqual("Button", selector.Type);
             Assert.AreEqual("play", selector.Name);
             CollectionAssert.AreEqual(new[] { "primary", "big" }, selector.Classes);
-            Assert.AreEqual("UNSUPPORTED_SELECTOR", Assert.Throws<UIToolkitException>(() => UIToolkitPanels.Selector.Parse("VisualElement > Button", null)).Code);
+            foreach (var bad in new[] { "Button, Label", "Button[name=x]", "Button:hover", "> Button", "A > > B", "A >" })
+                Assert.AreEqual("UNSUPPORTED_SELECTOR", Assert.Throws<UIToolkitException>(() => UIToolkitPanels.Selector.Parse(bad, null)).Code, bad);
 
             var button = new Button { name = "play", text = "Play" };
             button.AddToClassList("primary");
             Assert.IsTrue(UIToolkitPanels.Selector.Parse("TextElement.primary", null).Matches(button), "base types match");
             Assert.IsTrue(UIToolkitPanels.Selector.Parse(null, "play").Matches(button), "text matches case-insensitively");
             Assert.IsFalse(UIToolkitPanels.Selector.Parse("#quit", null).Matches(button));
+        }
+
+        [Test]
+        public void SelectorCombinatorsAndNthOfTypeResolveRepeatedButtons()
+        {
+            // Two setting rows, each with "On"/"Off" buttons: the PolyGames "Show par" case.
+            var root = new VisualElement { name = "pg-settings" };
+            VisualElement Row(string name)
+            {
+                var row = new VisualElement { name = name };
+                row.AddToClassList("pg-setting");
+                row.Add(new Label(name));
+                row.Add(new Button { text = "On" });
+                row.Add(new Button { text = "Off" });
+                root.Add(row);
+                return row;
+            }
+            var sound = Row("sound");
+            var par = Row("show-par");
+
+            var descendant = UIToolkitPanels.Selector.Parse("#pg-settings Button", null);
+            Assert.IsTrue(descendant.Matches(sound[1]));
+            Assert.IsFalse(descendant.Matches(root));
+
+            var child = UIToolkitPanels.Selector.Parse(".pg-setting > Button", null);
+            Assert.IsTrue(child.Matches(par[2]));
+            Assert.IsFalse(UIToolkitPanels.Selector.Parse("#pg-settings > Button", null).Matches(par[1]), "> requires the direct parent");
+
+            var parOn = UIToolkitPanels.Selector.Parse("#show-par > Button:nth-of-type(1)", "On");
+            Assert.IsTrue(parOn.Matches(par[1]));
+            Assert.IsFalse(parOn.Matches(sound[1]));
+            Assert.IsTrue(UIToolkitPanels.Selector.Parse("#show-par > :nth-child(3)", null).Matches(par[2]));
+
+            // Name paths survive a sibling being brought to the front, index paths don't.
+            Assert.AreSame(par[1], UIToolkitPanels.ResolvePath(root, "#show-par/Button:nth-of-type(1)"));
+            sound.BringToFront();
+            Assert.AreNotSame(par[1], UIToolkitPanels.ResolvePath(root, "1/1"), "index path shifted");
+            Assert.AreSame(par[1], UIToolkitPanels.ResolvePath(root, "#show-par/Button:nth-of-type(1)"));
+            Assert.IsTrue(UIToolkitPanels.IsIndexPath("1/2"));
+            Assert.IsFalse(UIToolkitPanels.IsIndexPath("#show-par/1"));
+            Assert.AreEqual("AMBIGUOUS_ELEMENT", Assert.Throws<UIToolkitException>(() => UIToolkitPanels.ResolvePath(root, ".pg-setting")).Code);
+            Assert.IsNull(UIToolkitPanels.ResolvePath(root, "#missing"));
         }
 
         [Test]

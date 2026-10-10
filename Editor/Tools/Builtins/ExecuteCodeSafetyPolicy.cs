@@ -32,7 +32,7 @@ namespace Funplay.Editor.Tools.Builtins
             new SafetyRule(@"\bSystem\.Diagnostics\.Process\b", "System.Diagnostics.Process blocked by safety_checks"),
             new SafetyRule(@"\bEnvironment\.Exit\b", "Environment.Exit blocked by safety_checks"),
             new SafetyRule(@"\bApplication\.Quit\b", "Application.Quit blocked by safety_checks"),
-            new SafetyRule(@"\bAssetDatabase\.DeleteAsset\b", "AssetDatabase.DeleteAsset blocked by safety_checks"),
+            new SafetyRule(@"\bAssetDatabase\.(?:DeleteAssets?|MoveAssetsToTrash|MoveAssetToTrash)\b", "AssetDatabase.DeleteAsset/DeleteAssets/MoveAssetToTrash blocked by safety_checks (use the delete_asset tool)"),
             new SafetyRule(@"\bwhile\s*\(\s*true\s*\)", "Infinite while(true) loop blocked by safety_checks"),
             new SafetyRule(@"\bfor\s*\(\s*;\s*;\s*\)", "Infinite for(;;) loop blocked by safety_checks"),
         };
