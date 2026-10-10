@@ -30,12 +30,14 @@ namespace Funplay.Editor.Tools.Builtins
             public string Name; public int Width, Height; public float DpScale;
         }
 
-        [Description("Play Mode responsive preview of UI Toolkit screens: for each size, sets the Game View resolution, overrides the PanelSettings of the live screen-space panels to ConstantPixelSize with scale=dp_scale (emulating device density), waits until layout settles, and captures the Game View to a file. Everything is restored afterwards (also on Play exit, script reload and next Editor start); PanelSettings are never marked dirty, and the response reports each asset's file hash before/after. Sizes: presets desktop (1920x1080@1), phone-320 (640x1136@2), phone-360 (720x1280@2), phone-landscape (1280x720@2), or JSON objects {\"w\":720,\"h\":1280,\"dp_scale\":2}; default all four presets. The whole call is capped at 10 s. Lists what can't be emulated (touch detection, safe area).")]
+        [Description("Play Mode responsive preview of UI Toolkit screens: for each size, sets the Game View resolution, overrides the PanelSettings of the live screen-space panels to ConstantPixelSize with scale=dp_scale (emulating device density), waits until layout settles, and captures the Game View to a file (audit=true also runs audit_ui_toolkit at each size). Everything is restored afterwards (also on Play exit, script reload and next Editor start); PanelSettings are never marked dirty, and the response reports each asset's file hash before/after. Sizes: presets desktop (1920x1080@1), phone-320 (640x1136@2), phone-360 (720x1280@2), phone-landscape (1280x720@2), or JSON objects {\"w\":720,\"h\":1280,\"dp_scale\":2}; default all four presets. The whole call is capped at 10 s. Lists what can't be emulated (touch detection, safe area).")]
         public static async Task<object> PreviewUiToolkit(
             [ToolParam("Comma-separated presets or a JSON array of presets and {w, h, dp_scale} objects; default: all four presets", Required = false)] string sizes = null,
             [ToolParam("Classes added to every host's root while previewing (comma/space separated), e.g. a project's touch class", Required = false)] string extra_root_classes = null,
             [ToolParam("Capture each size to a PNG file", Required = false)] bool capture = true,
-            [ToolParam("Consecutive unchanged frames that count as settled, 2..30", Required = false)] int settle_frames = 3)
+            [ToolParam("Consecutive unchanged frames that count as settled, 2..30", Required = false)] int settle_frames = 3,
+            [ToolParam("Also run audit_ui_toolkit at each size (touch targets in dp, overflow, contrast, glyphs...)", Required = false)] bool audit = false,
+            [ToolParam("audit only: minimum touch target size in panel px (dp)", Required = false)] float min_touch_size = 44f)
         {
             if (!EditorApplication.isPlaying)
                 return Response.Error("PLAY_MODE_REQUIRED", new { hint = "Runtime panels are built by Play Mode; use prepare_editor(target=play) first." });
@@ -116,6 +118,13 @@ namespace Funplay.Editor.Tools.Builtins
                         finally { if (frame != null) UnityEngine.Object.DestroyImmediate(frame); }
                     }
 
+                    object audited = null;
+                    if (audit)
+                    {
+                        var report = AuditHosts(panels.SelectMany(p => p.Hosts).Distinct().ToList(), new AuditOptions { MinTouchSize = min_touch_size > 0 ? min_touch_size : 44f });
+                        audited = report.ToResponse();
+                    }
+
                     previewed++;
                     results.Add(new
                     {
@@ -123,6 +132,7 @@ namespace Funplay.Editor.Tools.Builtins
                         render_width = reached.width, render_height = reached.height, size_matched = reached.matched,
                         settled = settle.settled, settle_frames = settle.frames,
                         capture_path = path, capture_error = captureError,
+                        audit = audited,
                         elapsed_ms = (int)sizeClock.Elapsed.TotalMilliseconds
                     });
                 }

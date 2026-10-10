@@ -64,7 +64,7 @@ namespace Funplay.Editor.Tests
         public void ToolsAreDiscoverable()
         {
             foreach (var name in new[] { "get_ui_toolkit_info", "create_ui_toolkit_panel", "configure_ui_toolkit_panel", "create_panel_settings",
-                         "get_visual_tree", "pick_ui_toolkit_element", "click_ui_toolkit_element", "scroll_ui_toolkit", "wait_for_ui_toolkit" })
+                         "get_visual_tree", "pick_ui_toolkit_element", "click_ui_toolkit_element", "scroll_ui_toolkit", "wait_for_ui_toolkit", "explain_style", "audit_ui_toolkit" })
                 Assert.IsNotNull(ToolRegistry.GetMethod(name), name);
         }
 
@@ -714,6 +714,135 @@ namespace Funplay.Editor.Tests
             var clock = System.Diagnostics.Stopwatch.StartNew();
             while (!task.IsCompleted && clock.Elapsed.TotalSeconds < 15) yield return null;
             Assert.IsTrue(task.IsCompleted, "wait did not complete");
+        }
+
+        [UnityTest]
+        public IEnumerator ExplainStyleNamesTheWinningRuleAndTheOnesItBeat()
+        {
+            yield return BuildLivePanel("UitkExplain");
+            var ussPath = folder + "/Explain.uss";
+            File.WriteAllText(ussPath,
+                "/* test sheet */\n" +
+                ".primary {\n    background-color: rgb(255, 0, 0);\n}\n" +
+                "#play.primary { color: rgb(0, 255, 0); }\n" +
+                ".primary:hover {\n    background-color: rgb(0, 0, 255);\n}\n");
+            AssetDatabase.ImportAsset(ussPath, ImportAssetOptions.ForceSynchronousImport);
+            liveRoot.styleSheets.Add(AssetDatabase.LoadAssetAtPath<StyleSheet>(ussPath));
+            var play = liveRoot.Q<Button>("play");
+            UIToolkitPanels.ValidateLayout(play.panel);
+            yield return null;
+
+            var explained = JObject.FromObject(UIToolkitFunctions.ExplainElement(play, "0/1", "background-color,color,width", new System.Collections.Generic.List<string> { "hover" }));
+            Assert.AreEqual("unity", (string)explained["matcher"], explained.ToString());
+            var properties = (JArray)explained["properties"];
+            var background = properties.First(p => (string)p["property"] == "background-color");
+            Assert.AreEqual(JTokenType.Object, background["winner"].Type, explained.ToString());
+            Assert.AreEqual(".primary", (string)background["winner"]["selector"], background.ToString());
+            Assert.AreEqual(ussPath, (string)background["winner"]["sheet"]);
+            Assert.AreEqual(3, (int)background["winner"]["line"], "the declaration's line in the USS file");
+            Assert.AreEqual("#FF0000FF", (string)background["resolved"]);
+            Assert.IsTrue(((JArray)background["overridden"]).Any(o => ((string)o["selector"]).Contains("unity-button")), "the theme's button rule lost: " + background);
+            Assert.AreEqual(".primary:hover", (string)background["in_pseudo_states"][0]["selector"], background.ToString());
+            Assert.AreEqual(7, (int)background["in_pseudo_states"][0]["line"], "the declaration's line, like the winner's");
+
+            var color = properties.First(p => (string)p["property"] == "color");
+            Assert.AreEqual("#play.primary", (string)color["winner"]["selector"]);
+            Assert.AreEqual("1,1,0", (string)color["winner"]["specificity"]);
+
+            var width = properties.First(p => (string)p["property"] == "width");
+            Assert.AreEqual("inline", (string)width["source"], "UXML style=\"width: 200px\" is inline: " + width);
+            Assert.IsTrue((bool)explained["pseudo_states"]["heuristic"]);
+            Assert.AreEqual(Color.red, play.resolvedStyle.backgroundColor, "explaining :hover never changes the element");
+        }
+
+        [Test]
+        public void UssSourceParsingKeepsLinesAndSplitsSelectorLists()
+        {
+            var rules = StyleIntrospection.ParseUss("@import url(\"x.uss\");\n/* a\nb */\n.a, #b > Label {\n  color: red;\n  width: 10px\n}\n.c:hover { opacity: 0.5; }");
+            Assert.AreEqual(3, rules.Count);
+            Assert.AreEqual(".a", rules[0].Selector);
+            Assert.AreEqual("#b > Label", rules[1].Selector);
+            Assert.AreEqual(4, rules[0].Line, "comments keep their lines");
+            Assert.AreEqual(5, rules[0].Declarations[0].Line);
+            Assert.AreEqual("width", rules[0].Declarations[1].Name);
+            Assert.AreEqual(6, rules[0].Declarations[1].Line);
+            Assert.AreEqual(8, rules[2].Line);
+            Assert.AreEqual((1, 0, 1), StyleIntrospection.SpecificityOf("#b > Label"));
+            Assert.AreEqual((0, 2, 0), StyleIntrospection.SpecificityOf(".c:hover"));
+            Assert.AreEqual("unityFontDefinition", StyleIntrospection.CamelName("-unity-font-definition"));
+            Assert.AreEqual("backgroundColor", StyleIntrospection.CamelName("background-color"));
+        }
+
+        [Test]
+        public void ContrastUsesWcagLuminance()
+        {
+            Assert.AreEqual(21f, UIToolkitFunctions.ContrastRatio(Color.white, Color.black), 0.01f);
+            Assert.AreEqual(1f, UIToolkitFunctions.ContrastRatio(Color.gray.linear, Color.gray.linear), 0.001f);
+            Assert.IsNull(UIToolkitFunctions.ParseRect(null, "x"));
+            Assert.AreEqual(new Rect(1, 2, 3, 4), UIToolkitFunctions.ParseRect("1,2,3,4", "x"));
+            Assert.Throws<ArgumentException>(() => UIToolkitFunctions.ParseRect("1,2,0,4", "x"));
+            Assert.AreEqual("Hi there", UIToolkitFunctions.StripRichText("<b>Hi</b> <color=#fff>there</color>"));
+        }
+
+        [UnityTest]
+        public IEnumerator AuditFlagsSmallCoveredAndLowContrastControls()
+        {
+            yield return BuildLivePanel("UitkAudit");
+            var menu = liveRoot.Q("menu");
+            var tiny = new Button { name = "tiny", text = "x", style = { width = 20, height = 20 } };
+            var faint = new Label("Faint") { name = "faint", style = { color = new Color(0.45f, 0.45f, 0.45f), backgroundColor = new Color(0.5f, 0.5f, 0.5f), width = 200, height = 40 } };
+            var overImage = new Image { style = { width = 200, height = 60 } };
+            overImage.Add(new Label("Over image") { name = "over-image" });
+            var cover = new VisualElement { name = "cover", style = { position = Position.Absolute, left = 0, right = 0, top = 0, bottom = 0 } };
+            menu.Add(tiny); menu.Add(faint); menu.Add(overImage); liveRoot.Add(cover);
+            UIToolkitPanels.ValidateLayout(liveRoot.panel);
+            yield return null;
+            UIToolkitPanels.ValidateLayout(liveRoot.panel);
+
+            var host = UIToolkitPanels.GetHost(created);
+            var report = UIToolkitFunctions.AuditHosts(new System.Collections.Generic.List<Component> { host }, new UIToolkitFunctions.AuditOptions());
+            var json = JObject.FromObject(report.ToResponse());
+            var findings = ((JArray)json["hosts"][0]["findings"]).ToList();
+            bool Has(string code, string element) => findings.Any(f => (string)f["code"] == code && ((string)f["element"] ?? "").Contains(element));
+            Assert.IsTrue(Has("SMALL_TOUCH_TARGET", "#tiny"), json.ToString());
+            Assert.IsFalse(Has("SMALL_TOUCH_TARGET", "#play"), "200x60 is large enough");
+            Assert.IsTrue(Has("LOW_CONTRAST", "#faint"), json.ToString());
+            Assert.IsFalse(Has("LOW_CONTRAST", "#over-image"), "text over an image is indeterminate, never reported");
+            Assert.Greater((int)json["indeterminate_contrast"], 0);
+            if (UIToolkitPanels.TryGetScreenMapping(liveRoot.panel, out _) && RenderHeightOrZero() > 0)
+                Assert.IsTrue(Has("COVERED_CONTROL", "#play"), json.ToString());
+
+            cover.RemoveFromHierarchy();
+            var skipped = UIToolkitFunctions.AuditHosts(new System.Collections.Generic.List<Component> { host },
+                new UIToolkitFunctions.AuditOptions { Skip = new System.Collections.Generic.HashSet<string> { "LOW_CONTRAST" } });
+            var skippedJson = JObject.FromObject(skipped.ToResponse());
+            Assert.IsFalse(((JArray)skippedJson["hosts"][0]["findings"]).Any(f => (string)f["code"] == "LOW_CONTRAST" || (string)f["code"] == "COVERED_CONTROL"), skippedJson.ToString());
+        }
+
+        private static int RenderHeightOrZero()
+        {
+            try { return VisualCoordinates.Current().render_height; }
+            catch (InvalidOperationException) { return 0; }
+        }
+
+        [UnityTest]
+        public IEnumerator MissingGlyphsChecksTheSourceFontWithoutAddingCharacters()
+        {
+            // A label with an explicit font asset, the way projects set -unity-font-definition.
+            yield return BuildLivePanel("UitkGlyphs");
+            var font = Resources.FindObjectsOfTypeAll<UnityEngine.TextCore.Text.FontAsset>().FirstOrDefault(f => f.name.Contains("Sans"));
+            if (font == null) Assert.Ignore("No editor FontAsset available.");
+            var title = liveRoot.Q<Label>("title");
+            title.style.unityFontDefinition = FontDefinition.FromSDFFont(font);
+            UIToolkitPanels.ValidateLayout(title.panel);
+            yield return null;
+            var asset = UIToolkitFunctions.EffectiveFontAsset(title.resolvedStyle);
+            Assert.AreSame(font, asset, "the style's font asset is the one checked");
+            Assert.IsNull(UIToolkitFunctions.EffectiveFontAsset(liveRoot.Q<Button>("play").resolvedStyle), "theme default: no verdict");
+            var missing = UIToolkitFunctions.MissingGlyphs("AB \uE000", asset, null);
+            CollectionAssert.AreEqual(new uint[] { 0xE000 }, missing, "letters exist in the font; a private-use character does not");
+            CollectionAssert.AreEqual(missing, UIToolkitFunctions.MissingGlyphs("AB \uE000", asset, null), "checking is repeatable (nothing was added)");
+            Assert.IsNull(UIToolkitFunctions.MissingGlyphs("A", null, null), "unknown font: no verdict");
         }
 
         private VisualElement liveRoot;

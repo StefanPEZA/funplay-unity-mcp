@@ -6,6 +6,7 @@ analyze_scene_complexity ro idempotent
 assign_animator idempotent
 assign_material idempotent
 audit_ui ro idempotent
+audit_ui_toolkit ro idempotent
 bake_lightmaps destructive
 cancel_editor_operation idempotent
 cancel_task idempotent
@@ -51,6 +52,7 @@ execute_code destructive openworld
 execute_menu_item
 exists ro idempotent
 exit_play_mode idempotent
+explain_style ro idempotent
 extract_recording_frames destructive
 find_assets ro idempotent
 find_broken_references ro idempotent
