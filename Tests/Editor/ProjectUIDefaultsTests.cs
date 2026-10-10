@@ -171,11 +171,11 @@ namespace Funplay.Editor.Tests
         [Test] public void CanvasCreationPreservesExistingEventSystem()
         {
             var es = new GameObject("ExistingEventSystem", typeof(EventSystem)); es.transform.SetParent(root.transform);
-            var count = Object.FindObjectsByType<EventSystem>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length;
+            var count = SceneObjectLookup.FindAll<EventSystem>(includeInactive: true).Length;
             var result = JObject.FromObject(UIConfigurationFunctions.CreateProjectUi("canvas", "NestedCanvas", parent: ObjectIdHelper.GetSerializableId(root)));
             Assert.IsTrue((bool)result["success"], result.ToString());
             Assert.IsTrue((bool)result["data"]["existing_event_system_preserved"]);
-            Assert.AreEqual(count, Object.FindObjectsByType<EventSystem>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length);
+            Assert.AreEqual(count, SceneObjectLookup.FindAll<EventSystem>(includeInactive: true).Length);
             Assert.AreEqual(0, es.GetComponents<BaseInputModule>().Length);
         }
         [Test] public void AmbiguousLabelsRequireAnExplicitPath()

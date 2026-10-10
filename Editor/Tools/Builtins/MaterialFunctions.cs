@@ -6,6 +6,7 @@ using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using Funplay.Editor.Tools.Helpers;
 using UnityEditor;
 using UnityEngine;
+using ShaderPropertyType = UnityEngine.Rendering.ShaderPropertyType;
 
 namespace Funplay.Editor.Tools.Builtins
 {
@@ -29,31 +30,31 @@ namespace Funplay.Editor.Tools.Builtins
             var properties = new List<object>();
             if (shader != null)
             {
-                int count = ShaderUtil.GetPropertyCount(shader);
+                int count = shader.GetPropertyCount();
                 for (int i = 0; i < count; i++)
                 {
-                    var pName = ShaderUtil.GetPropertyName(shader, i);
-                    var pType = ShaderUtil.GetPropertyType(shader, i);
+                    var pName = shader.GetPropertyName(i);
+                    var pType = shader.GetPropertyType(i);
                     object value;
                     switch (pType)
                     {
-                        case ShaderUtil.ShaderPropertyType.Color:
+                        case ShaderPropertyType.Color:
                         {
                             var c = mat.GetColor(pName);
                             value = new { r = c.r, g = c.g, b = c.b, a = c.a };
                             break;
                         }
-                        case ShaderUtil.ShaderPropertyType.Vector:
+                        case ShaderPropertyType.Vector:
                         {
                             var v = mat.GetVector(pName);
                             value = new { x = v.x, y = v.y, z = v.z, w = v.w };
                             break;
                         }
-                        case ShaderUtil.ShaderPropertyType.Float:
-                        case ShaderUtil.ShaderPropertyType.Range:
+                        case ShaderPropertyType.Float:
+                        case ShaderPropertyType.Range:
                             value = mat.GetFloat(pName);
                             break;
-                        case ShaderUtil.ShaderPropertyType.TexEnv:
+                        case ShaderPropertyType.Texture:
                         {
                             var tex = mat.GetTexture(pName);
                             value = tex != null ? AssetDatabase.GetAssetPath(tex) : null;
@@ -108,7 +109,7 @@ namespace Funplay.Editor.Tools.Builtins
                     hint = "Property name is case-sensitive and must be declared by the material's shader."
                 });
 
-            var detected = ShaderUtil.GetPropertyType(shader, idx);
+            var detected = shader.GetPropertyType(idx);
 
             string category;
             if (string.IsNullOrEmpty(type) || string.Equals(type, "auto", StringComparison.OrdinalIgnoreCase))
@@ -248,10 +249,10 @@ namespace Funplay.Editor.Tools.Builtins
         private static int FindPropertyIndex(Shader shader, string name)
         {
             if (shader == null) return -1;
-            int count = ShaderUtil.GetPropertyCount(shader);
+            int count = shader.GetPropertyCount();
             for (int i = 0; i < count; i++)
             {
-                if (ShaderUtil.GetPropertyName(shader, i) == name)
+                if (shader.GetPropertyName(i) == name)
                     return i;
             }
             return -1;
@@ -261,21 +262,21 @@ namespace Funplay.Editor.Tools.Builtins
         {
             var names = new List<string>();
             if (shader == null) return names;
-            int count = ShaderUtil.GetPropertyCount(shader);
+            int count = shader.GetPropertyCount();
             for (int i = 0; i < count; i++)
-                names.Add(ShaderUtil.GetPropertyName(shader, i));
+                names.Add(shader.GetPropertyName(i));
             return names;
         }
 
-        private static string CategoryOf(ShaderUtil.ShaderPropertyType t)
+        private static string CategoryOf(ShaderPropertyType t)
         {
             switch (t)
             {
-                case ShaderUtil.ShaderPropertyType.Color: return "color";
-                case ShaderUtil.ShaderPropertyType.Vector: return "vector";
-                case ShaderUtil.ShaderPropertyType.Float:
-                case ShaderUtil.ShaderPropertyType.Range: return "float";
-                case ShaderUtil.ShaderPropertyType.TexEnv: return "texture";
+                case ShaderPropertyType.Color: return "color";
+                case ShaderPropertyType.Vector: return "vector";
+                case ShaderPropertyType.Float:
+                case ShaderPropertyType.Range: return "float";
+                case ShaderPropertyType.Texture: return "texture";
                 default: return "int"; // ShaderPropertyType.Int and any future kinds
             }
         }

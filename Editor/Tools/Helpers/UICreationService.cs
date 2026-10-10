@@ -85,7 +85,7 @@ namespace Funplay.Editor.Tools.Helpers
                 }
                 string resolvedInput = inputPolicy != null && inputPolicy != "auto" ? inputPolicy : config.input_module != "auto" ? config.input_module :
                     conventions?.recommended_input ?? ProjectUIDefaults.DecideInput(0, 0);
-                var existingEvents = UnityEngine.Object.FindObjectsByType<EventSystem>(FindObjectsInactive.Include, FindObjectsSortMode.None)
+                var existingEvents = SceneObjectLookup.FindAll<EventSystem>(includeInactive: true)
                     .Where(x => x.gameObject.scene.IsValid() && !EditorUtility.IsPersistent(x) && !EditorSceneManager.IsPreviewScene(x.gameObject.scene)).ToArray();
                 var templateEvents = prefab != null ? prefab.GetComponentsInChildren<EventSystem>(true) : Array.Empty<EventSystem>();
                 bool prefabStage = PrefabStageUtility.GetCurrentPrefabStage() != null;

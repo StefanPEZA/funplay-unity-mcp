@@ -95,7 +95,8 @@ namespace Funplay.Editor
 
             var result = Read();
             Assert.IsFalse(Map(result, "mcpServers").ContainsKey(RecordedKey));
-            Assert.IsFalse(LegacyProjectServers(result).ContainsKey(RecordedKey));
+            // The legacy scope only ever held this plugin's server, so the emptied stub is dropped.
+            Assert.IsFalse(Map(result, "projects").ContainsKey(LegacyProjectPath));
             var current = (Dictionary<string, object>)ProjectServers(result)[RecordedKey];
             Assert.AreEqual("http://127.0.0.1:24999/mcp", current["url"]);
             Assert.AreEqual("keep-current", current["note"]);
@@ -117,6 +118,145 @@ namespace Funplay.Editor
             Assert.AreEqual(
                 "http://127.0.0.1:24002/mcp",
                 EntryUrl(ProjectServers(Read())[RecordedKey]));
+        }
+
+        [TestCase(@"C:\github\Game", "C:/github/Game")]
+        [TestCase(@"C:\github\Game\", "C:/github/Game")]
+        [TestCase("C:/github/Game", "C:/github/Game")]
+        [TestCase(@"C:\", "C:/")]
+        [TestCase("/repo/Game/", "/repo/Game")]
+        [TestCase("/", "/")]
+        public void ClaudeProjectKeysUseForwardSlashes(string path, string expected)
+        {
+            Assert.AreEqual(expected, FunplayMCPClientConfigPanel.ToClaudeProjectKey(path));
+        }
+
+        [Test]
+        public void ClaudeProjectKeyComparisonIgnoresSeparatorsButNotCase()
+        {
+            Assert.IsTrue(FunplayMCPClientConfigPanel.IsSameClaudeProjectKey(@"C:\github\Game", "C:/github/Game"));
+            Assert.IsFalse(FunplayMCPClientConfigPanel.IsSameClaudeProjectKey("c:/github/Game", "C:/github/Game"), "a differently cased key can be a live Claude Code session");
+            Assert.IsFalse(FunplayMCPClientConfigPanel.IsSameClaudeProjectKey("/repo/Game", "/repo/game"));
+            Assert.IsFalse(FunplayMCPClientConfigPanel.IsSameClaudeProjectKey("C:/github/Game", "C:/github/Other"));
+            Assert.IsTrue(FunplayMCPClientConfigPanel.IsStaleSpellingOfProjectKey(@"C:\github\Game", "C:/github/Game"));
+            Assert.IsFalse(FunplayMCPClientConfigPanel.IsStaleSpellingOfProjectKey("C:/github/Game", "C:/github/Game"));
+        }
+
+        [Test]
+        public void MigrationLeavesLiveCaseVariantProjectEntriesAlone()
+        {
+            const string scopeKey = "C:/github/Game";
+            var root = new Dictionary<string, object>
+            {
+                ["projects"] = new Dictionary<string, object>
+                {
+                    ["c:/github/Game"] = new Dictionary<string, object>
+                    {
+                        ["mcpServers"] = new Dictionary<string, object>
+                        {
+                            [RecordedKey] = Entry("http://127.0.0.1:24004/mcp")
+                        }
+                    }
+                }
+            };
+            var original = Write(root);
+
+            string migratedFrom;
+            Assert.IsFalse(FunplayMCPClientConfigPanel.TryMigrateLegacyClaudeCodeEntryFile(
+                _configPath, RecordedKey, null, scopeKey, out migratedFrom));
+            Assert.AreEqual(original, File.ReadAllText(_configPath));
+        }
+
+        [Test]
+        public void MigratesBackslashProjectKeyToForwardSlashKeyAndDropsTheEmptyStub()
+        {
+            const string scopeKey = "C:/github/Game";
+            var root = new Dictionary<string, object>
+            {
+                ["projects"] = new Dictionary<string, object>
+                {
+                    [@"C:\github\Game"] = new Dictionary<string, object>
+                    {
+                        ["mcpServers"] = new Dictionary<string, object>
+                        {
+                            [RecordedKey] = Entry("http://127.0.0.1:24003/mcp")
+                        }
+                    },
+                    [scopeKey] = new Dictionary<string, object>
+                    {
+                        ["allowedTools"] = new List<object>()
+                    }
+                }
+            };
+            Write(root);
+
+            string migratedFrom;
+            Assert.IsTrue(FunplayMCPClientConfigPanel.TryMigrateLegacyClaudeCodeEntryFile(
+                _configPath, RecordedKey, @"C:\github\Game", scopeKey, out migratedFrom));
+
+            StringAssert.Contains(@"C:\github\Game", migratedFrom);
+            var projects = Map(Read(), "projects");
+            Assert.IsFalse(projects.ContainsKey(@"C:\github\Game"));
+            Assert.IsTrue(Map(projects, scopeKey).ContainsKey("allowedTools"));
+            Assert.AreEqual(
+                "http://127.0.0.1:24003/mcp",
+                EntryUrl(Map(Map(projects, scopeKey), "mcpServers")[RecordedKey]));
+        }
+
+        [Test]
+        public void LeavesLiveForwardSlashUnityProjectEntryAlone()
+        {
+            // Claude Code run from the Unity subfolder keys its session by the forward-slash path;
+            // older versions of this plugin only ever wrote the backslash spelling.
+            const string scopeKey = "C:/repo";
+            var root = new Dictionary<string, object>
+            {
+                ["projects"] = new Dictionary<string, object>
+                {
+                    ["C:/repo/Game"] = new Dictionary<string, object>
+                    {
+                        ["mcpServers"] = new Dictionary<string, object>
+                        {
+                            [RecordedKey] = Entry("http://127.0.0.1:24005/mcp")
+                        }
+                    }
+                }
+            };
+            var original = Write(root);
+
+            string migratedFrom;
+            Assert.IsFalse(FunplayMCPClientConfigPanel.TryMigrateLegacyClaudeCodeEntryFile(
+                _configPath, RecordedKey, @"C:\repo\Game", scopeKey, out migratedFrom));
+            Assert.AreEqual(original, File.ReadAllText(_configPath));
+        }
+
+        [Test]
+        public void KeepsBackslashProjectEntryThatClaudeCodeAlsoUses()
+        {
+            const string scopeKey = "C:/github/Game";
+            var root = new Dictionary<string, object>
+            {
+                ["projects"] = new Dictionary<string, object>
+                {
+                    [@"C:\github\Game"] = new Dictionary<string, object>
+                    {
+                        ["history"] = new List<object> { "keep" },
+                        ["mcpServers"] = new Dictionary<string, object>
+                        {
+                            [RecordedKey] = Entry("http://127.0.0.1:24003/mcp")
+                        }
+                    }
+                }
+            };
+            Write(root);
+
+            string migratedFrom;
+            Assert.IsTrue(FunplayMCPClientConfigPanel.TryMigrateLegacyClaudeCodeEntryFile(
+                _configPath, RecordedKey, @"C:\github\Game", scopeKey, out migratedFrom));
+
+            var legacy = Map(Map(Read(), "projects"), @"C:\github\Game");
+            Assert.IsTrue(legacy.ContainsKey("history"));
+            Assert.IsFalse(Map(legacy, "mcpServers").ContainsKey(RecordedKey));
         }
 
         [Test]
@@ -303,11 +443,6 @@ namespace Funplay.Editor
         private static Dictionary<string, object> ProjectServers(Dictionary<string, object> root)
         {
             return Map(Map(Map(root, "projects"), ProjectScopePath), "mcpServers");
-        }
-
-        private static Dictionary<string, object> LegacyProjectServers(Dictionary<string, object> root)
-        {
-            return Map(Map(Map(root, "projects"), LegacyProjectPath), "mcpServers");
         }
 
         private static Dictionary<string, object> Map(Dictionary<string, object> parent, string key)

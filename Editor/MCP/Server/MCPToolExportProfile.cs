@@ -43,6 +43,11 @@ namespace Funplay.Editor.MCP.Server
             "get_object_screen_bounds",
             "get_ui_defaults",
             "create_project_ui",
+            // UI Toolkit (PanelRenderer/UIDocument) -- the counterpart of the uGUI tools above
+            "get_ui_toolkit_info",
+            "create_ui_toolkit_panel",
+            "get_visual_tree",
+            "click_ui_toolkit_element",
             // Editor state -- high-frequency reads/writes
             "get_editor_state",
             "get_selection",

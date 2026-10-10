@@ -6,6 +6,7 @@ using System.Reflection;
 using Funplay.Editor.Api.Models;
 using Funplay.Editor.Settings;
 using UnityEngine;
+using Funplay.Editor.Tools.Helpers;
 
 namespace Funplay.Editor.Tools
 {
@@ -76,7 +77,7 @@ namespace Funplay.Editor.Tools
 
             try
             {
-                var assemblies = AppDomain.CurrentDomain.GetAssemblies();
+                var assemblies = LoadedAssemblies.All();
                 foreach (var assembly in assemblies)
                 {
                     if (assembly.IsDynamic) continue;

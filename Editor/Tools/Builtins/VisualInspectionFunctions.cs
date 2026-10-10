@@ -61,6 +61,8 @@ namespace Funplay.Editor.Tools.Builtins
                 }
                 else
                 {
+                    if (UIToolkitPanels.GetHost(go) != null)
+                        return Response.Error("UI_TOOLKIT_HOST", new { hint = "PanelRenderer/UIDocument bounds are per VisualElement; use get_visual_tree (screen_bounds) instead." });
                     var renderer = go.GetComponent<Renderer>();
                     if (renderer == null) return Response.Error("RECT_TRANSFORM_OR_RENDERER_REQUIRED");
                     camera = camera ?? Camera.main;

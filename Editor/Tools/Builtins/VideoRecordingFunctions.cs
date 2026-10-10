@@ -113,7 +113,7 @@ namespace Funplay.Editor.Tools.Builtins
 
                 var size = ResolveOutputSize(source.width, source.height, maxDimension);
                 var id = Guid.NewGuid().ToString("N");
-                var directory = Path.Combine(Directory.GetParent(Application.dataPath).FullName, "Library", "FunplayMcp", "Recordings");
+                var directory = RecordingDirectory;
                 Directory.CreateDirectory(directory);
                 var path = Path.Combine(directory, "game-view-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + id + ".mp4");
                 var state = new RecordingState
@@ -175,7 +175,9 @@ namespace Funplay.Editor.Tools.Builtins
             _lastSavedAt = EditorApplication.timeSinceStartup;
         }
 
-        internal static string RecordingDirectory => Path.Combine(Path.GetDirectoryName(Application.dataPath), "Library/FunplayMcp/Recordings");
+        // Canonical (GetFullPath) so it compares equal to receipt paths on Windows, where
+        // Application.dataPath uses '/' but GetFullPath returns '\'.
+        internal static string RecordingDirectory => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(Application.dataPath), "Library", "FunplayMcp", "Recordings"));
         internal static RecordingState FindRecording(string id)
         {
             if (!Guid.TryParseExact(id, "N", out _)) return null;
@@ -185,7 +187,7 @@ namespace Funplay.Editor.Tools.Builtins
             {
                 var state = File.Exists(receipt) ? JsonUtility.FromJson<RecordingState>(File.ReadAllText(receipt)) : null;
                 if (state == null || state.recording_id != id || string.IsNullOrEmpty(state.path) ||
-                    Path.GetDirectoryName(Path.GetFullPath(state.path)) != RecordingDirectory) return null;
+                    !string.Equals(Path.GetDirectoryName(Path.GetFullPath(state.path)), RecordingDirectory, Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) return null;
                 return state;
             }
             catch { return null; }

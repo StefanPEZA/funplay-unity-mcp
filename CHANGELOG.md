@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### Added
+
+- UI Toolkit support with Unity 6.6 `PanelRenderer` (and `UIDocument` on earlier versions or as the Legacy host): `get_ui_toolkit_info` (framework per scene, hosts, PanelSettings/themes, issues), `create_ui_toolkit_panel` (version-correct host, PanelSettings resolution/creation with the default runtime theme, UXML, nesting, Undo), `configure_ui_toolkit_panel`, `create_panel_settings`, `get_visual_tree` (live elements, screen bounds, styles, findings), `pick_ui_toolkit_element` and `click_ui_toolkit_element` (pointer dispatch through the panel, so Clickable/`ClickEvent` run as with a real mouse). PanelRenderer is resolved by reflection, so Unity 2022.3 support is unchanged. Core adds `get_ui_toolkit_info`, `create_ui_toolkit_panel`, `get_visual_tree` and `click_ui_toolkit_element` (44 tools); Full has 187 tools across 43 modules.
+- `simulate_mouse_click` clicks UI Toolkit panels with or without an EventSystem (strategy `ui-toolkit`), `raycast_at_point` reports UI Toolkit picks under `ui_toolkit` instead of failing with `NO_EVENT_SYSTEM`, and `get_ui_defaults` includes a `ui_frameworks` summary.
+
+### Changed
+
+- uGUI tools (`create_canvas`/`button`/`text`/`image`, `create_project_ui`, `get_ui_defaults`) say they are Canvas-only; server instructions, the built-in UI skill and its framework reference route UI Toolkit work to the new tools and explain that PanelRenderer exposes its tree through `RegisterUIReloadCallback`, not `rootVisualElement`. `get_object_screen_bounds` returns `UI_TOOLKIT_HOST` for panel hosts instead of meaningless Renderer bounds.
+
+### Fixed
+
+- Unity 6.6 object IDs: `EntityId.ToString()` now returns `index:version`, which broke ID round-trips and every by-ID lookup (UI parents, structured queries, component edits). IDs are serialized as the numeric raw EntityId and both forms are accepted.
+- Claude Code configuration on Windows was written under `projects["C:\\path\\to\\project"]`, a key Claude Code never reads (it uses `C:/path/to/project`). Keys are normalized to forward slashes; Configure and the startup migration move entries left under the backslash key and drop the empty stub. The migration never moves the forward-slash Unity-folder key, which Claude Code itself uses for sessions started there.
+- `execute_code` no longer logs `Multiple loaded assemblies share the simple name 'Snippet'`: each compilation gets a unique assembly name.
+- Windows: recording receipts were never found (`RECORDING_NOT_FOUND`) because the recordings directory mixed `/` and `\` while the containment check used canonical paths, breaking `extract_recording_frames`/`get_recording_frame`.
+- Unity 6.6: frame extraction finds `MediaDecoder` in its new `UnityEditor.MediaModule` assembly.
+- Windows: `.cs` files checked out as CRLF made verbatim-string output (server instructions, generated skills, AGENTS.md/CLAUDE.md blocks) mix CRLF and LF and broke exact legacy-block matching. `.gitattributes` now pins `*.cs` to LF, matching `.editorconfig`.
+- UI Toolkit: a nested host's elements were listed and counted under both hosts in `get_visual_tree` and `get_ui_toolkit_info`; `create_panel_settings` saved the asset before rejecting an invalid `render_mode`.
+- Camera-relative screen bounds are computed from the camera matrices; `Camera.WorldToViewportPoint` snapped half-pixel camera rects and was off by ~0.5 px.
+- Unity 6.6 compiler warnings: deprecated `FindObjectsByType` sort-mode overloads, `FindFirstObjectByType`, `ShaderUtil` shader-property APIs and `AssetDatabase.ImportPackage` (CS0618), plus the new assembly analyzers for `AppDomain.GetAssemblies`, `Assembly.Location` and `Assembly.Load(byte[])` (UAC0005/UAC0007/UAC0020), go through version-gated helpers.
+
+### Validation
+
+- Unity 6000.6.5f1 on Windows: batch mode with a graphics device ran 756 EditMode cases with 0 failures (29 environment skips); an interactive Editor ran 751 with 0 failures and 22 skips (scene-lifecycle/preview fixtures need a saved scene the test framework replaces, TMP fixture, and the pre-6.6-only PanelRenderer case). Package compilation reports 0 warnings. A live MCP session created a PanelRenderer from UXML/USS, captured it in the Game View and clicked it in Play Mode through `simulate_mouse_click` and `click_ui_toolkit_element`, reaching the game's own `Button.clicked` handler. Unity 2022.3 was not re-run.
+
 ## [0.7.0] - 2026-10-08
 
 ### Changed

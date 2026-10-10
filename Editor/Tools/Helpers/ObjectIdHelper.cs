@@ -27,6 +27,44 @@ namespace Funplay.Editor.Tools.Helpers
         // to internal so the cache miss path keeps working until the API stabilises.
         private static readonly MethodInfo EntityIdParseMethod = ResolveEntityIdParseMethod();
 
+        // Unity 6.6 formats EntityId.ToString() as "index:version", which clients and the numeric
+        // auto-detection in ObjectsHelper do not treat as an ID. The raw 64-bit value round-trips
+        // through EntityId.Parse on every version that exposes it, so prefer that when available.
+        private static readonly Func<EntityId, ulong> EntityIdToRawData = ResolveEntityIdToRawData();
+
+        private delegate ulong RawDataGetter(ref EntityId id);
+
+        private static Func<EntityId, ulong> ResolveEntityIdToRawData()
+        {
+            var toULong = typeof(EntityId).GetMethod(
+                "ToULong",
+                BindingFlags.Public | BindingFlags.Static,
+                null,
+                new[] { typeof(EntityId) },
+                null);
+            if (toULong != null && toULong.ReturnType == typeof(ulong))
+                return (Func<EntityId, ulong>)Delegate.CreateDelegate(typeof(Func<EntityId, ulong>), toULong);
+
+            var getRawData = typeof(EntityId).GetMethod("GetRawData", BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+            if (getRawData != null && getRawData.ReturnType == typeof(ulong))
+            {
+                // Open-instance delegate over the struct: no boxing/reflection per serialized ID.
+                var getter = (RawDataGetter)Delegate.CreateDelegate(typeof(RawDataGetter), getRawData);
+                return id => getter(ref id);
+            }
+
+            return null;
+        }
+
+        private static string FormatEntityId(EntityId id)
+        {
+            if (id == EntityId.None)
+                return "0";
+            return EntityIdToRawData != null
+                ? EntityIdToRawData(id).ToString(CultureInfo.InvariantCulture)
+                : id.ToString();
+        }
+
         private static MethodInfo ResolveEntityIdParseMethod()
         {
             var publicParse = typeof(EntityId).GetMethod(
@@ -52,7 +90,7 @@ namespace Funplay.Editor.Tools.Helpers
                 return "0";
 
 #if UNITY_6000_4_OR_NEWER
-            var id = obj.GetEntityId().ToString();
+            var id = FormatEntityId(obj.GetEntityId());
             CacheEntityId(id, obj);
             return id;
 #else
@@ -63,10 +101,32 @@ namespace Funplay.Editor.Tools.Helpers
         internal static string GetSerializedReferenceId(SerializedProperty property)
         {
 #if UNITY_6000_4_OR_NEWER
-            return property.objectReferenceEntityIdValue == EntityId.None ? "0" : property.objectReferenceEntityIdValue.ToString();
+            return FormatEntityId(property.objectReferenceEntityIdValue);
 #else
             return property.objectReferenceInstanceIDValue.ToString(CultureInfo.InvariantCulture);
 #endif
+        }
+
+        /// <summary>
+        /// Whether <paramref name="value"/> has the shape of an MCP object ID: an integer (legacy
+        /// InstanceID or raw EntityId) or Unity 6.6's "index:version" EntityId text.
+        /// </summary>
+        public static bool LooksLikeObjectId(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return false;
+
+            value = value.Trim();
+            if (long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out _) ||
+                ulong.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
+            {
+                return true;
+            }
+
+            var separator = value.IndexOf(':');
+            return separator > 0 &&
+                   int.TryParse(value.Substring(0, separator), NumberStyles.Integer, CultureInfo.InvariantCulture, out _) &&
+                   int.TryParse(value.Substring(separator + 1), NumberStyles.Integer, CultureInfo.InvariantCulture, out _);
         }
 
         public static UnityObject ToObject(string objectId)

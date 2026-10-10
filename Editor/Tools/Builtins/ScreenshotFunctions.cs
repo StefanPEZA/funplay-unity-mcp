@@ -197,7 +197,7 @@ namespace Funplay.Editor.Tools.Builtins
 
             var camera = Camera.main;
             if (camera == null)
-                camera = UnityEngine.Object.FindFirstObjectByType<Camera>();
+                camera = SceneObjectLookup.FindAny<Camera>();
 
             if (camera == null)
                 return ToolResultFormatter.Error("CAMERA_NOT_FOUND", new { hint = "Add a Camera component to capture the Game View." });
@@ -666,7 +666,7 @@ namespace Funplay.Editor.Tools.Builtins
 
             // Fall back to scene-wide bounds.
             Bounds? merged = null;
-            foreach (var renderer in UnityEngine.Object.FindObjectsByType<Renderer>(FindObjectsSortMode.None))
+            foreach (var renderer in SceneObjectLookup.FindAll<Renderer>())
             {
                 if (renderer == null || !renderer.gameObject.activeInHierarchy) continue;
                 merged = merged.HasValue ? Encapsulate(merged.Value, renderer.bounds) : renderer.bounds;
@@ -1104,7 +1104,7 @@ namespace Funplay.Editor.Tools.Builtins
             {
             }
 
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            foreach (var assembly in LoadedAssemblies.All())
             {
                 type = assembly.GetType(fullName);
                 if (type != null)
@@ -1492,7 +1492,7 @@ namespace Funplay.Editor.Tools.Builtins
             var states = new List<OverlayCanvasCaptureState>();
             try
             {
-                var allCanvases = UnityEngine.Object.FindObjectsByType<Canvas>(FindObjectsSortMode.None);
+                var allCanvases = SceneObjectLookup.FindAll<Canvas>();
                 foreach (var canvas in allCanvases)
                 {
                     if (canvas == null ||

@@ -1,1 +1,4 @@
 *.meta linguist-generated=true
+# C# verbatim strings embed the source file's line endings. Generated MCP instructions, skills and
+# AGENTS.md/CLAUDE.md blocks must be identical on every platform, so never check .cs out as CRLF.
+*.cs text eol=lf

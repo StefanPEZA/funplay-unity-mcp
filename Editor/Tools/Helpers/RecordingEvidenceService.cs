@@ -80,7 +80,9 @@ namespace Funplay.Editor.Tools.Helpers
                 if (recording.width < 2 || recording.width > 1920 || recording.height < 2 || recording.height > 1920) return Response.Error("INVALID_RECORDING_DIMENSIONS");
                 // Unity provides no public Edit Mode video decoder. Feature-detect its narrow native
                 // decoder interface; unsupported editor versions fail explicitly, with no shell tools.
-                var type = typeof(EditorWindow).Assembly.GetType("UnityEditorInternal.Media.MediaDecoder");
+                // Lives beside the public MediaEncoder/MediaTime: UnityEditor.CoreModule before
+                // Unity 6.6, UnityEditor.MediaModule from 6.6.
+                var type = LoadedAssemblies.FindType("UnityEditorInternal.Media.MediaDecoder", typeof(MediaTime).Assembly, typeof(EditorWindow).Assembly);
                 nextFrame = type?.GetMethod("GetNextFrame", new[] { typeof(Texture2D), typeof(MediaTime).MakeByRefType() });
                 if (nextFrame == null) return Response.Error("VIDEO_DECODER_UNAVAILABLE", new { hint = "This Unity Editor does not expose the supported MediaDecoder interface." });
                 active = new RecordingFramesJob { job_id = Guid.NewGuid().ToString("N"), recording_id = recordingId, timestamps = times, started_at = DateTime.UtcNow.ToString("O") };

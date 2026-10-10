@@ -17,7 +17,7 @@ namespace Funplay.Editor.Tools.Builtins
     [ToolProvider("UI")]
     internal static class UIFunctions
     {
-        [Description("Create an Edit Mode Canvas from the project template/defaults, preserving existing EventSystems. Does not save automatically.")]
+        [Description("Create an Edit Mode Canvas from the project template/defaults, preserving existing EventSystems. Does not save automatically. uGUI (Canvas) only; for UI Toolkit use create_ui_toolkit_panel.")]
         [SceneEditingTool]
         public static object CreateCanvas(
             [ToolParam("Canvas name", Required = false)] string name = "Canvas",
@@ -26,7 +26,7 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("auto, input_system or legacy; never replaces existing modules", Required = false)] string input_module = null)
             => UICreationService.Create("canvas", name, null, null, null, null, null, null, null, render_mode, null, template_path, null, null, null, input_module);
 
-        [Description("Create an Edit Mode UI Button using project prefab/typography defaults. Preserves template bindings; no runtime UI reconstruction.")]
+        [Description("Create an Edit Mode UI Button using project prefab/typography defaults. Preserves template bindings; no runtime UI reconstruction. uGUI (Canvas) only; for UI Toolkit use create_ui_toolkit_panel.")]
         [SceneEditingTool]
         public static object CreateButton(
             [ToolParam("Button name")] string name,
@@ -43,7 +43,7 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Optional shared font material preset", Required = false)] string font_material = null)
             => UICreationService.Create("button", name, text, parent_name, position, size, anchor, pivot, null, null, text_component, template_path, text_path, font_asset, font_material, null);
 
-        [Description("Create an Edit Mode text element using project prefab/typography defaults. Empty projects prefer TextMeshProUGUI; missing TMP resources are reported without fallback.")]
+        [Description("Create an Edit Mode text element using project prefab/typography defaults. Empty projects prefer TextMeshProUGUI; missing TMP resources are reported without fallback. uGUI (Canvas) only; for UI Toolkit use create_ui_toolkit_panel.")]
         [SceneEditingTool]
         public static object CreateText(
             [ToolParam("Object name")] string name,
@@ -61,7 +61,7 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Optional shared font material preset", Required = false)] string font_material = null)
             => UICreationService.Create("text", name, text, parent_name, position, size, anchor, pivot, font_size, null, text_component, template_path, text_path, font_asset, font_material, null);
 
-        [Description("Create a UI Image element")]
+        [Description("Create a UI Image element. uGUI (Canvas) only; for UI Toolkit use create_ui_toolkit_panel.")]
         [SceneEditingTool]
         public static string CreateImage(
             [ToolParam("Name for the image element")] string name,
@@ -222,7 +222,8 @@ namespace Funplay.Editor.Tools.Builtins
                      "that would actually receive the click (resolved by bubbling up the hierarchy, exactly like uGUI does). " +
                      "The summary names the click receiver, or the element silently swallowing the click when the topmost " +
                      "hit has no click handler anywhere up its parent chain -- the classic 'invisible raycast blocker' bug. " +
-                     "Requires a live EventSystem (Play Mode).")]
+                     "uGUI hits require a live EventSystem (Play Mode). Also reports UI Toolkit (PanelRenderer/UIDocument) picks under " +
+                     "ui_toolkit, which work with or without an EventSystem.")]
         [ReadOnlyTool]
         public static string RaycastAtPoint(
             [ToolParam("X coordinate of the point to test.")] float x,
@@ -233,15 +234,6 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("render_pixels, image_pixels or normalized. Omitted preserves the normalized flag.", Required = false)] string coordinate_space = null,
             [ToolParam("Screenshot ID, required for image_pixels; freshness/geometry validated", Required = false)] string capture_id = null)
         {
-            var eventSystem = EventSystem.current;
-            if (eventSystem == null)
-            {
-                return ToolResultFormatter.Error("NO_EVENT_SYSTEM", new
-                {
-                    hint = "No live EventSystem found. Enter Play Mode (or ensure the scene has an enabled EventSystem) first."
-                });
-            }
-
             // Screen.width/height on the editor main thread report the focused editor
             // window, not the game render resolution the UI canvases are laid out in.
             // Resolve the real Game View target size (same reflection the screenshot
@@ -251,6 +243,39 @@ namespace Funplay.Editor.Tools.Builtins
                 out var point, out var geometry, out var coordinateError)) return ToolResultFormatter.Error(coordinateError);
             var screenWidth = geometry.render_width; var screenHeight = geometry.render_height;
             var px = point.x; var py = point.y;
+
+            var toolkitPicks = UIToolkitPanels.PickAt(point, screenHeight);
+            var describedPicks = toolkitPicks.Select(p => UIToolkitPanels.DescribePick(p, screenHeight)).ToArray();
+            var topPick = UIToolkitPanels.TopPick(toolkitPicks);
+            var toolkit = toolkitPicks.Count == 0 ? null : new
+            {
+                top = topPick != null ? describedPicks[toolkitPicks.IndexOf(topPick)] : null,
+                panels = describedPicks
+            };
+
+            var eventSystem = EventSystem.current;
+            if (eventSystem == null)
+            {
+                if (toolkit == null)
+                {
+                    return ToolResultFormatter.Error("NO_EVENT_SYSTEM", new
+                    {
+                        hint = "No live EventSystem or UI Toolkit panel found. Enter Play Mode (or ensure the scene has an enabled EventSystem) first."
+                    });
+                }
+
+                return JsonConvert.SerializeObject(Response.Success(
+                    toolkit.top != null ? "No EventSystem; UI Toolkit element found at this point." : "No EventSystem; no UI Toolkit element at this point.",
+                    new
+                    {
+                        screen_position = new { x = px, y = py },
+                        geometry,
+                        screen_size = new { width = screenWidth, height = screenHeight },
+                        hit_count = 0,
+                        hits = Array.Empty<object>(),
+                        ui_toolkit = toolkit
+                    }));
+            }
 
             var pointerData = new PointerEventData(eventSystem) { position = new Vector2(px, py) };
             var results = new List<RaycastResult>();
@@ -309,7 +334,8 @@ namespace Funplay.Editor.Tools.Builtins
                     hit_count = results.Count,
                     click_receiver = clickReceiver,
                     swallowed_by = swallowedBy,
-                    hits
+                    hits,
+                    ui_toolkit = toolkit
                 }));
         }
 
