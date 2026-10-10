@@ -116,7 +116,7 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Duration of the drag in seconds", Required = false)] float duration = 0.5f,
             [ToolParam("Mouse button: left, right, or middle", Required = false)] string button = "left",
             [ToolParam("render_pixels, image_pixels or normalized", Required = false)] string coordinate_space = "render_pixels",
-            [ToolParam("bottom_left or top_left", Required = false)] string origin = "bottom_left",
+            [ToolParam("top_left (default for image_pixels) or bottom_left (default otherwise)", Required = false)] string origin = null,
             [ToolParam("Fresh screenshot ID, required for image_pixels", Required = false)] string capture_id = null)
         {
             if (!EditorApplication.isPlaying)

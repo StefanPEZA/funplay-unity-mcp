@@ -184,6 +184,7 @@ namespace Funplay.Editor.Tests
             var cleared = JObject.FromObject(UIToolkitFunctions.ConfigureUiToolkitPanel(id, "none"));
             Assert.IsTrue((bool)cleared["success"], cleared.ToString());
             Assert.IsNull(UIToolkitPanels.GetVisualTreeAsset(host));
+            Assert.AreEqual("none", (string)cleared["data"]["host"]["tree_source"], "the previous build is not reported as code-built: " + cleared);
 
             var notHost = new GameObject("NotAHost");
             try
@@ -453,6 +454,8 @@ namespace Funplay.Editor.Tests
             var parentOnly = Data(UIToolkitFunctions.GetVisualTree(parentId, "Button#play"));
             Assert.AreEqual(parentOwned + childCount, (int)parentOnly["hosts"][0]["element_count"]);
             Assert.AreEqual(2, ((JArray)parentOnly["hosts"][0]["elements"]).Count);
+            Assert.AreEqual(childId, (string)parentOnly["hosts"][0]["nested_hosts"][0]["object_id"], "nested panels are marked: " + parentOnly);
+            Assert.AreEqual(UIToolkitPanels.PathOf(parentRoot, childRoot), (string)parentOnly["hosts"][0]["nested_hosts"][0]["element_path"]);
 
             // Clicking across all hosts sees each of the two play buttons once, relative to its owner.
             var ambiguous = JObject.FromObject(UIToolkitFunctions.ClickElement(null, "Button#play", null, null, "left", false));
@@ -460,6 +463,86 @@ namespace Funplay.Editor.Tests
             var candidates = (JArray)ambiguous["data"]["details"];
             Assert.AreEqual(2, candidates.Count, ambiguous.ToString());
             CollectionAssert.AreEquivalent(new[] { parentId, childId }, candidates.Select(c => (string)c["host_id"]).ToArray());
+        }
+
+        [UnityTest]
+        public IEnumerator EmptyHostWithANestedPanelHasNoTreeSource()
+        {
+            CreateSettings();
+            Assert.IsTrue((bool)JObject.FromObject(UIToolkitFunctions.CreateUiToolkitPanel("UitkEmptyOuter", uxmlPath, settingsPath))["success"]);
+            created = GameObject.Find("UitkEmptyOuter");
+            var parentId = ObjectIdHelper.GetSerializableId(created);
+            Assert.IsTrue((bool)JObject.FromObject(UIToolkitFunctions.CreateUiToolkitPanel("UitkEmptyInner", uxmlPath, parent: parentId))["success"]);
+            Assert.IsTrue((bool)JObject.FromObject(UIToolkitFunctions.ConfigureUiToolkitPanel(parentId, "none"))["success"]);
+            var parentHost = UIToolkitPanels.GetHost(created);
+            var childHost = UIToolkitPanels.GetHost(created.transform.Find("UitkEmptyInner").gameObject);
+
+            VisualElement parentRoot = null, childRoot = null;
+            for (var frame = 0; frame < 120; frame++)
+            {
+                parentRoot = UIToolkitPanels.GetRoot(parentHost);
+                childRoot = UIToolkitPanels.GetRoot(childHost);
+                if (parentRoot != null && childRoot != null && parentRoot.hierarchy.childCount == 1 && ReferenceEquals(parentRoot.hierarchy[0], childRoot)) break;
+                yield return null;
+            }
+            if (parentRoot == null || childRoot == null || parentRoot.hierarchy.childCount != 1 || !ReferenceEquals(parentRoot.hierarchy[0], childRoot))
+                Assert.Ignore("The nested host's root is not the only child of its parent's root in this Editor mode.");
+
+            Assert.AreEqual("none", (string)JObject.FromObject(UIToolkitFunctions.DescribeHost(parentHost))["tree_source"]);
+            var tree = Data(UIToolkitFunctions.GetVisualTree(parentId));
+            Assert.AreEqual("none", (string)tree["hosts"][0]["host"]["tree_source"], tree.ToString());
+            var all = Data(UIToolkitFunctions.GetVisualTree(null));
+            Assert.AreEqual("none", (string)all["hosts"].Single(h => (string)h["host"]["object_id"] == parentId)["host"]["tree_source"], all.ToString());
+        }
+
+        [UnityTest]
+        public IEnumerator HiddenElementsAreNotVisibleAndCannotBeScrolled()
+        {
+            yield return BuildLivePanel("UitkHidden");
+            var scroll = new ScrollView { name = "list", style = { width = 220, height = 100, flexShrink = 0 } };
+            for (var i = 0; i < 10; i++) scroll.Add(new Button { name = "row" + i, text = "Row " + i, style = { height = 60, flexShrink = 0 } });
+            liveRoot.Q("menu").Add(scroll);
+            scroll.style.display = DisplayStyle.None;
+            UIToolkitPanels.ValidateLayout(liveRoot.panel);
+            var id = ObjectIdHelper.GetSerializableId(created);
+
+            var row = (JObject)Data(UIToolkitFunctions.GetVisualTree(id, "Button#row0"))["hosts"][0]["elements"][0];
+            Assert.IsFalse((bool)row["displayed"], row.ToString());
+            Assert.AreEqual(0f, (float)row["visible_fraction"], row.ToString());
+            Assert.AreEqual(JTokenType.Null, row["clipped_by"].Type, row.ToString());
+            Assert.AreEqual(JTokenType.Null, row["scroll_view"].Type, row.ToString());
+
+            var hiddenScroll = JObject.FromObject(UIToolkitFunctions.ScrollElement(id, "Button#row0", null, null, 0, 200));
+            Assert.AreEqual("ELEMENT_NOT_DISPLAYED", (string)hiddenScroll["code"], hiddenScroll.ToString());
+            Assert.AreEqual(Vector2.zero, scroll.scrollOffset);
+
+            var displayedOnly = Data(UIToolkitFunctions.GetVisualTree(id, "Button", displayed_only: true));
+            var names = ((JArray)displayedOnly["hosts"][0]["elements"]).Select(e => (string)e["name"]).ToArray();
+            CollectionAssert.AreEquivalent(new[] { "play", "quit" }, names, displayedOnly.ToString());
+        }
+
+        [UnityTest]
+        public IEnumerator CompactTreeDropsEmptyAndDuplicateFields()
+        {
+            yield return BuildLivePanel("UitkCompact");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var full = Data(UIToolkitFunctions.GetVisualTree(id, "Button#play"));
+            var compact = Data(UIToolkitFunctions.GetVisualTree(id, "Button#play", compact: true));
+            var element = (JObject)compact["hosts"][0]["elements"][0];
+            Assert.AreEqual("Play", (string)element["text"]);
+            Assert.AreEqual((string)full["hosts"][0]["elements"][0]["path"], (string)element["path"]);
+            Assert.IsNull(element["styles"], "null fields are dropped: " + element);
+            Assert.IsNull(element["value"], element.ToString());
+            if (element["screen_bounds"] != null)
+            {
+                Assert.IsNull(element["panel_bounds"], element.ToString());
+                Assert.IsNull(element["screen_bounds"]["render_bottom_left"], element.ToString());
+                Assert.IsNotNull(element["screen_bounds"]["center_render_pixels"], element.ToString());
+            }
+            var host = (JObject)compact["hosts"][0]["host"];
+            Assert.AreEqual(id, (string)host["object_id"]);
+            Assert.IsNull(host["panel_settings"], host.ToString());
+            Assert.Less(compact.ToString().Length, full.ToString().Length);
         }
 
         [UnityTest]

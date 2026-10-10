@@ -765,7 +765,9 @@ namespace Funplay.Editor.Tools.Helpers
         {
             var bound = element.worldBound;
             var hasLayout = HasLayout(element);
-            var visibility = hasLayout && element.panel != null ? (clipCache ?? new ClipCache()).Of(element) : (Visibility?)null;
+            var displayed = displayCache?.IsDisplayed(element) ?? IsDisplayed(element);
+            // A hidden element's collapsed bound says nothing about clipping.
+            var visibility = displayed && hasLayout && element.panel != null ? (clipCache ?? new ClipCache()).Of(element) : (Visibility?)null;
             var partlyVisible = visibility.HasValue && !visibility.Value.FullyVisible && visibility.Value.Fraction > 0f;
             object screenBounds = null;
             if (hasLayout && mapping.HasValue)
@@ -802,9 +804,9 @@ namespace Funplay.Editor.Tools.Helpers
                 classes = element.GetClasses().ToArray(),
                 text = GetText(element),
                 value = DescribeValue(element),
-                displayed = displayCache?.IsDisplayed(element) ?? IsDisplayed(element),
-                // Ancestor clipping (ScrollView viewport, overflow: hidden) and the panel's area.
-                visible_fraction = visibility.HasValue ? (float?)(float)Math.Round(visibility.Value.Fraction, 3) : null,
+                displayed,
+                // Ancestor clipping (ScrollView viewport, overflow: hidden) and the panel's area; 0 when hidden.
+                visible_fraction = visibility.HasValue ? (float?)(float)Math.Round(visibility.Value.Fraction, 3) : displayed ? null : (float?)0f,
                 clipped_by = ClipperLabel(visibility?.ClippedBy),
                 scroll_view = visibility.HasValue && !visibility.Value.FullyVisible && visibility.Value.ScrollView != null ? Label(visibility.Value.ScrollView) : null,
                 enabled = element.enabledInHierarchy,

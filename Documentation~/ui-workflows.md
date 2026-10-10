@@ -233,9 +233,10 @@ and output dimensions, output viewport, pixel units, image top-left/render botto
 scale factors and whether the capture is suitable for live input mapping. Camera-fallback, Scene
 View and editor-window captures are **not** interchangeable with the live Game View.
 
-For a click measured on a resized screenshot, pass `coordinate_space=image_pixels`,
-`origin=top_left` and the returned `capture_id` to `simulate_mouse_click`. Use the same fields on
-`simulate_mouse_drag` and `raycast_at_point`. Pixel/render bottom-left remains the default, and
+For a click measured on a resized screenshot, pass `coordinate_space=image_pixels` and the
+returned `capture_id` to `simulate_mouse_click`, `simulate_mouse_drag`, `simulate_ui_scroll`,
+`raycast_at_point` or `pick_ui_toolkit_element`. `origin` defaults to `top_left` for
+`image_pixels` and `bottom_left` otherwise. Render pixels remain the default space, and
 raycast's legacy `normalized` flag is still supported. Inputs now reject out-of-bounds/non-finite
 coordinates rather than silently clamping onto another target. `normalized` uses 0–1 across the
 full render framebuffer; camera letterbox bars remain part of that framebuffer.
@@ -341,7 +342,10 @@ Typical flow:
    scrolled out of a ScrollView is not a finding. Selectors are one compound `Type#name.class`
    (base types match, so `TextElement` matches `Label`); a text match on a Button's inner Label
    carries the Button's `click_receiver_path`. Hosts report `tree_source` (`uxml`, `code` or
-   `none`); a host without UXML is only flagged when its root is still empty in Play Mode.
+   `none`) and `nested_hosts`; a host without UXML is only flagged when its root is still empty in
+   Play Mode. Hidden elements report `visible_fraction: 0`. `displayed_only` skips them and `compact`
+   trims empty fields and duplicate bounds. Element paths are child indices that shift when the
+   tree changes; re-read after UI changes.
 5. In Play Mode, `click_ui_toolkit_element(selector|text|element_path)` dispatches pointer
    move/down/up through the panel, so Clickable manipulators, `:hover`/`:active` and `ClickEvent`
    run as with a real mouse. `clicked` is true when a `ClickEvent` arrived, the receiver's
@@ -352,7 +356,7 @@ Typical flow:
    `ELEMENT_CLIPPED` with the clipping ancestor and ScrollView. `scroll_into_view=true`, or
    `scroll_ui_toolkit(selector|text|element_path)` beforehand, scrolls the enclosing ScrollViews
    (`ScrollView.ScrollTo`); `scroll_ui_toolkit` with `delta_x`/`delta_y` offsets a ScrollView by
-   panel pixels. `simulate_mouse_click` uses the same dispatch at a
+   panel pixels (hidden elements: `ELEMENT_NOT_DISPLAYED`). `simulate_mouse_click` uses the same dispatch at a
    screen point (strategy `ui-toolkit`) with or without an EventSystem, and
    `raycast_at_point` / `pick_ui_toolkit_element` report the topmost element, its click receiver
    or the element swallowing the pointer under `ui_toolkit`.
