@@ -725,6 +725,7 @@ namespace Funplay.Editor.Tests
                 "/* test sheet */\n" +
                 ".primary {\n    background-color: rgb(255, 0, 0);\n}\n" +
                 "#play.primary { color: rgb(0, 255, 0); }\n" +
+                "#play { margin: var(--a) var(--b); }\n" +
                 ".primary:hover {\n    background-color: rgb(0, 0, 255);\n}\n");
             AssetDatabase.ImportAsset(ussPath, ImportAssetOptions.ForceSynchronousImport);
             liveRoot.styleSheets.Add(AssetDatabase.LoadAssetAtPath<StyleSheet>(ussPath));
@@ -732,7 +733,7 @@ namespace Funplay.Editor.Tests
             UIToolkitPanels.ValidateLayout(play.panel);
             yield return null;
 
-            var explained = JObject.FromObject(UIToolkitFunctions.ExplainElement(play, "0/1", "background-color,color,width", new System.Collections.Generic.List<string> { "hover" }));
+            var explained = JObject.FromObject(UIToolkitFunctions.ExplainElement(play, "0/1", "background-color,color,width,margin-left,margin", new System.Collections.Generic.List<string> { "hover" }));
             Assert.AreEqual("unity", (string)explained["matcher"], explained.ToString());
             var properties = (JArray)explained["properties"];
             var background = properties.First(p => (string)p["property"] == "background-color");
@@ -743,11 +744,19 @@ namespace Funplay.Editor.Tests
             Assert.AreEqual("#FF0000FF", (string)background["resolved"]);
             Assert.IsTrue(((JArray)background["overridden"]).Any(o => ((string)o["selector"]).Contains("unity-button")), "the theme's button rule lost: " + background);
             Assert.AreEqual(".primary:hover", (string)background["in_pseudo_states"][0]["selector"], background.ToString());
-            Assert.AreEqual(7, (int)background["in_pseudo_states"][0]["line"], "the declaration's line, like the winner's");
+            Assert.AreEqual(8, (int)background["in_pseudo_states"][0]["line"], "the declaration's line, like the winner's");
 
             var color = properties.First(p => (string)p["property"] == "color");
             Assert.AreEqual("#play.primary", (string)color["winner"]["selector"]);
             Assert.AreEqual("1,1,0", (string)color["winner"]["specificity"]);
+
+            var marginLeft = properties.First(p => (string)p["property"] == "margin-left");
+            Assert.AreEqual("#play", (string)marginLeft["winner"]["selector"], "the margin shorthand beats the theme's longhand: " + marginLeft);
+            Assert.AreEqual("margin", (string)marginLeft["winner"]["declared"]);
+            Assert.AreEqual("var(--a) var(--b)", (string)marginLeft["winner"]["value"], "each function closes after its own arguments");
+            var margin = properties.First(p => (string)p["property"] == "margin");
+            Assert.AreEqual(4, ((JArray)margin["longhands"]).Count);
+            Assert.AreEqual(4, ((string)margin["resolved"]).Split(' ').Length, "a shorthand resolves through its longhands: " + margin);
 
             var width = properties.First(p => (string)p["property"] == "width");
             Assert.AreEqual("inline", (string)width["source"], "UXML style=\"width: 200px\" is inline: " + width);
@@ -771,6 +780,50 @@ namespace Funplay.Editor.Tests
             Assert.AreEqual((0, 2, 0), StyleIntrospection.SpecificityOf(".c:hover"));
             Assert.AreEqual("unityFontDefinition", StyleIntrospection.CamelName("-unity-font-definition"));
             Assert.AreEqual("backgroundColor", StyleIntrospection.CamelName("background-color"));
+
+            var quoted = StyleIntrospection.ParseUss(".d {\n  background-image: url(\"a;b{c}.png\");\n  color: red;\n}");
+            Assert.AreEqual(1, quoted.Count);
+            Assert.AreEqual(2, quoted[0].Declarations.Count, "';' and braces inside a string don't split");
+            Assert.AreEqual("url(\"a;b{c}.png\")", quoted[0].Declarations[0].Value);
+            Assert.AreEqual(3, quoted[0].Declarations[1].Line);
+        }
+
+        [Test]
+        public void StatePseudoClassesApplyToTheSubjectOnly()
+        {
+            var button = new Button();
+            var hover = new System.Collections.Generic.List<string> { "hover" };
+            Assert.AreEqual(".menu Button", StyleIntrospection.SubjectSelector(".menu :hover", button, hover, true), "the hovered element is the subject, not .menu");
+            Assert.AreEqual("Button", StyleIntrospection.SubjectSelector(":hover", button, hover, true), "a bare :hover matches any hovered element");
+            Assert.AreEqual("Button", StyleIntrospection.SubjectSelector("*:hover", button, hover, true));
+            Assert.AreEqual(".row > .primary", StyleIntrospection.SubjectSelector(".row > .primary:hover", button, hover, true));
+            Assert.IsNull(StyleIntrospection.SubjectSelector(".tabs:hover > .x", button, hover, true), "a pseudo-class on an ancestor can't be attributed");
+            Assert.IsNull(StyleIntrospection.SubjectSelector(".primary:active", button, hover, true), "another state");
+            Assert.IsNull(StyleIntrospection.SubjectSelector(".primary", button, hover, true), "no state pseudo-class at all");
+            Assert.IsTrue(StyleIntrospection.Sets("margin", "margin-left"));
+            Assert.IsTrue(StyleIntrospection.Sets("margin-left", "margin"));
+            Assert.IsFalse(StyleIntrospection.Sets("margin", "padding-left"));
+        }
+
+        [Test]
+        public void GlyphScanNeverThrowsAndSkipsInvisibleCharacters()
+        {
+            CollectionAssert.AreEqual(new uint[] { 'a', 0xD800, 'b' }, UIToolkitFunctions.CodePoints("a\uD800b"), "an unpaired surrogate is kept, not thrown on");
+            CollectionAssert.AreEqual(new uint[] { 0x1F600 }, UIToolkitFunctions.CodePoints("\uD83D\uDE00"));
+            foreach (var c in new uint[] { 0x200D, 0x200C, 0x200E, 0x2060, 0xFE0F, 0xFEFF, ' ' })
+                Assert.IsTrue(UIToolkitFunctions.IsInvisible(c), $"U+{c:X4}");
+            Assert.IsFalse(UIToolkitFunctions.IsInvisible('A'));
+            Assert.IsFalse(UIToolkitFunctions.IsInvisible(0xD800), "unpaired surrogates are reported");
+
+            var scroll = new ScrollView();
+            var inner = new Button();
+            scroll.Add(inner);
+            var root = new VisualElement();
+            root.Add(scroll);
+            var outer = new Button();
+            root.Add(outer);
+            Assert.IsTrue(UIToolkitFunctions.IsInnerPart(inner, root));
+            Assert.IsFalse(UIToolkitFunctions.IsInnerPart(outer, root));
         }
 
         [Test]
@@ -794,7 +847,18 @@ namespace Funplay.Editor.Tests
             var overImage = new Image { style = { width = 200, height = 60 } };
             overImage.Add(new Label("Over image") { name = "over-image" });
             var cover = new VisualElement { name = "cover", style = { position = Position.Absolute, left = 0, right = 0, top = 0, bottom = 0 } };
-            menu.Add(tiny); menu.Add(faint); menu.Add(overImage); liveRoot.Add(cover);
+            var faintDisabled = new Label("Off") { name = "faint-disabled", style = { color = new Color(0.45f, 0.45f, 0.45f), backgroundColor = new Color(0.5f, 0.5f, 0.5f), width = 200, height = 40 } };
+            faintDisabled.SetEnabled(false);
+            // Card pattern: an absolutely positioned image sibling behind the text, inside a solid card.
+            var card = new VisualElement { style = { width = 200, height = 60, backgroundColor = new Color(0.5f, 0.5f, 0.5f) } };
+            card.Add(new Image { style = { position = Position.Absolute, left = 0, right = 0, top = 0, bottom = 0 } });
+            card.Add(new Label("On card") { name = "on-card", style = { color = new Color(0.45f, 0.45f, 0.45f) } });
+            // Opacity applies to the group: white text on red inside a 50% blue group over white.
+            var outerWhite = new VisualElement { style = { width = 200, height = 60, backgroundColor = Color.white } };
+            var halfBlue = new VisualElement { style = { opacity = 0.5f, backgroundColor = Color.blue, flexGrow = 1 } };
+            var onRed = new Label("Group") { name = "group-text", style = { color = Color.white, backgroundColor = Color.red, flexGrow = 1 } };
+            halfBlue.Add(onRed); outerWhite.Add(halfBlue);
+            menu.Add(tiny); menu.Add(faint); menu.Add(overImage); menu.Add(faintDisabled); menu.Add(card); menu.Add(outerWhite); liveRoot.Add(cover);
             UIToolkitPanels.ValidateLayout(liveRoot.panel);
             yield return null;
             UIToolkitPanels.ValidateLayout(liveRoot.panel);
@@ -809,6 +873,12 @@ namespace Funplay.Editor.Tests
             Assert.IsTrue(Has("LOW_CONTRAST", "#faint"), json.ToString());
             Assert.IsFalse(Has("LOW_CONTRAST", "#over-image"), "text over an image is indeterminate, never reported");
             Assert.Greater((int)json["indeterminate_contrast"], 0);
+            Assert.IsFalse(Has("LOW_CONTRAST", "#faint-disabled"), "inactive controls are exempt");
+            Assert.IsFalse(Has("LOW_CONTRAST", "#on-card"), "an image sibling behind the text makes contrast indeterminate");
+            Assert.IsNull(UIToolkitFunctions.ContrastRatio(liveRoot.Q<Label>("on-card")));
+            // Group compositing: text pixel white; background (red at 50%) over white = (1, .5, .5) linear.
+            var expected = UIToolkitFunctions.ContrastRatio(Color.white, new Color(1f, 0.5f, 0.5f));
+            Assert.AreEqual(expected, UIToolkitFunctions.ContrastRatio(liveRoot.Q<Label>("group-text")).Value, 0.02f, "the blue group background is hidden under the red label");
             if (UIToolkitPanels.TryGetScreenMapping(liveRoot.panel, out _) && RenderHeightOrZero() > 0)
                 Assert.IsTrue(Has("COVERED_CONTROL", "#play"), json.ToString());
 
@@ -841,7 +911,10 @@ namespace Funplay.Editor.Tests
             Assert.IsNull(UIToolkitFunctions.EffectiveFontAsset(liveRoot.Q<Button>("play").resolvedStyle), "theme default: no verdict");
             var missing = UIToolkitFunctions.MissingGlyphs("AB \uE000", asset, null);
             CollectionAssert.AreEqual(new uint[] { 0xE000 }, missing, "letters exist in the font; a private-use character does not");
-            CollectionAssert.AreEqual(missing, UIToolkitFunctions.MissingGlyphs("AB \uE000", asset, null), "checking is repeatable (nothing was added)");
+            var cache = new System.Collections.Generic.Dictionary<(UnityEngine.TextCore.Text.FontAsset, uint), bool>();
+            CollectionAssert.AreEqual(missing, UIToolkitFunctions.MissingGlyphs("AB \uE000", asset, null, cache), "checking is repeatable (nothing was added)");
+            Assert.IsTrue(cache.ContainsKey((asset, 0xE000u)), "answers are cached for the rest of the audit");
+            CollectionAssert.AreEqual(missing, UIToolkitFunctions.MissingGlyphs("AB \uE000", asset, null, cache));
             Assert.IsNull(UIToolkitFunctions.MissingGlyphs("A", null, null), "unknown font: no verdict");
         }
 

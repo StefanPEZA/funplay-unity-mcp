@@ -121,8 +121,13 @@ namespace Funplay.Editor.Tools.Builtins
                     object audited = null;
                     if (audit)
                     {
-                        var report = AuditHosts(panels.SelectMany(p => p.Hosts).Distinct().ToList(), new AuditOptions { MinTouchSize = min_touch_size > 0 ? min_touch_size : 44f });
-                        audited = report.ToResponse();
+                        // One size's audit failing must not stop the remaining sizes or the restore.
+                        try
+                        {
+                            var report = AuditHosts(panels.SelectMany(p => p.Hosts).Distinct().ToList(), new AuditOptions { MinTouchSize = min_touch_size > 0 ? min_touch_size : 44f });
+                            audited = report.ToResponse();
+                        }
+                        catch (Exception ex) { audited = new { audit_error = ex.Message }; }
                     }
 
                     previewed++;

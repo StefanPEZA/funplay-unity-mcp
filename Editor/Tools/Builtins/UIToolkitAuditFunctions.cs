@@ -87,6 +87,7 @@ namespace Funplay.Editor.Tools.Builtins
             var renderHeight = TryGetRenderHeight(out _);
             var allPanels = UIToolkitPanels.GetLivePanels(UIToolkitPanels.FindHosts(false, false)).Where(p => !p.WorldSpace).ToList();
             var hostRoots = UIToolkitPanels.HostRoots(hosts);
+            var glyphCache = new Dictionary<(FontAsset, uint), bool>();
             foreach (var host in hosts)
             {
                 var root = UIToolkitPanels.GetRoot(host);
@@ -122,7 +123,10 @@ namespace Funplay.Editor.Tools.Builtins
                     var visibility = clipCache.Of(element);
                     if (visibility.Fraction <= 0f) continue;
 
-                    if (UIToolkitPanels.IsInteractive(element) && element.enabledInHierarchy)
+                    // Parts of a composite control (a ScrollView's scroller slider, a field's inner input) are
+                    // judged through the outer control, not on their own.
+                    var interactive = UIToolkitPanels.IsInteractive(element) && element.enabledInHierarchy && !IsInnerPart(element, root);
+                    if (interactive)
                     {
                         if (bound.width < options.MinTouchSize - 0.5f || bound.height < options.MinTouchSize - 0.5f)
                             Add("SMALL_TOUCH_TARGET", new { code = "SMALL_TOUCH_TARGET", element_path = entry.Key, element = Label(element),
@@ -136,7 +140,7 @@ namespace Funplay.Editor.Tools.Builtins
                         }
                     }
 
-                    if (mapping.HasValue && renderHeight > 0 && (options.SafeArea.HasValue || options.PlayArea.HasValue) && UIToolkitPanels.IsInteractive(element))
+                    if (interactive && mapping.HasValue && renderHeight > 0 && (options.SafeArea.HasValue || options.PlayArea.HasValue))
                     {
                         var topLeft = mapping.Value.ToScreen(new Vector2(bound.xMin, bound.yMin));
                         var bottomRight = mapping.Value.ToScreen(new Vector2(bound.xMax, bound.yMax));
@@ -149,33 +153,38 @@ namespace Funplay.Editor.Tools.Builtins
 
                     if (!(element is TextElement textElement) || string.IsNullOrEmpty(textElement.text)) continue;
                     var style = element.resolvedStyle;
-                    if (style.whiteSpace != WhiteSpace.NoWrap)
-                    {
-                        var measured = textElement.MeasureTextSize(textElement.text, bound.width - Horizontal(style), VisualElement.MeasureMode.Exactly, 0, VisualElement.MeasureMode.Undefined);
-                        var available = bound.height - Vertical(style);
-                        if (measured.y > available + 1f)
-                            Add("TEXT_HEIGHT_OVERFLOW", new { code = "TEXT_HEIGHT_OVERFLOW", element_path = entry.Key, element = Label(element),
-                                detail = $"Wrapped text needs {measured.y:F0}px but the box has {available:F0}px." });
-                    }
                     if (textElement.isElided)
                         Add("TEXT_ELIDED", new { code = "TEXT_ELIDED", element_path = entry.Key, element = Label(element), detail = "The text is cut off with an ellipsis." });
-
-                    var contrast = ContrastRatio(element);
-                    if (contrast == null) report.IndeterminateContrast++;
-                    else
+                    else if (style.whiteSpace != WhiteSpace.NoWrap)
                     {
-                        var large = style.fontSize >= 24f || style.fontSize >= 18.66f && (style.unityFontStyleAndWeight == FontStyle.Bold || style.unityFontStyleAndWeight == FontStyle.BoldAndItalic);
-                        var required = large ? 3f : 4.5f;
-                        if (contrast.Value < required)
-                            Add("LOW_CONTRAST", new { code = "LOW_CONTRAST", element_path = entry.Key, element = Label(element), ratio = Math.Round(contrast.Value, 2), required,
-                                detail = $"Text contrast {contrast.Value:F2}:1 is below {required}:1." });
+                        // contentRect is local (no ancestor scale from press/hover animations) and excludes padding and border.
+                        var content = element.contentRect;
+                        var measured = textElement.MeasureTextSize(textElement.text, content.width, VisualElement.MeasureMode.Exactly, 0, VisualElement.MeasureMode.Undefined);
+                        if (measured.y > content.height + 1f)
+                            Add("TEXT_HEIGHT_OVERFLOW", new { code = "TEXT_HEIGHT_OVERFLOW", element_path = entry.Key, element = Label(element),
+                                detail = $"Wrapped text needs {measured.y:F0}px but the box has {content.height:F0}px." });
+                    }
+
+                    // WCAG 1.4.3 exempts inactive controls, and themes fade disabled ones on purpose.
+                    if (element.enabledInHierarchy)
+                    {
+                        var contrast = ContrastRatio(element);
+                        if (contrast == null) report.IndeterminateContrast++;
+                        else
+                        {
+                            var large = style.fontSize >= 24f || style.fontSize >= 18.66f && (style.unityFontStyleAndWeight == FontStyle.Bold || style.unityFontStyleAndWeight == FontStyle.BoldAndItalic);
+                            var required = large ? 3f : 4.5f;
+                            if (contrast.Value < required)
+                                Add("LOW_CONTRAST", new { code = "LOW_CONTRAST", element_path = entry.Key, element = Label(element), ratio = Math.Round(contrast.Value, 2), required,
+                                    detail = $"Text contrast {contrast.Value:F2}:1 is below {required}:1." });
+                        }
                     }
 
                     var font = EffectiveFontAsset(style);
-                    var missing = MissingGlyphs(textElement.enableRichText ? StripRichText(textElement.text) : textElement.text, font, fallbacks);
+                    var missing = MissingGlyphs(textElement.enableRichText ? StripRichText(textElement.text) : textElement.text, font, fallbacks, glyphCache);
                     if (missing != null && missing.Count > 0)
                         Add("MISSING_GLYPHS", new { code = "MISSING_GLYPHS", element_path = entry.Key, element = Label(element),
-                            missing = missing.Select(c => $"U+{c:X4} '{char.ConvertFromUtf32((int)c)}'").ToArray(),
+                            missing = missing.Select(DescribeCodePoint).ToArray(),
                             font = font != null ? font.name : null,
                             detail = "Missing in the font and its fallbacks; rendered as a placeholder." });
                 }
@@ -192,8 +201,16 @@ namespace Funplay.Editor.Tools.Builtins
             return report;
         }
 
-        private static float Horizontal(IResolvedStyle s) => s.paddingLeft + s.paddingRight + s.borderLeftWidth + s.borderRightWidth;
-        private static float Vertical(IResolvedStyle s) => s.paddingTop + s.paddingBottom + s.borderTopWidth + s.borderBottomWidth;
+        /// <summary>Inside another control or a ScrollView (below the host root): a part, not a target of its own.</summary>
+        internal static bool IsInnerPart(VisualElement element, VisualElement root)
+        {
+            for (var parent = element.hierarchy.parent; parent != null && !ReferenceEquals(parent, root); parent = parent.hierarchy.parent)
+                if (parent is ScrollView || UIToolkitPanels.IsControl(parent)) return true;
+            return false;
+        }
+
+        private static string DescribeCodePoint(uint c) =>
+            c >= 0xD800 && c <= 0xDFFF ? $"U+{c:X4} (unpaired surrogate)" : $"U+{c:X4} '{char.ConvertFromUtf32((int)c)}'";
 
         private static bool Contains(Rect outer, Rect inner) =>
             inner.xMin >= outer.xMin - 0.5f && inner.yMin >= outer.yMin - 0.5f && inner.xMax <= outer.xMax + 0.5f && inner.yMax <= outer.yMax + 0.5f;
@@ -216,39 +233,65 @@ namespace Funplay.Editor.Tools.Builtins
         }
 
         /// <summary>
-        /// WCAG contrast of the text colour over the layers behind it, composited in linear space with each
-        /// layer's opacity chain. Null (indeterminate) when any layer has an image or custom vector content,
-        /// or nothing opaque sits behind the text (the game view shows through).
+        /// WCAG contrast of the text colour over what is drawn behind it, in linear space. UI Toolkit applies
+        /// opacity to an element's whole group (its background and children flattened), so each ancestor's
+        /// group is composited at full alpha first and then scaled by its opacity. Null (indeterminate) when
+        /// anything behind the text that is still visible is an image, custom vector content, or an earlier
+        /// sibling subtree overlapping the text, or when the game view shows through (final alpha below 1).
         /// </summary>
         internal static float? ContrastRatio(VisualElement element)
         {
-            var chain = new List<VisualElement>();
-            for (var current = element; current != null; current = current.hierarchy.parent) chain.Add(current);
-            var opacity = new float[chain.Count];
-            for (var i = chain.Count - 1; i >= 0; i--)
-                opacity[i] = chain[i].resolvedStyle.opacity * (i + 1 < chain.Count ? opacity[i + 1] : 1f);
-
-            // Find the nearest layer that fully hides everything behind it, then composite upward from there.
-            var start = -1;
-            for (var i = 0; i < chain.Count; i++)
-            {
-                var layer = chain[i];
-                if (HasImageContent(layer)) return null;
-                var background = layer.resolvedStyle.backgroundColor;
-                if (background.a * opacity[i] >= 0.999f) { start = i; break; }
-            }
-            if (start < 0) return null;
-
-            var color = chain[start].resolvedStyle.backgroundColor.linear;
-            for (var i = start - 1; i >= 0; i--)
-            {
-                var background = chain[i].resolvedStyle.backgroundColor;
-                var alpha = background.a * opacity[i];
-                if (alpha > 0f) color = Color.Lerp(color, background.linear, alpha);
-            }
+            var bound = element.worldBound;
             var text = element.resolvedStyle.color;
-            var textColor = Color.Lerp(color, text.linear, text.a * opacity[0]);
-            return ContrastRatio(textColor, color);
+            // Premultiplied linear colours of the text pixel and of the background pixel next to it.
+            var textPixel = Premultiply(text.linear, text.a);
+            var backPixel = new Color(0, 0, 0, 0);
+            VisualElement child = null;
+            for (var current = element; current != null; current = current.hierarchy.parent)
+            {
+                var covered = backPixel.a >= 0.999f && textPixel.a >= 0.999f;
+                if (!covered)
+                {
+                    if (HasImageContent(current)) return null;
+                    if (child != null && EarlierSiblingDraws(current, child, bound)) return null;
+                    var background = current.resolvedStyle.backgroundColor;
+                    var layer = Premultiply(background.linear, background.a);
+                    textPixel = Over(textPixel, layer);
+                    backPixel = Over(backPixel, layer);
+                }
+                var opacity = current.resolvedStyle.opacity;
+                if (opacity < 0.999f) { textPixel *= opacity; backPixel *= opacity; }
+                child = current;
+            }
+            if (backPixel.a < 0.999f || textPixel.a < 0.999f) return null;
+            return ContrastRatio(textPixel, backPixel);
+        }
+
+        private static Color Premultiply(Color c, float a) => new Color(c.r * a, c.g * a, c.b * a, a);
+        private static Color Over(Color top, Color bottom) => top + bottom * (1f - top.a);
+
+        /// <summary>Whether a sibling drawn before <paramref name="child"/> inside <paramref name="parent"/> paints under <paramref name="bound"/>.</summary>
+        private static bool EarlierSiblingDraws(VisualElement parent, VisualElement child, Rect bound)
+        {
+            var budget = 200;
+            for (var i = 0; i < parent.hierarchy.childCount; i++)
+            {
+                var sibling = parent.hierarchy[i];
+                if (ReferenceEquals(sibling, child)) return false;
+                if (Draws(sibling, bound, ref budget)) return true;
+            }
+            return false;
+        }
+
+        private static bool Draws(VisualElement element, Rect bound, ref int budget)
+        {
+            if (--budget < 0) return true; // too large to inspect: treat as unknown content
+            if (element.resolvedStyle.display == DisplayStyle.None || element.resolvedStyle.visibility == Visibility.Hidden || element.resolvedStyle.opacity <= 0f) return false;
+            if (!UIToolkitPanels.HasLayout(element) || !element.worldBound.Overlaps(bound)) return false;
+            if (element.resolvedStyle.backgroundColor.a > 0f || HasImageContent(element) || element is TextElement t && !string.IsNullOrEmpty(t.text)) return true;
+            for (var i = 0; i < element.hierarchy.childCount; i++)
+                if (Draws(element.hierarchy[i], bound, ref budget)) return true;
+            return false;
         }
 
         /// <summary>WCAG ratio of two linear-space colours.</summary>
@@ -290,24 +333,45 @@ namespace Funplay.Editor.Tools.Builtins
         private static readonly MethodInfo FontTryGetGlyphIndex = typeof(FontAsset).GetMethod("TryGetGlyphIndex", BindingFlags.Public | BindingFlags.Instance, null,
             new[] { typeof(uint), typeof(uint).MakeByRefType() }, null);
 
-        /// <summary>
-        /// Code points of <paramref name="text"/> that neither the font, its fallback chain nor the panel's
-        /// fallbacks can draw. Never adds characters (tryAddCharacter: false), so dynamic font assets and
-        /// their .asset files stay untouched; for dynamic fonts a character not yet in the atlas is checked
-        /// in the source font file instead. Null when the font is unknown (legacy Font or panel default).
-        /// </summary>
-        internal static List<uint> MissingGlyphs(string text, FontAsset font, IEnumerable<FontAsset> panelFallbacks)
+        /// <summary>Characters no font needs a glyph for: controls, spaces, format characters (ZWJ, bidi marks), variation selectors.</summary>
+        internal static bool IsInvisible(uint c)
         {
-            if (font == null || string.IsNullOrEmpty(text)) return null;
-            var candidates = new List<uint>();
+            if (c <= 0x20 || c == 0xA0 || c == 0x00AD) return true;
+            if (c >= 0xFE00 && c <= 0xFE0F || c >= 0xE0100 && c <= 0xE01EF) return true; // variation selectors
+            if (c >= 0xD800 && c <= 0xDFFF) return false; // unpaired surrogate: report it
+            var category = c <= 0xFFFF ? CharUnicodeInfo.GetUnicodeCategory((char)c) : CharUnicodeInfo.GetUnicodeCategory(char.ConvertFromUtf32((int)c), 0);
+            return category == UnicodeCategory.Control || category == UnicodeCategory.Format || category == UnicodeCategory.SpaceSeparator ||
+                   category == UnicodeCategory.LineSeparator || category == UnicodeCategory.ParagraphSeparator;
+        }
+
+        /// <summary>Code points of <paramref name="text"/>, unpaired surrogates as themselves (never throws).</summary>
+        internal static List<uint> CodePoints(string text)
+        {
+            var result = new List<uint>();
             for (var i = 0; i < text.Length; i++)
             {
-                var c = (uint)char.ConvertToUtf32(text, i);
-                if (char.IsSurrogatePair(text, i)) i++;
-                if (c <= 0x20 || c == 0xA0 || c == 0x200B || c == 0xFEFF || c == 0x00AD || char.IsControl((char)Math.Min(c, 0xFFFF))) continue;
-                if (!candidates.Contains(c)) candidates.Add(c);
+                if (char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+                {
+                    result.Add((uint)char.ConvertToUtf32(text[i], text[i + 1]));
+                    i++;
+                }
+                else result.Add(text[i]);
             }
-            if (candidates.Count == 0) return new List<uint>();
+            return result;
+        }
+
+        /// <summary>
+        /// Code points of <paramref name="text"/> that neither the font, its fallback chain nor the panel's
+        /// fallbacks can draw. Never adds characters, so dynamic font assets and their .asset files stay
+        /// untouched; a character not yet in a dynamic atlas is checked in the source font file, loading each
+        /// source font once per call. <paramref name="cache"/> carries (font, code point) answers across calls
+        /// (one audit). Null when the font is unknown (legacy Font or theme default).
+        /// </summary>
+        internal static List<uint> MissingGlyphs(string text, FontAsset font, IEnumerable<FontAsset> panelFallbacks, Dictionary<(FontAsset, uint), bool> cache = null)
+        {
+            if (font == null || string.IsNullOrEmpty(text)) return null;
+            cache = cache ?? new Dictionary<(FontAsset, uint), bool>();
+            var unresolved = CodePoints(text).Where(c => !IsInvisible(c)).Distinct().ToList();
 
             var fonts = new List<FontAsset>();
             void Collect(FontAsset asset)
@@ -319,13 +383,33 @@ namespace Funplay.Editor.Tools.Builtins
             Collect(font);
             if (panelFallbacks != null) foreach (var fallback in panelFallbacks) Collect(fallback);
 
-            var missing = new List<uint>();
-            foreach (var c in candidates)
-                if (!fonts.Any(f => Draws(f, c))) missing.Add(c);
-            return missing;
+            foreach (var asset in fonts)
+            {
+                if (unresolved.Count == 0) break;
+                var still = new List<uint>();
+                var needSource = new List<uint>();
+                foreach (var c in unresolved)
+                {
+                    if (cache.TryGetValue((asset, c), out var known)) { if (!known) still.Add(c); continue; }
+                    if (DrawsFromAsset(asset, c)) cache[(asset, c)] = true;
+                    else needSource.Add(c);
+                }
+                if (needSource.Count > 0)
+                {
+                    var faceLoaded = LoadSourceFace(asset);
+                    foreach (var c in needSource)
+                    {
+                        var draws = faceLoaded && FontEngine.TryGetGlyphIndex(c, out var index) && index != 0;
+                        cache[(asset, c)] = draws;
+                        if (!draws) still.Add(c);
+                    }
+                }
+                unresolved = still;
+            }
+            return unresolved;
         }
 
-        private static bool Draws(FontAsset font, uint c)
+        private static bool DrawsFromAsset(FontAsset font, uint c)
         {
             if (FontTryGetGlyphIndex != null)
             {
@@ -335,14 +419,24 @@ namespace Funplay.Editor.Tools.Builtins
             }
             try { if (font.HasCharacter(c, false, false)) return true; }
             catch (NullReferenceException) { } // the 6000.6 text backend keeps no character table
-            // Static atlases (deprecated in 6000.6) can't grow: what isn't in them is missing.
+            return false;
+        }
+
+        /// <summary>
+        /// Loads a dynamic font asset's source face (with its face index, for .ttc collections) into the
+        /// FontEngine. Static atlases (deprecated in 6000.6) can't grow, so they have no source to consult.
+        /// TextCore reloads the face it needs before every glyph operation, so changing the current face is safe.
+        /// </summary>
+        private static bool LoadSourceFace(FontAsset font)
+        {
             if (font.atlasPopulationMode.ToString() == "Static") return false;
-            // Dynamic: the character may not be rasterized yet; ask the source font without adding it.
             var source = SourceFontFile?.GetValue(font) as Font;
             if (source == null) return false;
             try
             {
-                return FontEngine.LoadFontFace(source) == FontEngineError.Success && FontEngine.TryGetGlyphIndex(c, out var index) && index != 0;
+                var face = font.faceInfo;
+                var faceIndex = face.GetType().GetProperty("faceIndex")?.GetValue(face) is int index ? index : 0;
+                return FontEngine.LoadFontFace(source, Mathf.Max(1, Mathf.RoundToInt(face.pointSize)), faceIndex) == FontEngineError.Success;
             }
             catch (Exception) { return false; }
         }

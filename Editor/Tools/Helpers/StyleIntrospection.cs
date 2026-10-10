@@ -92,9 +92,22 @@ namespace Funplay.Editor.Tools.Helpers
                         Line = (int)Get(property, "line"),
                         Value = FormatValues(sheet, (Array)Get(property, "values"))
                     });
-                matches.Add((Activator.CreateInstance(MatchType, sheet, stackIndex, importedIndex, complex), rule));
+                object match = null;
+                try { match = record.GetType() == MatchType ? record : Activator.CreateInstance(MatchType, sheet, stackIndex, importedIndex, complex); }
+                catch (Exception) { }
+                matches.Add((match, rule));
             }
-            matches.Sort((a, b) => (int)CompareMethod.Invoke(null, new[] { a.match, b.match }));
+            try
+            {
+                if (matches.Any(m => m.match == null)) throw new MissingMethodException();
+                matches.Sort((a, b) => (int)CompareMethod.Invoke(null, new[] { a.match, b.match }));
+            }
+            catch (Exception)
+            {
+                // Same order as Unity's Compare: theme sheets first, then specificity, then sheet order and position.
+                matches = matches.OrderBy(m => m.rule.ThemeSheet ? 0 : 1).ThenBy(m => m.rule.Ids).ThenBy(m => m.rule.Classes).ThenBy(m => m.rule.Types)
+                    .ThenBy(m => m.rule.StackIndex).ThenBy(m => m.rule.Line).ToList();
+            }
             return matches.Select(m => m.rule).ToList();
         }
 
@@ -145,44 +158,78 @@ namespace Funplay.Editor.Tools.Helpers
             return reader?.Invoke(sheet, new[] { handle });
         }
 
-        /// <summary>A declaration's value as USS-like text (colours as #RRGGBBAA, var(--x), keywords lower-case).</summary>
+        /// <summary>
+        /// A declaration's value as USS-like text (colours as #RRGGBBAA, var(--x), keywords lower-case). A
+        /// function handle is followed by its argument count; each function closes after that many handles
+        /// (a nested function counts as one argument of its parent).
+        /// </summary>
         internal static string FormatValues(StyleSheet sheet, Array handles)
         {
-            var parts = new List<string>();
-            var openFunctions = 0;
-            var skipArgCount = false;
+            var text = new StringBuilder();
+            var open = new List<int>(); // arguments still expected by each open function, innermost last
+            var expectArgCount = false;
+            void Emit(string value)
+            {
+                if (value != "," && text.Length > 0 && text[text.Length - 1] != '(') text.Append(' ');
+                text.Append(value);
+            }
+            void ArgumentDone()
+            {
+                while (open.Count > 0)
+                {
+                    open[open.Count - 1]--;
+                    if (open[open.Count - 1] > 0) return;
+                    open.RemoveAt(open.Count - 1);
+                    text.Append(')');
+                }
+            }
             foreach (var handle in handles)
             {
-                string text;
+                string type;
+                try { type = Get(handle, "valueType")?.ToString(); }
+                catch (Exception) { Emit("?"); ArgumentDone(); continue; }
+                if (expectArgCount)
+                {
+                    expectArgCount = false;
+                    var count = 0;
+                    try { count = (int)Convert.ToSingle(Read(sheet, "ReadFloat", handle)); } catch (Exception) { }
+                    if (count > 0) open.Add(count);
+                    else { text.Append(')'); ArgumentDone(); }
+                    continue;
+                }
+                if (type == "Function")
+                {
+                    string name;
+                    try { name = (string)Read(sheet, "ReadFunctionName", handle); } catch (Exception) { name = "?"; }
+                    Emit(name + "(");
+                    expectArgCount = true;
+                    continue;
+                }
+                string value;
                 try
                 {
-                    var type = Get(handle, "valueType")?.ToString();
-                    if (skipArgCount && type == "Float") { skipArgCount = false; continue; }
-                    skipArgCount = false;
                     switch (type)
                     {
-                        case "Color": text = "#" + ColorUtility.ToHtmlStringRGBA((Color)Read(sheet, "ReadColor", handle)); break;
-                        case "Keyword": text = Read(sheet, "ReadKeyword", handle)?.ToString().ToLowerInvariant(); break;
-                        case "Float": text = Convert.ToSingle(Read(sheet, "ReadFloat", handle)).ToString(CultureInfo.InvariantCulture); break;
-                        case "Dimension": text = Read(sheet, "ReadDimension", handle)?.ToString(); break;
-                        case "Enum": text = (string)Read(sheet, "ReadEnum", handle); break;
-                        case "String": text = "\"" + Read(sheet, "ReadString", handle) + "\""; break;
-                        case "Variable": text = (string)Read(sheet, "ReadVariable", handle); break;
-                        case "Function":
-                            text = Read(sheet, "ReadFunctionName", handle) + "(";
-                            openFunctions++; skipArgCount = true; break;
-                        case "CommaSeparator": text = ","; break;
-                        case "AssetReference": text = (Read(sheet, "ReadAssetReference", handle) as UnityEngine.Object)?.name; break;
-                        case "MissingAssetReference": text = "url(\"" + Read(sheet, "ReadMissingAssetReferenceUrl", handle) + "\")"; break;
-                        case "ResourcePath": text = Read(sheet, "ReadResourcePath", handle)?.ToString(); break;
-                        default: text = type?.ToLowerInvariant(); break;
+                        case "Color": value = "#" + ColorUtility.ToHtmlStringRGBA((Color)Read(sheet, "ReadColor", handle)); break;
+                        case "Keyword": value = Read(sheet, "ReadKeyword", handle)?.ToString().ToLowerInvariant(); break;
+                        case "Float": value = Convert.ToSingle(Read(sheet, "ReadFloat", handle)).ToString(CultureInfo.InvariantCulture); break;
+                        case "Dimension": value = Read(sheet, "ReadDimension", handle)?.ToString(); break;
+                        case "Enum": value = (string)Read(sheet, "ReadEnum", handle); break;
+                        case "String": value = "\"" + Read(sheet, "ReadString", handle) + "\""; break;
+                        case "Variable": value = (string)Read(sheet, "ReadVariable", handle); break;
+                        case "CommaSeparator": value = ","; break;
+                        case "AssetReference": value = (Read(sheet, "ReadAssetReference", handle) as UnityEngine.Object)?.name; break;
+                        case "MissingAssetReference": value = "url(\"" + Read(sheet, "ReadMissingAssetReferenceUrl", handle) + "\")"; break;
+                        case "ResourcePath": value = Read(sheet, "ReadResourcePath", handle)?.ToString(); break;
+                        default: value = type?.ToLowerInvariant(); break;
                     }
                 }
-                catch (Exception) { text = "?"; }
-                if (!string.IsNullOrEmpty(text)) parts.Add(text);
+                catch (Exception) { value = "?"; }
+                Emit(string.IsNullOrEmpty(value) ? "?" : value);
+                ArgumentDone();
             }
-            var joined = string.Join(" ", parts).Replace("( ", "(").Replace(" ,", ",");
-            return joined + new string(')', openFunctions);
+            text.Append(new string(')', open.Count));
+            return text.ToString();
         }
 
         // ---- Heuristic: rules from the USS source text ------------------------------------------------
@@ -194,43 +241,77 @@ namespace Funplay.Editor.Tools.Helpers
             public List<Declaration> Declarations = new List<Declaration>();
         }
 
-        private static readonly Regex Comments = new Regex(@"/\*.*?\*/", RegexOptions.Singleline);
-
-        /// <summary>Top-level `selectors { declarations }` blocks of a USS text, one entry per selector, with 1-based lines.</summary>
+        /// <summary>
+        /// Top-level `selectors { declarations }` blocks of a USS text, one entry per selector, with 1-based
+        /// lines. One pass with a running line counter; comments and quoted strings (url("a;b")) are skipped,
+        /// and statements such as @import end at ';'.
+        /// </summary>
         internal static List<SourceRule> ParseUss(string uss)
         {
             var rules = new List<SourceRule>();
-            // Keep line numbers: replace comments by the same number of newlines.
-            var text = Comments.Replace(uss ?? string.Empty, m => new string('\n', m.Value.Count(c => c == '\n')));
-            var position = 0;
-            while (position < text.Length)
+            var text = uss ?? string.Empty;
+            var line = 1;
+            var inBody = false;
+            var selector = new StringBuilder(); var selectorLine = 0;
+            var declaration = new StringBuilder(); var declarationLine = 0;
+            var declarations = new List<Declaration>();
+            void FlushDeclaration()
             {
-                var open = text.IndexOf('{', position);
-                if (open < 0) break;
-                var close = text.IndexOf('}', open);
-                if (close < 0) break;
-                var selectorText = text.Substring(position, open - position);
-                // Skip @import and similar statements that precede the block.
-                var lastStatement = selectorText.LastIndexOf(';');
-                var selectorStart = position + (lastStatement >= 0 ? lastStatement + 1 : 0);
-                selectorText = text.Substring(selectorStart, open - selectorStart);
-                var leading = selectorText.Length - selectorText.TrimStart().Length;
-                var line = 1 + text.Take(selectorStart + leading).Count(c => c == '\n');
-                var declarations = new List<Declaration>();
-                var body = text.Substring(open + 1, close - open - 1);
-                var declarationLine = 1 + text.Take(open + 1).Count(c => c == '\n');
-                foreach (var raw in body.Split(';'))
+                var raw = declaration.ToString();
+                var colon = raw.IndexOf(':');
+                if (colon > 0) declarations.Add(new Declaration { Name = raw.Substring(0, colon).Trim(), Value = raw.Substring(colon + 1).Trim(), Line = declarationLine });
+                declaration.Clear(); declarationLine = 0;
+            }
+            void Append(char c)
+            {
+                var target = inBody ? declaration : selector;
+                if (!char.IsWhiteSpace(c))
                 {
-                    var colon = raw.IndexOf(':');
-                    var lineOffset = raw.Take(raw.Length - raw.TrimStart().Length).Count(c => c == '\n');
-                    if (colon > 0)
-                        declarations.Add(new Declaration { Name = raw.Substring(0, colon).Trim(), Value = raw.Substring(colon + 1).Trim(), Line = declarationLine + lineOffset });
-                    declarationLine += raw.Count(c => c == '\n');
+                    if (inBody && declarationLine == 0) declarationLine = line;
+                    if (!inBody && selectorLine == 0) selectorLine = line;
                 }
-                foreach (var selector in selectorText.Split(','))
-                    if (selector.Trim().Length > 0)
-                        rules.Add(new SourceRule { Selector = Regex.Replace(selector.Trim(), @"\s+", " "), Line = line, Declarations = declarations });
-                position = close + 1;
+                if (target.Length > 0 || !char.IsWhiteSpace(c)) target.Append(c);
+            }
+            for (var i = 0; i < text.Length; i++)
+            {
+                var c = text[i];
+                if (c == '/' && i + 1 < text.Length && text[i + 1] == '*')
+                {
+                    var end = text.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                    end = end < 0 ? text.Length : end + 2;
+                    for (var j = i; j < end; j++) if (text[j] == '\n') line++;
+                    i = end - 1;
+                    continue;
+                }
+                if (c == '"' || c == '\'')
+                {
+                    var j = i + 1;
+                    while (j < text.Length && text[j] != c) { if (text[j] == '\\') j++; j++; }
+                    for (var k = i; k <= Math.Min(j, text.Length - 1); k++) { if (text[k] == '\n') line++; Append(text[k]); }
+                    i = j;
+                    continue;
+                }
+                if (c == '\n') { line++; Append(c); continue; }
+                if (!inBody)
+                {
+                    if (c == ';') { selector.Clear(); selectorLine = 0; continue; }
+                    if (c == '{') { inBody = true; declarations = new List<Declaration>(); continue; }
+                    Append(c);
+                    continue;
+                }
+                if (c == ';' || c == '}')
+                {
+                    FlushDeclaration();
+                    if (c == '}')
+                    {
+                        foreach (var one in selector.ToString().Split(','))
+                            if (one.Trim().Length > 0)
+                                rules.Add(new SourceRule { Selector = Regex.Replace(one.Trim(), @"\s+", " "), Line = selectorLine, Declarations = declarations });
+                        inBody = false; selector.Clear(); selectorLine = 0;
+                    }
+                    continue;
+                }
+                Append(c);
             }
             return rules;
         }
@@ -274,22 +355,48 @@ namespace Funplay.Editor.Tools.Helpers
             foreach (var path in sheetPaths.Distinct())
             {
                 if (path == null || !path.EndsWith(".uss", StringComparison.OrdinalIgnoreCase)) continue;
-                var full = Path.GetFullPath(path);
+                // Packages/... paths live in the PackageCache or a file: folder, not under the project.
+                string full;
+                try { full = FileUtil.GetPhysicalPath(path); }
+                catch (Exception) { full = path; }
+                full = Path.GetFullPath(string.IsNullOrEmpty(full) ? path : full);
                 if (!File.Exists(full)) continue;
                 foreach (var rule in ParseUss(File.ReadAllText(full)))
                 {
-                    var pseudo = Regex.Matches(rule.Selector, @":([\w-]+)").Cast<Match>().Select(m => m.Groups[1].Value.ToLowerInvariant()).ToList();
-                    if (requireState && !pseudo.Any(states.Contains)) continue;
-                    if (pseudo.Any(p => !states.Contains(p) && !(PseudoClasses.Contains(p) && CurrentlyIn(element, p)))) continue;
-                    var stripped = Regex.Replace(rule.Selector, @":[\w-]+", "");
+                    var subjectSelector = SubjectSelector(rule.Selector, element, states, requireState);
+                    if (subjectSelector == null) continue;
                     try
                     {
-                        if (UIToolkitPanels.Selector.Parse(stripped, null).Matches(element)) result.Add((rule, path));
+                        if (UIToolkitPanels.Selector.Parse(subjectSelector, null).Matches(element)) result.Add((rule, path));
                     }
                     catch (UIToolkitException) { }
                 }
             }
             return result;
+        }
+
+        /// <summary>
+        /// The selector to test against <paramref name="element"/> with state pseudo-classes resolved, or null
+        /// when the rule can't apply. State pseudo-classes count only on the subject (last) compound; a rule
+        /// with pseudo-classes on an ancestor compound is skipped (which ancestor is hovered is unknowable).
+        /// A subject that is only pseudo-classes or '*' matches any element.
+        /// </summary>
+        internal static string SubjectSelector(string selector, VisualElement element, ICollection<string> states, bool requireState)
+        {
+            var parts = Regex.Split(selector.Trim(), @"(\s*>\s*|\s+)");
+            var subject = parts[parts.Length - 1];
+            for (var i = 0; i < parts.Length - 1; i += 2)
+                if (parts[i].Contains(":") || parts[i].Contains("*")) return null;
+            var pseudo = Regex.Matches(subject, @":([\w-]+)").Cast<Match>().Select(m => m.Groups[1].Value.ToLowerInvariant()).ToList();
+            if (requireState && !pseudo.Any(states.Contains)) return null;
+            if (pseudo.Any(p => !states.Contains(p) && !(PseudoClasses.Contains(p) && CurrentlyIn(element, p)))) return null;
+            var stripped = Regex.Replace(subject, @":[\w-]+(\([^)]*\))?", "");
+            if (stripped.StartsWith("*", StringComparison.Ordinal)) stripped = stripped.Substring(1);
+            if (stripped.Length == 0) stripped = element.GetType().Name; // wildcard subject
+            var rebuilt = new StringBuilder();
+            for (var i = 0; i < parts.Length - 1; i += 2)
+                rebuilt.Append(parts[i]).Append(parts[i + 1].Trim() == ">" ? " > " : " ");
+            return rebuilt.Append(stripped).ToString();
         }
 
         private static bool CurrentlyIn(VisualElement element, string pseudo)
@@ -306,6 +413,26 @@ namespace Funplay.Editor.Tools.Helpers
 
         // ---- Resolved and inline values ------------------------------------------------------------
 
+        /// <summary>USS shorthands and the longhands they set.</summary>
+        internal static readonly Dictionary<string, string[]> Shorthands = new Dictionary<string, string[]>
+        {
+            ["margin"] = new[] { "margin-top", "margin-right", "margin-bottom", "margin-left" },
+            ["padding"] = new[] { "padding-top", "padding-right", "padding-bottom", "padding-left" },
+            ["border-width"] = new[] { "border-top-width", "border-right-width", "border-bottom-width", "border-left-width" },
+            ["border-color"] = new[] { "border-top-color", "border-right-color", "border-bottom-color", "border-left-color" },
+            ["border-radius"] = new[] { "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius" },
+            ["flex"] = new[] { "flex-grow", "flex-shrink", "flex-basis" },
+            ["transition"] = new[] { "transition-property", "transition-duration", "transition-timing-function", "transition-delay" },
+            ["-unity-text-outline"] = new[] { "-unity-text-outline-width", "-unity-text-outline-color" },
+            ["background-position"] = new[] { "background-position-x", "background-position-y" },
+        };
+
+        /// <summary>Whether a declaration of <paramref name="declared"/> sets (part of) <paramref name="property"/>.</summary>
+        internal static bool Sets(string declared, string property) =>
+            declared == property ||
+            Shorthands.TryGetValue(declared, out var longhands) && longhands.Contains(property) ||
+            Shorthands.TryGetValue(property, out var parts) && parts.Contains(declared);
+
         /// <summary>"background-color" → "backgroundColor", "-unity-font-definition" → "unityFontDefinition".</summary>
         internal static string CamelName(string uss)
         {
@@ -315,6 +442,8 @@ namespace Funplay.Editor.Tools.Helpers
 
         internal static string ResolvedValue(VisualElement element, string uss)
         {
+            if (Shorthands.TryGetValue(uss, out var longhands))
+                return string.Join(" ", longhands.Select(l => ResolvedValue(element, l) ?? "?"));
             var property = typeof(IResolvedStyle).GetProperty(CamelName(uss));
             return property == null ? null : FormatObject(property.GetValue(element.resolvedStyle));
         }
@@ -324,6 +453,12 @@ namespace Funplay.Editor.Tools.Helpers
         /// <summary>Inline (element.style / UXML style attribute) value, or null when not set inline.</summary>
         internal static string InlineValue(VisualElement element, string uss)
         {
+            if (Shorthands.TryGetValue(uss, out var longhands))
+            {
+                var values = longhands.Select(l => ScriptInlineValue(element, l)).ToList();
+                if (values.Any(v => v != null)) return string.Join(" ", values.Select(v => v ?? "unset"));
+                return UxmlInlineValue(element, uss);
+            }
             return ScriptInlineValue(element, uss) ?? UxmlInlineValue(element, uss);
         }
 
@@ -355,7 +490,7 @@ namespace Funplay.Editor.Tools.Helpers
                 }
                 if (sheet == null || rule == null) return null;
                 foreach (var declaration in (IEnumerable)Get(rule, "properties"))
-                    if ((string)Get(declaration, "name") == uss)
+                    if (Sets((string)Get(declaration, "name"), uss))
                         return FormatValues(sheet, (Array)Get(declaration, "values"));
             }
             catch (Exception) { }

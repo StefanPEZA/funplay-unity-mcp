@@ -12,7 +12,7 @@ namespace Funplay.Editor.Tools.Builtins
     {
         internal static readonly string[] SupportedPseudoStates = { "hover", "active", "focus", "checked", "disabled" };
 
-        [Description("Explain why a UI Toolkit element looks the way it does. Per USS property: the resolved value, the inline value (element.style / UXML style), the winning rule (selector, specificity, sheet path, line) and the rules it overrode, in Unity's own cascade order (theme sheets first, then specificity, then sheet order). pseudo_states (hover, active, focus, checked, disabled) lists the rules that would additionally apply in that state, without changing the element (no transitions start); that part is read from the USS source and marked heuristic. Match by selector, text and/or element_path as for clicks. Edit or Play Mode.")]
+        [Description("Explain why a UI Toolkit element looks the way it does. Per USS property (shorthands such as margin count for their longhands and the reverse; 'declared' marks a setter through the other form): the resolved value, the inline value (element.style / UXML style), the winning rule (selector, specificity, sheet path, line) and the rules it overrode, in Unity's own cascade order (theme sheets first, then specificity, then sheet order). pseudo_states (hover, active, focus, checked, disabled) lists the rules that would additionally apply in that state, without changing the element (no transitions start); that part is read from the USS source and marked heuristic. Match by selector, text and/or element_path as for clicks. Edit or Play Mode.")]
         [ReadOnlyTool]
         public static object ExplainStyle(
             [ToolParam("Panel host GameObject name/path/ID", Required = false)] string target = null,
@@ -47,9 +47,13 @@ namespace Funplay.Editor.Tools.Builtins
             }
             else matcherError = "Unity's style matcher is not reachable in this Unity version.";
 
+            // Root first, like Unity's sheet stack: the element's own sheets come last and win ties.
             var sheetPaths = new List<string>();
-            if (rules != null) sheetPaths.AddRange(rules.Select(r => r.SheetPath));
-            for (var current = element; current != null; current = current.hierarchy.parent)
+            if (rules != null) sheetPaths.AddRange(rules.OrderBy(r => r.StackIndex).Select(r => r.SheetPath));
+            var chain = new List<VisualElement>();
+            for (var current = element; current != null; current = current.hierarchy.parent) chain.Add(current);
+            chain.Reverse();
+            foreach (var current in chain)
                 for (var i = 0; i < current.styleSheets.count; i++)
                     sheetPaths.Add(StyleIntrospection.SheetPath(current.styleSheets[i]));
 
@@ -66,23 +70,25 @@ namespace Funplay.Editor.Tools.Builtins
             var explained = names.Select(name =>
             {
                 var setters = rules != null
-                    ? rules.SelectMany(r => r.Declarations.Where(d => d.Name == name).Select(d => (object)new
+                    ? rules.SelectMany(r => r.Declarations.Where(d => StyleIntrospection.Sets(d.Name, name)).Select(d => (object)new
                         {
                             selector = r.Selector, specificity = r.Specificity, sheet = r.SheetPath, line = d.Line > 0 ? d.Line : r.Line,
-                            theme = r.ThemeSheet ? (bool?)true : null, value = d.Value
+                            theme = r.ThemeSheet ? (bool?)true : null, declared = d.Name != name ? d.Name : null, value = d.Value
                         })).ToList()
-                    : heuristicCurrent.SelectMany(h => h.rule.Declarations.Where(d => d.Name == name).Select(d => (object)new
+                    : heuristicCurrent.SelectMany(h => h.rule.Declarations.Where(d => StyleIntrospection.Sets(d.Name, name)).Select(d => (object)new
                         {
-                            selector = h.rule.Selector, specificity = Spec(h.rule.Selector), sheet = h.sheet, line = d.Line, theme = (bool?)null, value = d.Value
+                            selector = h.rule.Selector, specificity = Spec(h.rule.Selector), sheet = h.sheet, line = d.Line, theme = (bool?)null,
+                            declared = d.Name != name ? d.Name : null, value = d.Value
                         })).ToList();
                 var inline = StyleIntrospection.InlineValue(element, name);
-                var wouldApply = hypothetical.SelectMany(h => h.rule.Declarations.Where(d => d.Name == name).Select(d => new
+                var wouldApply = hypothetical.SelectMany(h => h.rule.Declarations.Where(d => StyleIntrospection.Sets(d.Name, name)).Select(d => new
                 {
-                    selector = h.rule.Selector, specificity = Spec(h.rule.Selector), sheet = h.sheet, line = d.Line, value = d.Value
+                    selector = h.rule.Selector, specificity = Spec(h.rule.Selector), sheet = h.sheet, line = d.Line, declared = d.Name != name ? d.Name : null, value = d.Value
                 })).ToList();
                 return new
                 {
                     property = name,
+                    longhands = StyleIntrospection.Shorthands.TryGetValue(name, out var longhands) ? longhands : null,
                     resolved = StyleIntrospection.ResolvedValue(element, name),
                     inline,
                     source = inline != null ? "inline" : setters.Count > 0 ? "rule" : "inherited_or_initial",
