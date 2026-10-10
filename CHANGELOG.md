@@ -1,26 +1,26 @@
 # Changelog
 
-## [Unreleased]
+## [0.8.6] - 2026-10-10
 
 ### Added
 
-- `run_tests`/`get_task`: `blockingTests` names tests that held Unity's main thread for a second or more (Unity's "Hold on" dialog); a status read that times out because a test holds the thread reports the test (`editor_busy`).
-- `get_tool_capabilities`: `schemas` reports the tool schema hash and whether the client may hold stale schemas (changed after its last initialize); the server instructions say to reconnect.
-- `get_visual_tree(element_path)` reads one element's subtree.
+- `run_tests`: `blockingTests` lists tests that froze the Editor (Unity's "Hold on" dialog); `get_task` names the blocking test (`editor_busy`).
+- `get_tool_capabilities`: `schemas` flags client tool schemas that may be stale after an update.
+- `get_visual_tree(element_path)`.
 
 ### Changed
 
-- Unknown tool arguments fail with `UNKNOWN_PARAM` (listing the valid names) instead of being ignored.
-- `audit_ui_toolkit`: controls behind a full-panel backdrop that dims the screen are listed under `blocked_by_modal`, not as `COVERED_CONTROL`.
-- `style_ui_toolkit` waits (up to 3 s) for transitions the change started, so `resolved_after` is the end value (`transitioning` when one still runs).
+- Unknown tool arguments fail with `UNKNOWN_PARAM` instead of being ignored.
+- `audit_ui_toolkit`: controls behind a modal backdrop go to `blocked_by_modal`, not `COVERED_CONTROL`.
+- `style_ui_toolkit` reports values after transitions end.
 
 ### Fixed
 
-- The installed version stayed stale after a package update that changed no scripts (server info and the update check showed the old version).
-- `execute_code` froze the Editor while Roslyn compiled; the compile now runs without holding the main thread.
-- `wait_for_ui_toolkit(settled)` could finish after 2 frames and before a transition that a class added a frame later starts; class changes and descendant transitions now count.
-- `get_visual_tree` with `max_depth` missed selector/text matches below that depth.
-- Task timestamps mixed local and UTC offsets; date-like strings in tool arguments were reformatted.
+- Stale installed version after a package update without script changes.
+- `execute_code` froze the Editor while compiling.
+- `wait_for_ui_toolkit(settled)` finished before late class changes and their transitions.
+- `get_visual_tree` with `max_depth` missed deeper selector matches.
+- Mixed timestamp offsets; date-like tool arguments were reformatted.
 
 ## [0.8.5] - 2026-10-10
 
