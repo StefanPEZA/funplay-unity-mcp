@@ -348,6 +348,58 @@ namespace Funplay.Editor.Tests
             CollectionAssert.AreEquivalent(new[] { parentId, childId }, candidates.Select(c => (string)c["host_id"]).ToArray());
         }
 
+        [UnityTest]
+        public IEnumerator FallbackClickPassesThroughElementsWithoutAClickControl()
+        {
+            CreateSettings();
+            Assert.IsTrue((bool)JObject.FromObject(UIToolkitFunctions.CreateUiToolkitPanel("UitkPassThrough", uxmlPath, settingsPath))["success"]);
+            created = GameObject.Find("UitkPassThrough");
+            var host = UIToolkitPanels.GetHost(created);
+
+            VisualElement root = null;
+            for (var frame = 0; frame < 120; frame++)
+            {
+                root = UIToolkitPanels.GetRoot(host);
+                if (root?.panel != null && root.Q<Button>("play") != null)
+                {
+                    UIToolkitPanels.ValidateLayout(root.panel);
+                    if (UIToolkitPanels.HasLayout(root.Q<Button>("play")) && root.Q<Button>("play").worldBound.width > 0) break;
+                }
+                yield return null;
+            }
+            if (root?.panel == null || root.Q<Button>("play") == null || !UIToolkitPanels.HasLayout(root.Q<Button>("play")))
+                Assert.Ignore("The panel host did not build and lay out its tree in this Editor mode.");
+            if (!UIToolkitPanels.TryGetScreenMapping(root.panel, out var mapping)) Assert.Ignore("The panel has no screen mapping in this Editor mode.");
+
+            const int renderHeight = 1000;
+            Vector2 RenderPoint(Vector2 panelPoint)
+            {
+                var screen = mapping.ToScreen(panelPoint);
+                return new Vector2(screen.x, renderHeight - screen.y);
+            }
+
+            // The full-screen "menu" container: pickable, but no Button/Toggle/Clickable in its chain.
+            var menu = root.Q("menu");
+            var cardClicks = 0;
+            menu.RegisterCallback<ClickEvent>(_ => cardClicks++);
+            var corner = new Vector2(menu.worldBound.xMin + 2f, menu.worldBound.yMin + 2f);
+            var attempts = new System.Collections.Generic.List<InputInteractionFunctions.ClickOutcome>();
+            var background = InputInteractionFunctions.PerformUiToolkitClick(RenderPoint(corner), UnityEngine.EventSystems.PointerEventData.InputButton.Left, attempts, renderHeight);
+            Assert.AreEqual("ui-toolkit", background.Strategy);
+            Assert.IsFalse(background.Hit, background.Detail);
+            Assert.IsFalse(background.BlocksFurtherDispatch, "UI Toolkit without an EventSystem does not block OnMouseDown/physics clicks");
+            Assert.IsNull(background.BlockedBy);
+            Assert.IsNotNull(background.Target, "the element that received the pointer is still reported");
+            Assert.AreEqual(1, cardClicks, "RegisterCallback<ClickEvent> handlers run on the pass-through element");
+
+            var play = root.Q<Button>("play");
+            var clicks = 0;
+            play.clicked += () => clicks++;
+            var onButton = InputInteractionFunctions.PerformUiToolkitClick(RenderPoint(play.worldBound.center), UnityEngine.EventSystems.PointerEventData.InputButton.Left, attempts, renderHeight);
+            Assert.IsTrue(onButton.Hit, onButton.Detail);
+            Assert.AreEqual(1, clicks);
+        }
+
         private void CreateSettings()
         {
             var response = JObject.FromObject(UIToolkitFunctions.CreatePanelSettings(settingsPath, themePath));

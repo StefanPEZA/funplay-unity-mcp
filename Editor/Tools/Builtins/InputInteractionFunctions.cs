@@ -234,7 +234,7 @@ namespace Funplay.Editor.Tools.Builtins
             ClickOutcome Fallback()
             {
                 var toolkit = PerformUiToolkitClick(position, inputButton, attempts, renderHeight);
-                return toolkit.Hit || toolkit.BlocksFurtherDispatch ? toolkit : PerformDirectButtonFallback(position, inputButton, attempts);
+                return toolkit.Hit ? toolkit : PerformDirectButtonFallback(position, inputButton, attempts);
             }
 
             // Explicit Unity null check: a destroyed current EventSystem is not C# null.
@@ -279,10 +279,13 @@ namespace Funplay.Editor.Tools.Builtins
 
         /// <summary>
         /// Picks the topmost screen-space UI Toolkit panel at the point and sends a pointer
-        /// move/down/up sequence through its dispatcher. An element without a click-handling
-        /// control in its chain still consumes the pointer, matching UI Toolkit input.
+        /// move/down/up sequence through its dispatcher. This path only runs when no EventSystem
+        /// routes the pointer to the panel, and then UI Toolkit input does not stop OnMouseDown or
+        /// other input from seeing the same click. So an element without a click-handling control
+        /// in its chain (a full-screen HUD root, or a card using RegisterCallback&lt;ClickEvent&gt;,
+        /// whose handlers still ran) is reported as a non-blocking miss and dispatch continues.
         /// </summary>
-        private static ClickOutcome PerformUiToolkitClick(Vector2 position, PointerEventData.InputButton inputButton, List<ClickOutcome> attempts, int renderHeight)
+        internal static ClickOutcome PerformUiToolkitClick(Vector2 position, PointerEventData.InputButton inputButton, List<ClickOutcome> attempts, int renderHeight)
         {
             var pick = renderHeight > 0
                 ? UIToolkitPanels.TopPick(UIToolkitPanels.PickAt(position, renderHeight))
@@ -299,13 +302,13 @@ namespace Funplay.Editor.Tools.Builtins
             var received = UIToolkitPanels.DispatchClick(pick.Panel.Panel, pick.Element, pick.PanelPosition, (int)inputButton);
             if (receiver == null)
             {
-                var blocked = ClickOutcome.Miss(
+                var passThrough = ClickOutcome.Miss(
                     "ui-toolkit",
-                    $"top UI Toolkit element {UIToolkitPanels.Label(pick.Element)} has no click-handling control in its parent chain",
-                    blocksFurtherDispatch: true,
-                    blockedBy: snapshot);
-                attempts.Add(blocked);
-                return blocked;
+                    $"pointer events sent to UI Toolkit element {UIToolkitPanels.Label(pick.Element)} ({(received ? "ClickEvent callbacks ran" : "no ClickEvent observed")}), " +
+                    "but it has no Button/Toggle/Clickable in its parent chain; without an EventSystem UI Toolkit does not block other input, so dispatch continues");
+                passThrough.Target = snapshot;
+                attempts.Add(passThrough);
+                return passThrough;
             }
 
             var outcome = new ClickOutcome

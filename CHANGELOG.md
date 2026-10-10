@@ -5,7 +5,7 @@
 ### Added
 
 - UI Toolkit support with Unity 6.6 `PanelRenderer` (and `UIDocument` on earlier versions or as the Legacy host): `get_ui_toolkit_info` (framework per scene, hosts, PanelSettings/themes, issues), `create_ui_toolkit_panel` (version-correct host, PanelSettings resolution/creation with the default runtime theme, UXML, nesting, Undo), `configure_ui_toolkit_panel`, `create_panel_settings`, `get_visual_tree` (live elements, screen bounds, styles, findings), `pick_ui_toolkit_element` and `click_ui_toolkit_element` (pointer dispatch through the panel, so Clickable/`ClickEvent` run as with a real mouse). PanelRenderer is resolved by reflection, so Unity 2022.3 support is unchanged. Core adds `get_ui_toolkit_info`, `create_ui_toolkit_panel`, `get_visual_tree` and `click_ui_toolkit_element` (44 tools); Full has 187 tools across 43 modules.
-- `simulate_mouse_click` clicks UI Toolkit panels with or without an EventSystem (strategy `ui-toolkit`), `raycast_at_point` reports UI Toolkit picks under `ui_toolkit` instead of failing with `NO_EVENT_SYSTEM`, and `get_ui_defaults` includes a `ui_frameworks` summary.
+- `simulate_mouse_click` clicks UI Toolkit panels with or without an EventSystem (strategy `ui-toolkit`); without an EventSystem, a UI Toolkit element with no click control (a full-screen HUD root, or a card using `RegisterCallback<ClickEvent>`, whose handlers still run) no longer blocks the uGUI/physics fallbacks, matching real input, `raycast_at_point` reports UI Toolkit picks under `ui_toolkit` instead of failing with `NO_EVENT_SYSTEM`, and `get_ui_defaults` includes a `ui_frameworks` summary.
 
 ### Changed
 
@@ -25,7 +25,7 @@
 
 ### Validation
 
-- Unity 6000.6.5f1 on Windows: batch mode with a graphics device ran 756 EditMode cases with 0 failures (29 environment skips); an interactive Editor ran 751 with 0 failures and 22 skips (scene-lifecycle/preview fixtures need a saved scene the test framework replaces, TMP fixture, and the pre-6.6-only PanelRenderer case). Package compilation reports 0 warnings. A live MCP session created a PanelRenderer from UXML/USS, captured it in the Game View and clicked it in Play Mode through `simulate_mouse_click` and `click_ui_toolkit_element`, reaching the game's own `Button.clicked` handler. Unity 2022.3 was not re-run.
+- Unity 6000.6.5f1 on Windows: batch mode with a graphics device ran 757 EditMode cases with 0 failures (29 environment skips); an interactive Editor ran 751 with 0 failures and 22 skips (scene-lifecycle/preview fixtures need a saved scene the test framework replaces, TMP fixture, and the pre-6.6-only PanelRenderer case). Package compilation reports 0 warnings. A live MCP session created a PanelRenderer from UXML/USS, captured it in the Game View and clicked it in Play Mode through `simulate_mouse_click` and `click_ui_toolkit_element`, reaching the game's own `Button.clicked` handler. Unity 2022.3 was not re-run.
 
 ## [0.7.0] - 2026-10-08
 
