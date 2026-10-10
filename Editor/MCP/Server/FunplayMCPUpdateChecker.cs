@@ -21,9 +21,8 @@ namespace Funplay.Editor.MCP.Server
         private const string PackageName = "com.gamebooom.unity.mcp";
         private const string PackageRoot = "Packages/com.gamebooom.unity.mcp";
         private const string DefaultAssetRoot = "Assets/unity-mcp";
-        private const string GitRepositoryUrl = "https://github.com/FunplayAI/funplay-unity-mcp.git";
-        private const string LatestReleaseApiUrl = "https://api.github.com/repos/FunplayAI/funplay-unity-mcp/releases/latest";
-        private const string DefaultReleasesUrl = "https://github.com/FunplayAI/funplay-unity-mcp/releases";
+        // Upstream, for installs without a GitHub git source (unitypackage imports, other hosts).
+        private const string UpstreamGitUrl = "https://github.com/FunplayAI/funplay-unity-mcp.git";
         private const string ScriptRootSuffix = "/Editor/MCP/Server/MCPServerService.cs";
         private const double AutoCheckIntervalHours = 6d;
         private const string PrefsPrefix = "Funplay.MCP.UpdateChecker";
@@ -161,7 +160,7 @@ namespace Funplay.Editor.MCP.Server
                     }
                     else if (choice == 2)
                     {
-                        Application.OpenURL(string.IsNullOrEmpty(latestRelease.html_url) ? DefaultReleasesUrl : latestRelease.html_url);
+                        Application.OpenURL(string.IsNullOrEmpty(latestRelease.html_url) ? CurrentReleaseSource().ReleasesUrl : latestRelease.html_url);
                     }
 
                     return;
@@ -183,7 +182,7 @@ namespace Funplay.Editor.MCP.Server
                             "View Release",
                             "Close"))
                     {
-                        Application.OpenURL(string.IsNullOrEmpty(latestRelease.html_url) ? DefaultReleasesUrl : latestRelease.html_url);
+                        Application.OpenURL(string.IsNullOrEmpty(latestRelease.html_url) ? CurrentReleaseSource().ReleasesUrl : latestRelease.html_url);
                     }
 
                     return;
@@ -321,14 +320,14 @@ namespace Funplay.Editor.MCP.Server
                         "Funplay MCP",
                         "Automatic updates are only supported for Git installs and unitypackage imports.\n\nOpening the release page instead.",
                         "OK");
-                    Application.OpenURL(string.IsNullOrEmpty(latestRelease.html_url) ? DefaultReleasesUrl : latestRelease.html_url);
+                    Application.OpenURL(string.IsNullOrEmpty(latestRelease.html_url) ? CurrentReleaseSource().ReleasesUrl : latestRelease.html_url);
                     return;
             }
         }
 
         private static void StartGitPackageUpdate(string latestVersion)
         {
-            var gitReference = $"{GitRepositoryUrl}#v{NormalizeVersion(latestVersion)}";
+            var gitReference = $"{CurrentReleaseSource().GitUrl}#v{NormalizeVersion(latestVersion)}";
             SetUpdateProgress("Starting Unity Package Manager update...", 0.8f);
             UnityEditor.PackageManager.Client.Add(gitReference);
 
@@ -601,7 +600,7 @@ namespace Funplay.Editor.MCP.Server
 
         private static async Task<GitHubReleaseResponse> FetchLatestReleaseAsync()
         {
-            using (var request = UnityWebRequest.Get(LatestReleaseApiUrl))
+            using (var request = UnityWebRequest.Get(CurrentReleaseSource().LatestReleaseApiUrl))
             {
                 request.timeout = 15;
                 request.SetRequestHeader("User-Agent", "Funplay-Unity-MCP");
@@ -667,7 +666,7 @@ namespace Funplay.Editor.MCP.Server
             _latestInstallContext = installContext;
             _latestVersion = NormalizeVersion(latestVersion);
             _latestReleaseUrl = string.IsNullOrEmpty(latestRelease?.html_url)
-                ? DefaultReleasesUrl
+                ? CurrentReleaseSource().ReleasesUrl
                 : latestRelease.html_url;
             _installDescription = installContext.Description;
 
@@ -970,6 +969,55 @@ namespace Funplay.Editor.MCP.Server
         {
             public string name;
             public string browser_download_url;
+        }
+
+        /// <summary>
+        /// Where releases are checked and git updates are fetched from: the installed package's own
+        /// GitHub repository (so a fork updates from the fork), else upstream.
+        /// </summary>
+        private static ReleaseSource CurrentReleaseSource()
+        {
+            var packageInfo = UnityPackageInfo.FindForAssetPath(PackageRoot);
+            var gitUrl = packageInfo != null && packageInfo.source == PackageSource.Git ? GitUrlFromPackageId(packageInfo.packageId) : null;
+            return ReleaseSource.FromGitUrl(gitUrl) ?? ReleaseSource.FromGitUrl(UpstreamGitUrl).Value;
+        }
+
+        /// <summary>The git URL of a "name@url" package ID, or null.</summary>
+        internal static string GitUrlFromPackageId(string packageId)
+        {
+            var at = packageId?.IndexOf('@') ?? -1;
+            return at > 0 && at < packageId.Length - 1 ? packageId.Substring(at + 1) : null;
+        }
+
+        internal readonly struct ReleaseSource
+        {
+            /// <summary>Repository URL for UPM, without revision, keeping any ?path= query.</summary>
+            public readonly string GitUrl;
+            public readonly string LatestReleaseApiUrl;
+            public readonly string ReleasesUrl;
+
+            private ReleaseSource(string gitUrl, string owner, string repo)
+            {
+                GitUrl = gitUrl;
+                LatestReleaseApiUrl = $"https://api.github.com/repos/{owner}/{repo}/releases/latest";
+                ReleasesUrl = $"https://github.com/{owner}/{repo}/releases";
+            }
+
+            /// <summary>
+            /// Parses https, git+https, ssh:// and scp-style (git@github.com:owner/repo) GitHub URLs,
+            /// with an optional .git suffix, ?path= query and #revision. Null for other hosts.
+            /// </summary>
+            public static ReleaseSource? FromGitUrl(string url)
+            {
+                if (string.IsNullOrWhiteSpace(url))
+                    return null;
+                var hash = url.IndexOf('#');
+                var gitUrl = (hash >= 0 ? url.Substring(0, hash) : url).Trim();
+                var match = Regex.Match(gitUrl,
+                    @"^(?:git\+)?(?:https?://|ssh://)?(?:[^@/]+@)?github\.com[:/](?<owner>[^/]+)/(?<repo>[^/?#]+?)(?:\.git)?/?(?:\?.*)?$",
+                    RegexOptions.IgnoreCase);
+                return match.Success ? new ReleaseSource(gitUrl, match.Groups["owner"].Value, match.Groups["repo"].Value) : (ReleaseSource?)null;
+            }
         }
 
         private enum InstallMode

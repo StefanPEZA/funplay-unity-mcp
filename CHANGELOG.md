@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-10-10
+
+### Fixed
+
+- Check for Update used the upstream repository; git installs now check and update from their own GitHub repository (forks included).
+
 ## [0.8.2] - 2026-10-10
 
 ### Added
