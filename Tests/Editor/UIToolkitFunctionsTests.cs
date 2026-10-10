@@ -705,7 +705,57 @@ namespace Funplay.Editor.Tests
             yield return Await(settled);
             var settledJson = JObject.FromObject(settled.Result);
             Assert.IsTrue((bool)settledJson["success"], settledJson.ToString());
-            Assert.GreaterOrEqual((int)settledJson["data"]["frames"], 2, settledJson.ToString());
+            Assert.GreaterOrEqual((int)settledJson["data"]["frames"], 3, "settle_frames frames pass after the first check: " + settledJson);
+        }
+
+        [UnityTest]
+        public IEnumerator WaitForSettledRestartsWhenADescendantClassChangesLater()
+        {
+            yield return BuildLivePanel("UitkSettleLate");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var play = liveRoot.Q<Button>("play");
+
+            // Like a dialog that adds its "open" class to an inner panel a frame after it is shown.
+            var wait = UIToolkitFunctions.WaitForElementAsync(id, "#menu", null, null, "settled", 5f, 3);
+            yield return null;
+            yield return null;
+            Assert.IsFalse(wait.IsCompleted, "two frames are not enough for settle_frames=3");
+            play.AddToClassList("late-open");
+            var ticksAfterChange = 0;
+            EditorApplication.CallbackFunction count = () => ticksAfterChange++;
+            EditorApplication.update += count;
+            try { yield return Await(wait); }
+            finally { EditorApplication.update -= count; }
+
+            var json = JObject.FromObject(wait.Result);
+            Assert.IsTrue((bool)json["success"], json.ToString());
+            Assert.GreaterOrEqual(ticksAfterChange, 3, "the class change on a descendant restarts the settle count: " + json);
+        }
+
+        [UnityTest]
+        public IEnumerator VisualTreeQueriesSearchBelowMaxDepthAndElementPathScopesTheSubtree()
+        {
+            yield return BuildLivePanel("UitkDepth");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var play = liveRoot.Q<Button>("play");
+            var playPath = UIToolkitPanels.PathOf(liveRoot, play);
+            var menuPath = UIToolkitPanels.PathOf(liveRoot, liveRoot.Q("menu"));
+
+            var deep = Data(UIToolkitFunctions.GetVisualTree(id, "#play", max_depth: 0));
+            var matched = (JArray)deep["hosts"][0]["elements"];
+            Assert.AreEqual(1, matched.Count, "max_depth limits listings, not selector matching: " + deep);
+            Assert.AreEqual(playPath, (string)matched[0]["path"]);
+
+            var subtree = Data(UIToolkitFunctions.GetVisualTree(id, max_depth: 1, element_path: menuPath));
+            var paths = ((JArray)subtree["hosts"][0]["elements"]).Select(e => (string)e["path"]).ToList();
+            Assert.AreEqual(menuPath, paths[0], "the subtree starts at element_path: " + subtree);
+            CollectionAssert.Contains(paths, playPath, "children keep host-relative paths");
+            Assert.IsTrue(paths.All(path => path.StartsWith(menuPath, StringComparison.Ordinal)), subtree.ToString());
+
+            var missing = JObject.FromObject(UIToolkitFunctions.GetVisualTree(id, element_path: "99/99"));
+            Assert.AreEqual("ELEMENT_NOT_FOUND", (string)missing["code"], missing.ToString());
+            var snapshot = Data(UIToolkitFunctions.GetVisualTree(id, max_depth: 0, snapshot: true));
+            Assert.AreEqual("whole_tree", (string)snapshot["snapshot_scope"]);
         }
 
         private static IEnumerator Await(System.Threading.Tasks.Task task)
