@@ -918,6 +918,243 @@ namespace Funplay.Editor.Tests
             Assert.IsNull(UIToolkitFunctions.MissingGlyphs("A", null, null), "unknown font: no verdict");
         }
 
+        [UnityTest]
+        public IEnumerator DiffVisualTreeReportsOnlyWhatChanged()
+        {
+            yield return BuildLivePanel("UitkDiff");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var menu = liveRoot.Q("menu");
+            var dialog = new VisualElement { name = "dialog" };
+            dialog.style.position = Position.Absolute;
+            dialog.style.display = DisplayStyle.None;
+            for (var i = 0; i < 3; i++) dialog.Add(new Label("row " + i));
+            menu.Insert(0, dialog);
+            UIToolkitPanels.ValidateLayout(menu.panel);
+            yield return null;
+
+            var missing = JObject.FromObject(UIToolkitFunctions.DiffVisualTree("vt_missing"));
+            Assert.AreEqual("SNAPSHOT_NOT_FOUND", (string)missing["code"]);
+            var snapshotId = (string)Data(UIToolkitFunctions.GetVisualTree(id, "#title", snapshot: true))["snapshot_id"];
+            Assert.IsNotNull(snapshotId);
+
+            // Bring the dialog to the front (every sibling's index path shifts), open it, retitle.
+            dialog.BringToFront();
+            dialog.style.display = DisplayStyle.Flex;
+            dialog.AddToClassList("dialog--open");
+            liveRoot.Q<Label>("title").text = "Paused";
+            var diff = Data(UIToolkitFunctions.DiffVisualTree(snapshotId, update_snapshot: true));
+            var changed = (JArray)diff["changed"];
+            Assert.AreEqual(2, changed.Count, "the dialog and the title, nothing it contains or reordered: " + diff);
+            var dialogChange = changed.First(c => ((string)c["element"]).Contains("#dialog"));
+            Assert.IsFalse((bool)dialogChange["changes"]["displayed"]["before"]);
+            Assert.IsTrue((bool)dialogChange["changes"]["displayed"]["after"]);
+            Assert.AreEqual("dialog--open", (string)dialogChange["changes"]["classes"]["added"][0]);
+            var titleChange = changed.First(c => ((string)c["element"]).Contains("#title"));
+            Assert.AreEqual("Paused", (string)titleChange["changes"]["text"]["after"]);
+            Assert.AreEqual(0, ((JArray)diff["added"]).Count);
+            Assert.AreEqual(0, ((JArray)diff["removed"]).Count);
+
+            Assert.AreEqual(0, (int)Data(UIToolkitFunctions.DiffVisualTree(snapshotId))["counts"]["changed"], "update_snapshot rebased it");
+
+            // Moving a row into another parent keeps its parent-relative layout; the parent change is reported.
+            var row = dialog[0];
+            var otherSlot = new VisualElement { name = "slot" };
+            otherSlot.style.position = Position.Absolute;
+            dialog.Add(otherSlot);
+            var moveSnapshot = (string)Data(UIToolkitFunctions.GetVisualTree(id, "#title", snapshot: true))["snapshot_id"];
+            otherSlot.Add(row);
+            var moved = Data(UIToolkitFunctions.DiffVisualTree(moveSnapshot));
+            var rowChange = ((JArray)moved["changed"]).First(c => c["changes"]["parent"] != null);
+            StringAssert.Contains("#slot", (string)rowChange["changes"]["parent"]["after"], moved.ToString());
+            Data(UIToolkitFunctions.DiffVisualTree(snapshotId, update_snapshot: true));
+
+            liveRoot.Q<Button>("quit").RemoveFromHierarchy();
+            var panel = new VisualElement { name = "extra" };
+            panel.Add(new Label("a"));
+            panel.Add(new Label("b"));
+            menu.Add(panel);
+            var structural = Data(UIToolkitFunctions.DiffVisualTree(snapshotId));
+            Assert.AreEqual(1, ((JArray)structural["added"]).Count, structural.ToString());
+            Assert.AreEqual(3, (int)structural["added"][0]["subtree_size"], "one entry per added subtree");
+            Assert.AreEqual(1, ((JArray)structural["removed"]).Count, structural.ToString());
+            StringAssert.Contains("#quit", (string)structural["removed"][0]["element"]);
+        }
+
+        [UnityTest]
+        public IEnumerator SetUiToolkitValueFiresChangeEvents()
+        {
+            yield return BuildLivePanel("UitkSetValue");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var menu = liveRoot.Q("menu");
+            var slider = new Slider("Volume", 0, 10) { name = "volume" };
+            var toggle = new Toggle("Music") { name = "music" };
+            var field = new TextField { name = "player" };
+            var dropdown = new DropdownField(new System.Collections.Generic.List<string> { "Easy", "Normal", "Hard" }, 0) { name = "difficulty" };
+            var group = new ToggleButtonGroup { name = "speed" };
+            for (var i = 0; i < 3; i++) group.Add(new Button { text = "x" + (i + 1) });
+            foreach (var control in new VisualElement[] { slider, toggle, field, dropdown, group })
+            {
+                control.style.width = 200; control.style.height = 30;
+                menu.Add(control);
+            }
+            UIToolkitPanels.ValidateLayout(menu.panel);
+            yield return null;
+            var sliderChanges = 0;
+            slider.RegisterValueChangedCallback(_ => sliderChanges++);
+
+            var set = Data(UIToolkitFunctions.SetUiToolkitValue(id, "#volume", value: "4"));
+            Assert.IsTrue((bool)set["change_event"], set.ToString());
+            Assert.AreEqual(4f, (float)set["new_value"]);
+            Assert.AreEqual(1, sliderChanges, "ChangeEvent reached the game's callback");
+            var clamped = Data(UIToolkitFunctions.SetUiToolkitValue(id, "#volume", value: "20"));
+            Assert.AreEqual(10f, (float)clamped["new_value"]);
+            Assert.IsTrue((bool)clamped["clamped"], clamped.ToString());
+            Assert.IsFalse((bool)Data(UIToolkitFunctions.SetUiToolkitValue(id, "#volume", value: "10"))["change_event"], "same value: no event");
+
+            // Matching the inner checkbox sets the Toggle.
+            Assert.IsTrue((bool)Data(UIToolkitFunctions.SetUiToolkitValue(id, "#music .unity-toggle__checkmark", value: "on"))["change_event"]);
+            Assert.IsTrue(toggle.value);
+            Assert.AreEqual("Hard", (string)Data(UIToolkitFunctions.SetUiToolkitValue(id, "#difficulty", value: "2"))["new_value"]);
+            Assert.AreEqual("Normal", (string)Data(UIToolkitFunctions.SetUiToolkitValue(id, "#difficulty", value: "normal"))["new_value"]);
+            Assert.AreEqual("INVALID_VALUE", (string)JObject.FromObject(UIToolkitFunctions.SetUiToolkitValue(id, "#difficulty", value: "Impossible"))["code"]);
+            var groupSet = Data(UIToolkitFunctions.SetUiToolkitValue(id, "#speed", value: "0,x3"));
+            CollectionAssert.AreEqual(new[] { 0, 2 }, groupSet["new_value"].ToObject<int[]>(), groupSet.ToString());
+            Assert.AreEqual("USE_CLICK", (string)JObject.FromObject(UIToolkitFunctions.SetUiToolkitValue(id, "#play", value: "1"))["code"]);
+            // The field's label text matches the Label, which must set the Slider, not relabel it.
+            var byLabel = Data(UIToolkitFunctions.SetUiToolkitValue(id, null, "Volume", value: "3"));
+            Assert.AreEqual(3f, slider.value, byLabel.ToString());
+            Assert.AreEqual("Volume", slider.label);
+            Assert.AreEqual("NOT_A_VALUE_CONTROL", (string)JObject.FromObject(UIToolkitFunctions.SetUiToolkitValue(id, "#title", value: "x"))["code"], "a bare Label holds no value");
+            field.isReadOnly = true;
+            Assert.AreEqual("ELEMENT_READ_ONLY", (string)JObject.FromObject(UIToolkitFunctions.SetUiToolkitValue(id, "#player", value: "x"))["code"]);
+            field.isReadOnly = false;
+
+            var typed = Data(UIToolkitFunctions.SetUiToolkitValue(id, "#player", type_text: "Ada"));
+            Assert.AreEqual("Ada", field.value, typed.ToString());
+            Debug.Log("[Funplay test] synthesized typing typed=" + typed["typed"]);
+            Assert.IsTrue((bool)typed["typed"], "KeyDownEvents reach the TextField: " + typed);
+            Assert.IsTrue((bool)typed["change_event"]);
+        }
+
+        [UnityTest]
+        public IEnumerator NavigateUiToolkitMovesFocusAndSubmits()
+        {
+            yield return BuildLivePanel("UitkNavigate");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var quit = liveRoot.Q<Button>("quit");
+            var clicks = 0;
+            quit.clicked += () => clicks++;
+
+            Assert.AreEqual("NOTHING_FOCUSED", (string)JObject.FromObject(UIToolkitFunctions.NavigateUiToolkit("submit", id))["code"]);
+            var focus = Data(UIToolkitFunctions.NavigateUiToolkit("focus", id, "#play"));
+            StringAssert.Contains("#play", (string)focus["focused_after"], focus.ToString());
+            var moved = Data(UIToolkitFunctions.NavigateUiToolkit("move:next", id));
+            StringAssert.Contains("#quit", (string)moved["focused_after"], moved.ToString());
+            var submit = Data(UIToolkitFunctions.NavigateUiToolkit("submit", id));
+            Assert.AreEqual(1, clicks, submit.ToString());
+            Assert.IsTrue((bool)submit["handler_invoked"]);
+            Assert.AreEqual("INVALID_ACTION", (string)JObject.FromObject(UIToolkitFunctions.NavigateUiToolkit("move:sideways", id))["code"]);
+        }
+
+        [UnityTest]
+        public IEnumerator PointerUiToolkitHoversDragsAndLongPresses()
+        {
+            yield return BuildLivePanel("UitkPointer");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var handle = new VisualElement { name = "handle" };
+            handle.style.width = 60; handle.style.height = 60; handle.style.backgroundColor = Color.gray;
+            liveRoot.Q("menu").Add(handle);
+            int downs = 0, moves = 0, ups = 0, pointerId = -1;
+            float movedX = 0;
+            handle.RegisterCallback<PointerDownEvent>(e => { downs++; pointerId = e.pointerId; handle.CapturePointer(e.pointerId); });
+            handle.RegisterCallback<PointerMoveEvent>(e => { if (handle.HasPointerCapture(e.pointerId)) { moves++; movedX += e.deltaPosition.x; } });
+            handle.RegisterCallback<PointerUpEvent>(e => { ups++; handle.ReleasePointer(e.pointerId); });
+            UIToolkitPanels.ValidateLayout(handle.panel);
+            yield return null;
+
+            var hover = UIToolkitFunctions.PointerUiToolkit("hover", id, "#play");
+            yield return Await(hover);
+            var hovered = Data(hover.Result);
+            CollectionAssert.Contains(hovered["pseudo_states"].ToObject<string[]>(), "hover", hovered.ToString());
+
+            var drag = UIToolkitFunctions.PointerUiToolkit("drag", id, "#handle", delta: "50,0", duration_ms: 100);
+            yield return Await(drag);
+            var dragged = Data(drag.Result);
+            Assert.AreEqual(1, downs); Assert.AreEqual(1, ups, $"downs {downs} moves {moves} ups {ups} movedX {movedX} " + dragged["captured_by"] + " " + dragged["drop_target"] + " " + dragged["moves"]);
+            Assert.GreaterOrEqual(moves, 4, "moves while captured: " + dragged);
+            StringAssert.Contains("#handle", (string)dragged["captured_by"]);
+            Assert.AreEqual(50f, movedX, 1f, "the moves add up to the delta");
+
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var press = UIToolkitFunctions.PointerUiToolkit("long_press", id, "#handle", duration_ms: 200);
+            Assert.AreEqual(2, downs, "down at once");
+            Assert.AreEqual(1, ups, "still held");
+            yield return Await(press);
+            Assert.AreEqual(2, ups);
+            Assert.GreaterOrEqual(clock.ElapsedMilliseconds, 190);
+
+            var touch = UIToolkitFunctions.PointerUiToolkit("long_press", id, "#handle", duration_ms: 0, pointer_type: "touch");
+            yield return Await(touch);
+            var touched = Data(touch.Result);
+            Assert.AreEqual(pointerId, (int)touched["pointer_id"], touched.ToString());
+            Debug.Log("[Funplay test] touch pointer id " + pointerId);
+            Assert.AreNotEqual(PointerId.mousePointerId, pointerId, "touch events carry a touch pointer ID");
+        }
+
+        [UnityTest]
+        public IEnumerator StyleUiToolkitAppliesReportsRevertsAndReloadsSheets()
+        {
+            yield return BuildLivePanel("UitkStyle");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var play = liveRoot.Q<Button>("play");
+
+            var bad = UIToolkitFunctions.StyleUiToolkit(id, "#play", inline: "{\"color\":\"var(--x)\"}");
+            Assert.AreEqual("INVALID_INLINE_STYLE", (string)JObject.FromObject(bad.Result)["code"]);
+            var unknown = UIToolkitFunctions.StyleUiToolkit(id, "#play", inline: "{\"colour\":\"red\"}");
+            var transparent = UIToolkitFunctions.StyleUiToolkit(id, "#quit", inline: "{\"background-color\":\"transparent\",\"-unity-font-style\":\"bold\"}");
+            yield return Await(transparent);
+            var clear = Data(transparent.Result);
+            Assert.AreEqual(Color.clear, liveRoot.Q<Button>("quit").resolvedStyle.backgroundColor, clear.ToString());
+            Assert.AreEqual("bold", (string)((JArray)clear["styles"]).First(x => (string)x["property"] == "-unity-font-style")["resolved_after"], "the alias resolves");
+            Assert.AreEqual("UNSUPPORTED_STYLE_PROPERTY", (string)JObject.FromObject(unknown.Result)["code"]);
+
+            var styled = UIToolkitFunctions.StyleUiToolkit(id, "#play", add_classes: "big", inline: "{\"background-color\":\"rgb(0, 255, 0)\",\"width\":\"123px\",\"margin\":\"1px 2px\",\"justify-content\":\"flex-end\"}");
+            yield return Await(styled);
+            var data = Data(styled.Result);
+            Assert.IsTrue(play.ClassListContains("big"));
+            Assert.AreEqual(Color.green, play.resolvedStyle.backgroundColor);
+            Assert.AreEqual(123f, play.resolvedStyle.width, 0.01f);
+            Assert.AreEqual(2f, play.resolvedStyle.marginLeft, 0.01f, "margin shorthand: top/bottom 1px, left/right 2px");
+            Assert.AreEqual(Justify.FlexEnd, play.resolvedStyle.justifyContent);
+            Assert.AreEqual(JTokenType.Null, data["reverted"].Type, data.ToString());
+            Assert.IsTrue((bool)data["runtime_only"]);
+
+            // Project code that undoes a class on the next update is reported.
+            EditorApplication.CallbackFunction undo = null;
+            undo = () => { EditorApplication.update -= undo; play.RemoveFromClassList("wide"); };
+            var watched = UIToolkitFunctions.StyleUiToolkit(id, "#play", add_classes: "wide", inline: "{\"width\":null}");
+            EditorApplication.update += undo;
+            yield return Await(watched);
+            var reverted = Data(watched.Result);
+            StringAssert.Contains(".wide", (string)reverted["reverted"][0], reverted.ToString());
+            Assert.AreEqual(StyleKeyword.Null, play.style.width.keyword, "null removes the inline width (a UXML style attribute's included)");
+            Assert.Less(play.resolvedStyle.width, 123f, "USS rules apply again");
+
+            var ussPath = folder + "/Live.uss";
+            File.WriteAllText(ussPath, ".tint { color: rgb(255, 0, 0); }\n");
+            AssetDatabase.ImportAsset(ussPath, ImportAssetOptions.ForceSynchronousImport);
+            liveRoot.styleSheets.Add(AssetDatabase.LoadAssetAtPath<StyleSheet>(ussPath));
+            play.AddToClassList("tint");
+            UIToolkitPanels.ValidateLayout(play.panel);
+            Assert.AreEqual(Color.red, play.resolvedStyle.color);
+            File.WriteAllText(ussPath, ".tint { color: rgb(0, 0, 255); }\n");
+            var reload = UIToolkitFunctions.StyleUiToolkit(id, reload_stylesheets: true);
+            yield return Await(reload);
+            var reloaded = Data(reload.Result);
+            CollectionAssert.Contains(reloaded["reload"]["imported"].ToObject<string[]>(), ussPath, reloaded.ToString());
+            Assert.AreEqual(Color.blue, play.resolvedStyle.color, "the edited USS applies to the live panel");
+        }
+
         private VisualElement liveRoot;
 
         /// <summary>Creates a host from the test UXML and waits until it is built and laid out; ignores the test otherwise.</summary>

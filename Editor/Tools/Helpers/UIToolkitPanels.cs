@@ -1049,9 +1049,17 @@ namespace Funplay.Editor.Tools.Helpers
             return result;
         }
 
-        private static void Send(IPanel panel, VisualElement target, EventType type, Vector2 position, int button)
+        private static void Send(IPanel panel, VisualElement target, EventType type, Vector2 position, int button) =>
+            SendPointer(panel, target, type, position, button, UnityEngine.PointerType.Mouse);
+
+        /// <summary>
+        /// One pointer event through the panel dispatcher, built from an IMGUI event like real input
+        /// (MouseDrag for moves while a button is held, as IMGUI reports them).
+        /// Returns the event's pointerId (touch input maps to a touch pointer ID, mouse to PointerId.mousePointerId).
+        /// </summary>
+        internal static int SendPointer(IPanel panel, VisualElement target, EventType type, Vector2 position, int button, UnityEngine.PointerType pointerType, Vector2 delta = default)
         {
-            var system = new Event { type = type, mousePosition = position, button = Mathf.Max(0, button), clickCount = type == EventType.MouseMove ? 0 : 1, pointerType = UnityEngine.PointerType.Mouse };
+            var system = new Event { type = type, mousePosition = position, delta = delta, button = Mathf.Max(0, button), clickCount = type == EventType.MouseMove || type == EventType.MouseDrag ? 0 : 1, pointerType = pointerType };
             EventBase evt = type == EventType.MouseDown ? PointerDownEvent.GetPooled(system)
                 : type == EventType.MouseUp ? (EventBase)PointerUpEvent.GetPooled(system)
                 : PointerMoveEvent.GetPooled(system);
@@ -1063,11 +1071,24 @@ namespace Funplay.Editor.Tools.Helpers
                 var recompute = evt.GetType().BaseType != null ? CachedProperty(evt.GetType().BaseType, "recomputeTopElementUnderPointer", InstanceMembers) : null;
                 if (recompute != null && recompute.CanWrite) recompute.SetValue(evt, true, null);
                 panel.visualTree.SendEvent(evt);
+                return ((IPointerEvent)evt).pointerId;
             }
             finally
             {
                 evt.Dispose();
             }
+        }
+
+        // Internal; the :hover/:active/:focus/:checked state the style system matches against.
+        private static readonly PropertyInfo PseudoStatesProperty = typeof(VisualElement).GetProperty("pseudoStates", InstanceMembers);
+
+        /// <summary>The element's current pseudo-states in lower case (hover, active, focus, checked, disabled…), or null when unreadable.</summary>
+        internal static string[] PseudoStates(VisualElement element)
+        {
+            var value = PseudoStatesProperty?.GetValue(element, null);
+            if (value == null) return null;
+            return value.ToString().Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries)
+                .Where(s => s != "None" && s != "0").Select(s => s.ToLowerInvariant()).ToArray();
         }
 
         // ---- Shared ------------------------------------------------------------------------

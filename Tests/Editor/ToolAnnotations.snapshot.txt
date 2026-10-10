@@ -43,6 +43,7 @@ create_text
 create_ui_toolkit_panel
 delete_asset destructive idempotent
 delete_game_object destructive idempotent
+diff_visual_tree ro idempotent
 director_evaluate
 duplicate_game_object
 edit_script destructive
@@ -109,6 +110,7 @@ get_windows ro idempotent
 inspect_ui_sprites ro idempotent
 install_package destructive openworld
 instantiate_prefab
+list_changed_assets ro idempotent
 list_components ro idempotent
 list_directory ro idempotent
 list_dirty_scenes ro idempotent
@@ -126,6 +128,7 @@ memory_query_references ro idempotent
 memory_query_top_objects ro idempotent
 memory_take_full_snapshot
 memory_take_snapshot
+navigate_ui_toolkit
 open_prefab_stage idempotent
 open_scene destructive idempotent
 particle_control
@@ -137,6 +140,7 @@ physics_raycast ro idempotent
 pick_ui_toolkit_element ro idempotent
 ping_asset ro idempotent
 play_animator_state
+pointer_ui_toolkit
 prepare_editor idempotent
 preview_ui_toolkit
 profiler_start
@@ -179,6 +183,7 @@ set_selection idempotent
 set_tag_and_layer idempotent
 set_time_scale idempotent
 set_transform idempotent
+set_ui_toolkit_value
 show_dialog
 simulate_key_combo
 simulate_key_press
@@ -186,6 +191,7 @@ simulate_mouse_click
 simulate_mouse_drag
 simulate_ui_scroll
 start_ui_preview_session
+style_ui_toolkit idempotent
 undo destructive
 unload_scene destructive
 unpack_prefab destructive

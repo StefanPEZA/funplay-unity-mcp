@@ -261,7 +261,7 @@ namespace Funplay.Editor.Tools.Builtins
             catch (Exception ex) { return Response.Error("PANEL_SETTINGS_NOT_CREATED", new { detail = ex.Message, created_assets = createdAssets }); }
         }
 
-        [Description("Read the live VisualElement tree of PanelRenderer/UIDocument hosts (Edit or Play Mode): type, name, classes, text/value, displayed/enabled/picking state, visible_fraction/clipped_by (ScrollView viewport or overflow clipping), panel bounds and Game View screen bounds (render bottom-left + image top-left, same contract as clicks/screenshots), optional resolved styles. Filter with selector (Type#name.class) and/or exact text; a text match inside a Button reports the Button's click_receiver_path. Includes findings such as zero-size or picking-ignored controls, elements outside the panel and duplicate names, limited to the matched elements' subtrees unless all_findings. Element paths feed click_ui_toolkit_element; they are child indices that shift when the tree changes, so re-read after UI changes.")]
+        [Description("Read the live VisualElement tree of PanelRenderer/UIDocument hosts (Edit or Play Mode): type, name, classes, text/value, displayed/enabled/picking state, visible_fraction/clipped_by (ScrollView viewport or overflow clipping), panel bounds and Game View screen bounds (render bottom-left + image top-left, same contract as clicks/screenshots), optional resolved styles. Filter with selector (Type#name.class) and/or exact text; a text match inside a Button reports the Button's click_receiver_path. Includes findings such as zero-size or picking-ignored controls, elements outside the panel and duplicate names, limited to the matched elements' subtrees unless all_findings. In Play Mode a host reports scheduler.stalled when a scheduled item on its panel keeps throwing (its later scheduled work no longer runs). Element paths feed click_ui_toolkit_element; they are child indices that shift when the tree changes, so re-read after UI changes. snapshot=true returns a snapshot_id for diff_visual_tree.")]
         [ReadOnlyTool]
         public static object GetVisualTree(
             [ToolParam("Panel host GameObject name/path/ID; omitted reads every host", Required = false)] string target = null,
@@ -272,7 +272,8 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Include resolved styles per element", Required = false)] bool include_styles = false,
             [ToolParam("Report findings for the whole tree, uncapped, instead of the matched subtrees (at most 50 per host)", Required = false)] bool all_findings = false,
             [ToolParam("Omit null/empty fields, duplicate bounds and most host details", Required = false)] bool compact = false,
-            [ToolParam("Skip hidden elements (e.g. closed dialogs)", Required = false)] bool displayed_only = false)
+            [ToolParam("Skip hidden elements (e.g. closed dialogs)", Required = false)] bool displayed_only = false,
+            [ToolParam("Also store the hosts' whole trees (regardless of selector/max_depth) and return snapshot_id for diff_visual_tree", Required = false)] bool snapshot = false)
         {
             try
             {
@@ -329,14 +330,16 @@ namespace Funplay.Editor.Tools.Builtins
                         elements,
                         findings = findingsOmitted > 0 ? findings.Take(MaxFindingsPerHost).ToList() : findings,
                         findings_omitted = findingsOmitted > 0 ? (int?)findingsOmitted : null,
-                        findings_scope = scope != null ? "matched_subtrees" : "tree"
+                        findings_scope = scope != null ? "matched_subtrees" : "tree",
+                        scheduler = SchedulerStallMonitor.Report(root)
                     });
                 }
 
+                var snapshotId = snapshot ? VisualTreeSnapshots.Take(target, hosts).Id : null;
                 return Response.Success(filter.IsEmpty
                         ? $"Visual tree for {hosts.Count} host(s)."
                         : $"{matched} element(s) matched.",
-                    new { hosts = results, truncated = matched > max_elements, render_height = renderHeight > 0 ? (int?)renderHeight : null, geometry_error = geometryError });
+                    new { hosts = results, truncated = matched > max_elements, render_height = renderHeight > 0 ? (int?)renderHeight : null, geometry_error = geometryError, snapshot_id = snapshotId });
             }
             catch (UIToolkitException ex) { return Response.Error(ex.Code, new { detail = ex.Message, details = ex.Details }); }
             catch (Exception ex) { return Response.Error("VISUAL_TREE_UNAVAILABLE", new { detail = ex.Message }); }
@@ -513,6 +516,7 @@ namespace Funplay.Editor.Tools.Builtins
                 }
                 var receiver = UIToolkitPanels.FindClickReceiver(dispatchTarget);
                 var result = UIToolkitPanels.DispatchClick(panel, dispatchTarget, point, (int)inputButton);
+                var scheduler = result.Activated ? null : SchedulerStallMonitor.Report(UIToolkitPanels.GetRoot(matchHost));
                 var who = receiver is Button ? "the button" : "the receiver";
                 var message = !result.Activated ? $"Pointer sequence sent to {Label(matched)}, but no ClickEvent or click handler reached it."
                     : result.ReceiverDetached ? $"Clicked {Label(matched)}; {who} was removed from its panel."
@@ -531,7 +535,8 @@ namespace Funplay.Editor.Tools.Builtins
                     receiver_detached = result.ReceiverDetached,
                     visible_fraction = (float)Math.Round(visibility.Fraction, 3),
                     scrolled_into_view = scrolled,
-                    covered
+                    covered,
+                    scheduler
                 });
             }
             catch (UIToolkitException ex) { return Response.Error(ex.Code, new { detail = ex.Message, details = ex.Details }); }

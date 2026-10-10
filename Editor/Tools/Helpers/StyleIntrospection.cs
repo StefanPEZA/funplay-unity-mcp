@@ -436,6 +436,8 @@ namespace Funplay.Editor.Tools.Helpers
         /// <summary>"background-color" → "backgroundColor", "-unity-font-definition" → "unityFontDefinition".</summary>
         internal static string CamelName(string uss)
         {
+            // The one USS name that differs from its C# property.
+            if (string.Equals(uss, "-unity-font-style", StringComparison.Ordinal)) return "unityFontStyleAndWeight";
             var parts = uss.TrimStart('-').Split('-');
             return parts[0] + string.Concat(parts.Skip(1).Select(p => p.Length == 0 ? p : char.ToUpperInvariant(p[0]) + p.Substring(1)));
         }

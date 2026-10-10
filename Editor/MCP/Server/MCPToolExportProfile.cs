@@ -101,7 +101,8 @@ namespace Funplay.Editor.MCP.Server
             "get_ui_toolkit_info", "create_ui_toolkit_panel", "get_visual_tree", "click_ui_toolkit_element",
             "scroll_ui_toolkit", "pick_ui_toolkit_element", "configure_ui_toolkit_panel", "create_panel_settings",
             "wait_for_ui_toolkit", "capture_ui_toolkit_element", "preview_ui_toolkit",
-            "explain_style", "audit_ui_toolkit"
+            "explain_style", "audit_ui_toolkit", "diff_visual_tree", "set_ui_toolkit_value",
+            "pointer_ui_toolkit", "navigate_ui_toolkit", "style_ui_toolkit"
         };
 
         /// <summary>Packs a user can add to Core (Tool Exposure window).</summary>

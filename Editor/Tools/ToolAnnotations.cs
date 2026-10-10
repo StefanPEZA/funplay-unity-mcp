@@ -46,7 +46,8 @@ namespace Funplay.Editor.Tools
             "set_game_view_size", "set_lighting_settings", "set_material_property", "set_parent", "set_prefab_properties", "set_prefab_property",
             "set_scriptable_object_properties", "set_selection", "set_tag_and_layer", "set_time_scale", "set_transform",
             "show_dialog", "simulate_key_combo", "simulate_key_press", "simulate_mouse_click", "simulate_mouse_drag",
-            "simulate_ui_scroll", "start_ui_preview_session", "wait_for_compilation"
+            "simulate_ui_scroll", "start_ui_preview_session", "wait_for_compilation", "set_ui_toolkit_value",
+            "pointer_ui_toolkit", "navigate_ui_toolkit", "style_ui_toolkit"
         };
 
         /// <summary>Write tools where repeating the same call has no additional effect.</summary>
@@ -60,7 +61,8 @@ namespace Funplay.Editor.Tools
             "set_camera_culling_mask", "set_camera_projection", "set_camera_settings", "set_component_properties",
             "set_component_property", "set_game_view_size", "set_lighting_settings", "set_material_property", "set_parent",
             "set_prefab_properties", "set_prefab_property", "set_scriptable_object_properties", "set_selection",
-            "set_tag_and_layer", "set_time_scale", "set_transform", "set_asset_import_settings", "write_file"
+            "set_tag_and_layer", "set_time_scale", "set_transform", "set_asset_import_settings", "write_file",
+            "style_ui_toolkit"
         };
 
         /// <summary>Tools that reach outside the Editor and project (package registries, arbitrary code).</summary>
