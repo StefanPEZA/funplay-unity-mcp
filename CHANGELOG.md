@@ -6,49 +6,37 @@
 
 ### Added
 
-- Tool annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `title`) on every tool, and typed parameter defaults. Protocol version negotiation: `2025-06-18`, `2025-03-26` and `2024-11-05` are echoed; anything else gets the newest.
-- UI packs for Core: uGUI and UI Toolkit tools join Core by the project's detected framework (Tool Exposure: UI Pack auto/ugui/uitk/both, Re-detect), plus optional packs (animation, performance, lighting, packages).
-- Core lifecycle tools: scenes (`open_scene`, `save_scene`, `list_scenes`, `list_dirty_scenes`), objects, Prefab Mode, `find_assets`, `find_references`, `delete_asset`, ScriptableObjects, `run_tests`.
-- `cancel_task(task_id, kind)`: one cancel for every `get_task` kind.
-- `simulate_key_press(keys=[...])`: chords (replaces `simulate_key_combo` in Core).
-- `get_editor_state`: `editor_focused`, `seconds_since_last_frame`, `frame_count` and a hint when Play Mode frames are stuck.
-- `set_game_view_size(width, height | preset, restore)` (Core): fixed Game View resolution for any UI framework, journaled and restored with `restore=true` or at the next Editor start.
-- `wait_for_ui_toolkit` (UI Toolkit pack): waits up to 10 s for `exists`, `displayed`, `hidden`, `enabled`, `has_class:`, `lacks_class:`, `text:` or `settled` (no visual change for N frames and no observed transition running). Reports stalled Play Mode frames instead of waiting them out.
-- `capture_ui_toolkit_element` (UI Toolkit pack): crops the Game View to one element plus padding, optionally upscaled up to 4x; the `capture_id` stays valid for picks and clicks.
-- `preview_ui_toolkit` (UI Toolkit pack): Play Mode responsive preview. Per size it sets the Game View resolution, overrides the live panels' PanelSettings to ConstantPixelSize at `dp_scale`, waits for layout to settle and captures to a file; everything is restored (also on Play exit, reload and next start), PanelSettings are never marked dirty, and file hashes are reported.
-- UI Toolkit selectors: descendant (space) and child (`>`) combinators, `:nth-of-type(n)` and `:nth-child(n)`; `element_path` segments may be selectors over direct children.
-- `explain_style` (UI Toolkit pack): per USS property the resolved and inline value (element.style and UXML style attributes), the winning rule (selector, specificity, sheet, line) and the rules it overrode, using Unity's own matcher and cascade order; shorthands such as `margin` count for their longhands. `pseudo_states` lists the rules that would apply on hover/active/focus/checked/disabled without touching the element (from the USS source, marked heuristic).
-- `audit_ui_toolkit` (UI Toolkit pack): the `get_visual_tree` findings plus small touch targets, wrapped-text height overflow, elided text, covered controls (across panels), low contrast (WCAG, linear compositing with opacity groups, only over solid colours with no image behind the text, disabled controls exempt; everything else counted as indeterminate), missing glyphs (the element's font asset and its fallbacks, never adds glyphs to dynamic atlases; invisible format characters ignored) and optional safe/play-area rects. `preview_ui_toolkit(audit=true)` runs it at every size.
-- `get_visual_tree(snapshot=true)` and `diff_visual_tree(snapshot_id)` (UI Toolkit pack): what an action changed. Elements are matched by reference (BringToFront reorders don't count); added/removed subtrees are reported once; displayed, enabled, classes, text, opacity and bounds changes are listed without the ones a parent's change implies.
-- `set_ui_toolkit_value` (UI Toolkit pack): sets Slider, Toggle, TextField, DropdownField, EnumField, number fields and ToggleButtonGroup values so `ChangeEvent` fires; `type_text` types into a TextField with synthesized key events; `submit` sends Return. A caption Label beside exactly one control (a settings row) sets that control.
-- `navigate_ui_toolkit` (UI Toolkit pack): focus, `move:<direction>`, submit and cancel through UI Toolkit navigation events, independent of Input System focus.
-- `pointer_ui_toolkit` (UI Toolkit pack): hover, drag (to an element or by a delta, spread over time, respecting pointer capture) and long press, with mouse or touch pointers.
-- `style_ui_toolkit` (UI Toolkit pack): runtime class and inline style experiments, plus `reload_stylesheets` to import edited USS and re-apply it to live panels in Play Mode. Reports changes that project code undid within a few frames.
-- `list_changed_assets` (Full): project files whose content differs from git (index and working tree), under Assets/, Packages/ and ProjectSettings/ by default. No-op rewrites (identical bytes) are not reported. Read-only (`--no-optional-locks`); `NOT_A_GIT_REPOSITORY` outside git.
-- Stalled UI Toolkit schedulers: in Play Mode `get_visual_tree` (per host) and a click that did nothing report `scheduler.stalled` when a per-panel liveness probe is overdue and a scheduled item has been throwing. Repeated scheduler exceptions are collapsed in the log cache (one entry plus a counted summary in `get_console_logs`), so the flood no longer evicts other logs.
-- `capture_simulator_view` waits for a fresh frame after opening the view or switching devices, and reports the device, screen size, orientation (Play Mode) and safe area.
-- Play Mode keeps running while the Editor is in the background: Run In Background is switched on for Play Mode and restored afterwards (crash-safe marker in `Library/FunplayMcp`). Setting: `keepPlayModeRunningInBackground`.
+- Tool annotations on every tool, typed parameter defaults, protocol version negotiation.
+- UI packs for Core (uGUI, UI Toolkit; detected per project) and optional packs.
+- Core lifecycle tools: scenes, objects, Prefab Mode, assets, ScriptableObjects, `run_tests`, `cancel_task`.
+- `simulate_key_press(keys=[...])` for chords.
+- `get_editor_state`: focus, frame liveness and a hint when Play Mode frames are stuck.
+- `set_game_view_size` (Core): journaled, restorable Game View resolution.
+- UI Toolkit pack: `wait_for_ui_toolkit`, `capture_ui_toolkit_element`, `preview_ui_toolkit` (responsive sizes, fully restored), `explain_style`, `audit_ui_toolkit` (touch targets, overflow, contrast, missing glyphs), `diff_visual_tree` (with `get_visual_tree(snapshot=true)`), `set_ui_toolkit_value`, `navigate_ui_toolkit`, `pointer_ui_toolkit`, `style_ui_toolkit` (incl. USS reload in Play Mode).
+- UI Toolkit selectors: descendant/child combinators, `:nth-of-type`, `:nth-child`, selector path segments.
+- `list_changed_assets` (Full): real content changes against git.
+- Stalled UI Toolkit scheduler detection; repeated scheduler exceptions are collapsed in the log.
+- `capture_simulator_view` waits for a fresh frame and reports device, orientation and safe area.
+- Play Mode keeps running while the Editor is in the background (restored afterwards).
 
 ### Changed
 
-- Full stores excluded tools instead of a frozen allow list, so new tools appear after updates; settings v2 migrates 0.8.3 lists. An unchanged 0.8.3 default Core list follows the new default.
-- `tools/list_changed` also fires for schema changes and across restarts (hash of the canonical tool list, persisted).
-- `open_scene` and `create_new_scene` never show a save dialog: `dirty_scenes` = `fail` (default), `save` or `discard`.
-- `delete_asset` moves to the OS trash, only under `Assets/`; folders need `recursive=true`.
-- `enter_play_mode(refresh_assets=true)` runs as a resumable operation, so edited USS/UXML are imported before Play.
-- Hints point to `prepare_editor` instead of `exit_play_mode`.
-- Read-only flags corrected for tools that change Editor state (captures, dialogs, key presses, selection, snapshots).
+- Full stores excluded tools, so new tools appear after updates (settings migrated).
+- `tools/list_changed` also fires for schema changes and across restarts.
+- `open_scene`/`create_new_scene` never show a save dialog (`dirty_scenes`: fail, save, discard).
+- `delete_asset` moves to the OS trash, only under `Assets/`.
+- `enter_play_mode(refresh_assets=true)` imports edited USS/UXML before Play.
+- Hints point to `prepare_editor` instead of `exit_play_mode`; read-only flags corrected.
 
 ### Fixed
 
-- `simulate_key_press`: game code polling `wasPressedThisFrame` missed simulated keys, because each event was processed in an extra update outside the player loop. Keys now go through the player loop's input update, delivery is confirmed (`delivered`, `delivered_frame`, `edge_seen`), and taps are released one player frame after delivery (or after a 0.5 s cap, or on Play exit) instead of a fixed frame count that left keys held when frames stalled. Keys queued before an update no longer overwrite each other. For Play Mode the Input System routes input to the game even when the Game View or Editor is unfocused (`backgroundBehavior`, `editorInputBehaviorInPlayMode`, journaled and restored); devices it had already disabled because the Editor lost focus are re-enabled, so input doesn't stay dead for the rest of the Play session. `simulate_mouse_drag` applies the same settings.
-- Object reference writes stored null for sub-assets or silently built nameless objects; they now resolve the sub-asset of the field's type and fail with an error otherwise.
-- A locked operation journal disabled operations for the whole domain; it is retried on the next call. A corrupt journal is moved aside. Writes are atomic.
-- Reload-interrupted calls: the hint explains that `OPERATION_NOT_FOUND` means the request never started and repeating is safe.
-- `prepare_editor` deadlocked in Play Mode after a script change (Unity defers the recompile until Play ends, the operation waited for it before exiting Play) until its timeout; it now exits Play first.
-- `execute_code` in Play Mode with a deferred recompile waited past the 60 s transport timeout; it now runs against the loaded scripts and returns a warning. In Edit Mode the readiness wait stays below the transport timeout (`EDITOR_BUSY`), and unstarted script compilation returns `SCRIPT_CHANGES_PENDING` instead of an exception.
-- `create_new_scene` with a `.unity` `save_path` created a folder of that name; a `.unity` path is now the scene file.
-- UI Toolkit findings: `CONTROL_PICKING_IGNORED` flagged every built-in Slider (its root ignores picking; its drag container takes the pointer) and now needs nothing pickable inside the control; `DUPLICATE_NAME` ignores Unity's internal `unity-*` part names.
+- `simulate_key_press`: game code now sees `wasPressedThisFrame`, delivery is confirmed, keys never stay held, and input reaches the game while the Editor is unfocused.
+- Object reference writes stored null or nameless objects.
+- Operation journal: lock and corruption errors, unclear interrupted-request hints.
+- `prepare_editor` deadlock in Play Mode after a script change.
+- `execute_code` exceeding the transport timeout in Play Mode.
+- `create_new_scene` treated a `.unity` `save_path` as a folder.
+- UI Toolkit findings: no false positives for built-in Sliders and Unity's internal `unity-*` names.
 
 ## [0.8.3] - 2026-10-10
 
