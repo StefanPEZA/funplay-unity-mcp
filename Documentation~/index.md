@@ -38,7 +38,7 @@ Funplay MCP for Unity is an open-source MCP server for the Unity Editor.
 
 Add a public static class marked with `[ToolProvider("CategoryName")]`, then expose `public static` methods with `[ToolParam]` metadata. Method return types may be `string` (legacy text response) or any object — non-string returns are serialized to JSON via Newtonsoft. Use `Funplay.Editor.Tools.Helpers.Response.Success/Error` for the structured envelope. Tool names are exported in snake_case automatically.
 
-`execute_code` safety checks and the strict filesystem guard are enabled by default in the MCP Server window. They block obvious destructive snippets, broad `System.IO` writes, raw file streams, and absolute/user/system/traversal paths before compilation. This is a defensive guard, not a complete sandbox; trusted clients can still pass `safety_checks=false` for a single call.
+`execute_code` safety checks and the strict filesystem guard are enabled by default in the MCP Server window. They block obvious destructive snippets, broad `System.IO` writes, raw file streams, and absolute/user/system/traversal paths before compilation. Writes whose paths statically resolve under the project's `Library/` or `Temp/` folders (for example `"Library/FunplayMcp/crop.png"`) stay allowed. This is a defensive guard, not a complete sandbox; trusted clients can still pass `safety_checks=false` for a single call.
 
 ## Requirements
 

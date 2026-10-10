@@ -40,7 +40,7 @@ namespace Funplay.Editor.Tools.Builtins
                      "The snippet is compiled into a SEPARATE assembly, so funplay package internal types (e.g. ToolRegistry) cannot be referenced directly from the snippet -- reach them via reflection. " +
                      "safety_checks blocks a small set of obviously dangerous patterns " +
                      "(File.Delete, Process.Start, while(true), Environment.Exit, AssetDatabase.DeleteAsset, etc) " +
-                     "and, when strict filesystem safety is enabled, broad System.IO writes plus obvious absolute/system/traversal paths. " +
+                     "and, when strict filesystem safety is enabled, broad System.IO writes (except to paths that statically resolve under the project's Library/ or Temp/, e.g. \"Library/FunplayMcp/crop.png\") plus obvious absolute/system/traversal paths. " +
                      "This is a defensive layer, not a full sandbox. If omitted, the MCP Settings window's default safety-check setting is used " +
                      "(enabled by default); explicitly passing true or false overrides that default. Project namespaces are not auto-injected " +
                      "by default; add `using` directives in the snippet, or enable the ScriptAssemblies-based convenience toggle in the MCP Settings window. " +
@@ -65,7 +65,7 @@ namespace Funplay.Editor.Tools.Builtins
                             pattern,
                             reason,
                             strict_filesystem_checks = strictFilesystemChecks,
-                            hint = "Disable the strict filesystem guard in the MCP Settings window or pass safety_checks=false only for trusted local calls."
+                            hint = "Strict filesystem safety allows writes to project-relative paths under Library/ or Temp/ (e.g. \"Library/FunplayMcp/crop.png\" or Path.Combine(\"Temp\", \"out.txt\")). Otherwise disable the strict filesystem guard in the MCP Settings window or pass safety_checks=false only for trusted local calls."
                         });
                     AppendHistory(code, false, $"Blocked: {reason}", preferred_namespaces);
                     return blocked;

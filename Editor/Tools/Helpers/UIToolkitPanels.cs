@@ -452,7 +452,25 @@ namespace Funplay.Editor.Tools.Helpers
 
             public bool IsEmpty => Type == null && Name == null && Classes.Count == 0 && Text == null;
 
-            public bool Matches(VisualElement element)
+            public bool Matches(VisualElement element) =>
+                MatchesExceptText(element) && (Text == null || string.Equals(GetText(element), Text, StringComparison.OrdinalIgnoreCase));
+
+            /// <summary>
+            /// The element a click query should act on, or null when <paramref name="element"/> does not
+            /// match. A text match on a non-control child of a click receiver (the Label inside a Button)
+            /// resolves to that receiver when it satisfies the rest of the selector, so the pair counts once.
+            /// </summary>
+            public VisualElement ClickTarget(VisualElement element)
+            {
+                if (Text != null && string.Equals(GetText(element), Text, StringComparison.OrdinalIgnoreCase))
+                {
+                    var receiver = LabelClickReceiver(element);
+                    if (receiver != null && MatchesExceptText(receiver)) return receiver;
+                }
+                return Matches(element) ? element : null;
+            }
+
+            private bool MatchesExceptText(VisualElement element)
             {
                 if (Name != null && element.name != Name) return false;
                 foreach (var cls in Classes)
@@ -464,7 +482,6 @@ namespace Funplay.Editor.Tools.Helpers
                         if (t.Name == Type) { matched = true; break; }
                     if (!matched) return false;
                 }
-                if (Text != null && !string.Equals(GetText(element), Text, StringComparison.OrdinalIgnoreCase)) return false;
                 return true;
             }
         }
@@ -577,6 +594,142 @@ namespace Funplay.Editor.Tools.Helpers
             }
         }
 
+        // ---- Clipping ----------------------------------------------------------------------
+
+        // Internal on every supported version; resolvedStyle exposes no overflow.
+        private static readonly MethodInfo ShouldClipMethod = typeof(VisualElement).GetMethod("ShouldClip", InstanceMembers, null, Type.EmptyTypes, null);
+
+        /// <summary>Whether the element clips its children (overflow: hidden, such as a ScrollView viewport).</summary>
+        internal static bool ClipsChildren(VisualElement element)
+        {
+            if (ShouldClipMethod != null) return (bool)ShouldClipMethod.Invoke(element, null);
+            return element.style.overflow.value == Overflow.Hidden || element.ClassListContains(ScrollView.viewportUssClassName);
+        }
+
+        /// <summary>The part of an element left after ancestor clipping and the panel's own area.</summary>
+        internal struct Visibility
+        {
+            public Rect Visible;
+            /// <summary>Visible area / element area; 0 when fully clipped.</summary>
+            public float Fraction;
+            /// <summary>Nearest clipping ancestor that cuts the element (the panel root when only the panel does); null when fully visible.</summary>
+            public VisualElement ClippedBy;
+            /// <summary>Nearest ScrollView around the element, which can scroll it into view.</summary>
+            public ScrollView ScrollView;
+            public bool FullyVisible => Fraction >= 0.999f;
+        }
+
+        /// <summary>
+        /// Ancestor clipping for a whole-tree pass: the clip rectangle each element imposes on its
+        /// children is computed once, like <see cref="DisplayCache"/>. Requires validated layout.
+        /// </summary>
+        internal sealed class ClipCache
+        {
+            private readonly Dictionary<VisualElement, Rect> _childClip = new Dictionary<VisualElement, Rect>();
+            private readonly Dictionary<VisualElement, Visibility> _visibility = new Dictionary<VisualElement, Visibility>();
+            private readonly Dictionary<VisualElement, ScrollView> _scrollView = new Dictionary<VisualElement, ScrollView>();
+            private readonly Dictionary<VisualElement, ScrollView> _ancestorScrollView = new Dictionary<VisualElement, ScrollView>();
+
+            public Visibility Of(VisualElement element)
+            {
+                if (_visibility.TryGetValue(element, out var cached)) return cached;
+                var bound = element.worldBound;
+                var parent = element.hierarchy.parent;
+                var clip = parent != null ? ChildClip(parent) : new Rect(float.NaN, float.NaN, float.NaN, float.NaN);
+                var visible = Intersect(bound, clip);
+                var area = bound.width * bound.height;
+                var fraction = area > 0f ? visible.width * visible.height / area : float.IsNaN(clip.width) || clip.Contains(bound.position) ? 1f : 0f;
+                var result = new Visibility { Visible = visible, Fraction = Mathf.Clamp01(fraction), ScrollView = NearestScrollView(element) };
+                for (var current = parent; current != null && !result.FullyVisible; current = current.hierarchy.parent)
+                {
+                    if (current.hierarchy.parent == null || ClipsChildren(current) && !ContainsRect(current.worldBound, bound))
+                    {
+                        result.ClippedBy = current;
+                        break;
+                    }
+                }
+                _visibility[element] = result;
+                return result;
+            }
+
+            // Nearest ScrollView whose content holds the element, memoized per element: either the
+            // parent is a ScrollView's contentContainer, or the answer is the parent's.
+            private ScrollView NearestScrollView(VisualElement element)
+            {
+                var parent = element.hierarchy.parent;
+                if (parent == null) return null;
+                if (_scrollView.TryGetValue(element, out var cached)) return cached;
+                var ancestor = AncestorScrollView(parent);
+                var result = ancestor != null && ReferenceEquals(ancestor.contentContainer, parent) ? ancestor : NearestScrollView(parent);
+                _scrollView[element] = result;
+                return result;
+            }
+
+            // Nearest ScrollView above the element, whether or not the element is in its content.
+            private ScrollView AncestorScrollView(VisualElement element)
+            {
+                var parent = element.hierarchy.parent;
+                if (parent == null) return null;
+                if (_ancestorScrollView.TryGetValue(element, out var cached)) return cached;
+                var result = parent as ScrollView ?? AncestorScrollView(parent);
+                _ancestorScrollView[element] = result;
+                return result;
+            }
+
+            private Rect ChildClip(VisualElement element)
+            {
+                if (_childClip.TryGetValue(element, out var clip)) return clip;
+                var parent = element.hierarchy.parent;
+                if (parent == null)
+                {
+                    // The panel's own area; a panel not laid out yet (no Game View) clips nothing.
+                    clip = element.worldBound;
+                    if (!(clip.width > 0f && clip.height > 0f)) clip = new Rect(float.NaN, float.NaN, float.NaN, float.NaN);
+                }
+                else
+                {
+                    clip = ChildClip(parent);
+                    if (ClipsChildren(element)) clip = Intersect(clip, element.worldBound);
+                }
+                _childClip[element] = clip;
+                return clip;
+            }
+        }
+
+        internal static Visibility GetVisibility(VisualElement element) => new ClipCache().Of(element);
+
+        /// <summary>Overlap of two rectangles, zero-sized when disjoint; a rectangle without layout (NaN) does not clip.</summary>
+        private static Rect Intersect(Rect a, Rect b)
+        {
+            if (float.IsNaN(b.x) || float.IsNaN(b.width)) return a;
+            if (float.IsNaN(a.x) || float.IsNaN(a.width)) return b;
+            float xMin = Mathf.Max(a.xMin, b.xMin), yMin = Mathf.Max(a.yMin, b.yMin);
+            float xMax = Mathf.Min(a.xMax, b.xMax), yMax = Mathf.Min(a.yMax, b.yMax);
+            return xMax <= xMin || yMax <= yMin ? new Rect(xMin, yMin, 0f, 0f) : Rect.MinMaxRect(xMin, yMin, xMax, yMax);
+        }
+
+        private static bool ContainsRect(Rect outer, Rect inner) =>
+            inner.xMin >= outer.xMin - 0.5f && inner.yMin >= outer.yMin - 0.5f && inner.xMax <= outer.xMax + 0.5f && inner.yMax <= outer.yMax + 0.5f;
+
+        /// <summary>
+        /// Scrolls every ScrollView around the element, innermost first, so it lies in each viewport
+        /// (ScrollView.ScrollTo). Returns each ScrollView with its offset before scrolling. ScrollTo
+        /// updates the content's inline translate at once, so re-validating layout shows the result.
+        /// </summary>
+        internal static List<KeyValuePair<ScrollView, Vector2>> ScrollIntoView(VisualElement element)
+        {
+            var scrolled = new List<KeyValuePair<ScrollView, Vector2>>();
+            for (var current = element.hierarchy.parent; current != null; current = current.hierarchy.parent)
+            {
+                if (!(current is ScrollView scrollView) || !scrollView.contentContainer.Contains(element)) continue;
+                ValidateLayout(element.panel);
+                scrolled.Add(new KeyValuePair<ScrollView, Vector2>(scrollView, scrollView.scrollOffset));
+                scrollView.ScrollTo(element);
+            }
+            ValidateLayout(element.panel);
+            return scrolled;
+        }
+
         /// <summary>Built-in input controls (what audits expect to have a clickable area).</summary>
         internal static bool IsControl(VisualElement element) =>
             element is Button || element is Toggle || element is TextField || element is Slider || element is SliderInt ||
@@ -596,21 +749,48 @@ namespace Funplay.Editor.Tools.Helpers
             return null;
         }
 
-        internal static object DescribeElement(VisualElement element, string path, ScreenMapping? mapping, int renderHeight, bool includeStyles, DisplayCache displayCache = null)
+        /// <summary>
+        /// The click receiver a non-control element (the Label inside a Button) stands for, or null.
+        /// A Foldout is excluded: its header label resolves to the header Toggle, and anything in its
+        /// content is not part of the Foldout's click area.
+        /// </summary>
+        internal static VisualElement LabelClickReceiver(VisualElement element)
+        {
+            if (IsControl(element)) return null;
+            var receiver = FindClickReceiver(element);
+            return receiver == null || ReferenceEquals(receiver, element) || receiver is Foldout ? null : receiver;
+        }
+
+        internal static object DescribeElement(VisualElement element, string path, ScreenMapping? mapping, int renderHeight, bool includeStyles, DisplayCache displayCache = null, ClipCache clipCache = null)
         {
             var bound = element.worldBound;
             var hasLayout = HasLayout(element);
+            var visibility = hasLayout && element.panel != null ? (clipCache ?? new ClipCache()).Of(element) : (Visibility?)null;
+            var partlyVisible = visibility.HasValue && !visibility.Value.FullyVisible && visibility.Value.Fraction > 0f;
             object screenBounds = null;
             if (hasLayout && mapping.HasValue)
             {
                 var topLeft = mapping.Value.ToScreen(new Vector2(bound.xMin, bound.yMin));
                 var bottomRight = mapping.Value.ToScreen(new Vector2(bound.xMax, bound.yMax));
+                var visibleCenter = partlyVisible ? mapping.Value.ToScreen(visibility.Value.Visible.center) : Vector2.zero;
                 screenBounds = new
                 {
                     image_top_left = new { x = topLeft.x, y = topLeft.y, width = bottomRight.x - topLeft.x, height = bottomRight.y - topLeft.y },
                     render_bottom_left = new { x = topLeft.x, y = renderHeight - bottomRight.y, width = bottomRight.x - topLeft.x, height = bottomRight.y - topLeft.y },
-                    center_render_pixels = new { x = (topLeft.x + bottomRight.x) / 2f, y = renderHeight - (topLeft.y + bottomRight.y) / 2f }
+                    center_render_pixels = new { x = (topLeft.x + bottomRight.x) / 2f, y = renderHeight - (topLeft.y + bottomRight.y) / 2f },
+                    visible_center_render_pixels = partlyVisible ? new { x = visibleCenter.x, y = renderHeight - visibleCenter.y } : null
                 };
+            }
+
+            // A Label inside a Button: give the receiver's path so it can be clicked directly.
+            string receiverPath = null;
+            var receiver = path != null ? LabelClickReceiver(element) : null;
+            if (receiver != null)
+            {
+                var levels = 0;
+                for (var current = element; current != null && !ReferenceEquals(current, receiver); current = current.hierarchy.parent) levels++;
+                var parts = path.Length == 0 ? Array.Empty<string>() : path.Split('/');
+                if (levels <= parts.Length) receiverPath = string.Join("/", parts.Take(parts.Length - levels));
             }
 
             var style = element.resolvedStyle;
@@ -623,10 +803,15 @@ namespace Funplay.Editor.Tools.Helpers
                 text = GetText(element),
                 value = DescribeValue(element),
                 displayed = displayCache?.IsDisplayed(element) ?? IsDisplayed(element),
+                // Ancestor clipping (ScrollView viewport, overflow: hidden) and the panel's area.
+                visible_fraction = visibility.HasValue ? (float?)(float)Math.Round(visibility.Value.Fraction, 3) : null,
+                clipped_by = ClipperLabel(visibility?.ClippedBy),
+                scroll_view = visibility.HasValue && !visibility.Value.FullyVisible && visibility.Value.ScrollView != null ? Label(visibility.Value.ScrollView) : null,
                 enabled = element.enabledInHierarchy,
                 picking_mode = element.pickingMode.ToString().ToLowerInvariant(),
                 focusable = element.focusable,
                 interactive = IsInteractive(element),
+                click_receiver_path = receiverPath,
                 child_count = element.hierarchy.childCount,
                 panel_bounds = hasLayout ? new { x = bound.x, y = bound.y, width = bound.width, height = bound.height } : null,
                 screen_bounds = screenBounds,
@@ -660,16 +845,42 @@ namespace Funplay.Editor.Tools.Helpers
 
         // ---- Input -------------------------------------------------------------------------
 
+        /// <summary>What a dispatched click observably did.</summary>
+        internal sealed class ClickResult
+        {
+            public bool ClickEventReceived;
+            /// <summary>The receiver's Clickable.clicked ran, or its Toggle/Foldout value changed.</summary>
+            public bool HandlerInvoked;
+            /// <summary>The receiver was enabled before the sequence and disabled after it.</summary>
+            public bool ReceiverDisabled;
+            /// <summary>The receiver was removed from its panel during the sequence.</summary>
+            public bool ReceiverDetached;
+
+            /// <summary>
+            /// Any evidence of activation. Clickable invokes clicked on pointer up, before the panel
+            /// synthesizes ClickEvent; a handler that disables or removes its own button means that
+            /// ClickEvent is never delivered, yet the click worked.
+            /// </summary>
+            public bool Activated => ClickEventReceived || HandlerInvoked || ReceiverDisabled || ReceiverDetached;
+        }
+
         /// <summary>
         /// Send a mouse move/down/up sequence through the panel dispatcher, the same path real
         /// mouse input takes: Clickable manipulators, :hover/:active state, pointer capture and the
-        /// panel's ClickEvent synthesis all run. Returns true when a ClickEvent reached the target.
+        /// panel's ClickEvent synthesis all run.
         /// </summary>
-        internal static bool DispatchClick(IPanel panel, VisualElement target, Vector2 panelPosition, int button)
+        internal static ClickResult DispatchClick(IPanel panel, VisualElement target, Vector2 panelPosition, int button)
         {
-            var clicked = false;
-            EventCallback<ClickEvent> onClick = _ => clicked = true;
+            var result = new ClickResult();
+            var receiver = FindClickReceiver(target);
+            var receiverWasEnabled = receiver != null && receiver.enabledInHierarchy && receiver.panel != null;
+            var clickable = receiver != null ? CachedProperty(receiver.GetType(), "clickable", BindingFlags.Public | BindingFlags.Instance)?.GetValue(receiver, null) as Clickable : null;
+            EventCallback<ClickEvent> onClick = _ => result.ClickEventReceived = true;
+            Action onClicked = () => result.HandlerInvoked = true;
+            EventCallback<ChangeEvent<bool>> onToggled = _ => result.HandlerInvoked = true;
             target.RegisterCallback(onClick, TrickleDown.TrickleDown);
+            if (clickable != null) clickable.clicked += onClicked;
+            else receiver?.RegisterCallback(onToggled);
             try
             {
                 Send(panel, target, EventType.MouseMove, panelPosition, -1);
@@ -679,8 +890,16 @@ namespace Funplay.Editor.Tools.Helpers
             finally
             {
                 target.UnregisterCallback(onClick, TrickleDown.TrickleDown);
+                if (clickable != null) clickable.clicked -= onClicked;
+                else receiver?.UnregisterCallback(onToggled);
             }
-            return clicked;
+
+            if (receiverWasEnabled)
+            {
+                result.ReceiverDetached = receiver.panel == null;
+                result.ReceiverDisabled = !result.ReceiverDetached && !receiver.enabledInHierarchy;
+            }
+            return result;
         }
 
         private static void Send(IPanel panel, VisualElement target, EventType type, Vector2 position, int button)
@@ -722,6 +941,7 @@ namespace Funplay.Editor.Tools.Helpers
             public Component Host;
             public string ElementPath;
             public Vector2 PanelPosition;
+            public ScreenMapping? Mapping;
             public string Skipped;
         }
 
@@ -740,7 +960,7 @@ namespace Funplay.Editor.Tools.Helpers
                 var root = host != null ? GetRoot(host) : null;
                 picks.Add(new PanelPick
                 {
-                    Panel = live, Element = element, Host = host, PanelPosition = panelPosition,
+                    Panel = live, Element = element, Host = host, PanelPosition = panelPosition, Mapping = mapping,
                     ElementPath = element != null && root != null ? PathOf(root, element) : null
                 });
             }
@@ -767,7 +987,7 @@ namespace Funplay.Editor.Tools.Helpers
                 panel_position = new { x = pick.PanelPosition.x, y = pick.PanelPosition.y },
                 host_id = pick.Host != null ? ObjectIdHelper.GetSerializableId(pick.Host.gameObject) : null,
                 host_path = pick.Host != null ? ObjectsHelper.GetGameObjectPath(pick.Host.gameObject) : null,
-                element = pick.ElementPath != null ? DescribeElement(element, pick.ElementPath, null, renderHeight, false) : null,
+                element = element != null ? DescribeElement(element, pick.ElementPath, pick.Mapping, renderHeight, false) : null,
                 ancestors = chain,
                 click_receiver = receiver != null ? Label(receiver) : null,
                 swallowed_by = element != null && receiver == null
@@ -775,6 +995,10 @@ namespace Funplay.Editor.Tools.Helpers
                     : null
             };
         }
+
+        /// <summary>Label of a <see cref="Visibility.ClippedBy"/> element; "panel" for the panel root.</summary>
+        internal static string ClipperLabel(VisualElement clipper) =>
+            clipper == null ? null : clipper.hierarchy.parent == null ? "panel" : Label(clipper);
 
         /// <summary>Short element label for messages: Type#name "text".</summary>
         internal static string Label(VisualElement element)

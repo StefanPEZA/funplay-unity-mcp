@@ -40,7 +40,7 @@ namespace Funplay.Editor.MCP.Server
             strictToggle.style.marginBottom = 2;
             parent.Add(strictToggle);
             AddHint(parent,
-                "Adds checks for broad System.IO file writes, raw file streams, and absolute/user/system/traversal paths. This is a defensive guard, not a complete sandbox.");
+                "Adds checks for broad System.IO file writes, raw file streams, and absolute/user/system/traversal paths. Writes into the project's Library/ and Temp/ folders stay allowed. This is a defensive guard, not a complete sandbox.");
 
             var projectNamespacesToggle = new Toggle("Auto-inject project namespaces");
             projectNamespacesToggle.SetValueWithoutNotify(settings.ExecuteCodeProjectNamespaceInjectionEnabled);

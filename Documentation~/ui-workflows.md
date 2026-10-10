@@ -332,15 +332,27 @@ Typical flow:
 3. `configure_ui_toolkit_panel` changes UXML (`none` clears), PanelSettings or sorting order;
    `create_panel_settings` (Full) creates additional PanelSettings with scale/render mode.
 4. `get_visual_tree(target?, selector?, text?)` reads the live tree in Edit or Play Mode: element
-   paths, type, name, classes, text/value, display/enabled/picking state, panel bounds, Game View
+   paths, type, name, classes, text/value, display/enabled/picking state, `visible_fraction` and
+   `clipped_by` (ScrollView viewports and `overflow: hidden` ancestors), panel bounds, Game View
    screen bounds in the shared coordinate contract, optional resolved styles and findings such as
    `ZERO_SIZE_CONTROL`, `CONTROL_PICKING_IGNORED`, `OUTSIDE_PANEL`, `TEXT_OVERFLOWS` and
-   `DUPLICATE_NAME`. Selectors are one compound `Type#name.class` (base types match, so
-   `TextElement` matches `Label`).
+   `DUPLICATE_NAME`. With a query, findings cover the matched elements and their subtrees (at most
+   50 per host, `findings_omitted` counts the rest); `all_findings` audits the whole tree. Content
+   scrolled out of a ScrollView is not a finding. Selectors are one compound `Type#name.class`
+   (base types match, so `TextElement` matches `Label`); a text match on a Button's inner Label
+   carries the Button's `click_receiver_path`. Hosts report `tree_source` (`uxml`, `code` or
+   `none`); a host without UXML is only flagged when its root is still empty in Play Mode.
 5. In Play Mode, `click_ui_toolkit_element(selector|text|element_path)` dispatches pointer
    move/down/up through the panel, so Clickable manipulators, `:hover`/`:active` and `ClickEvent`
-   run as with a real mouse, and reports `click_event_received`. It refuses ambiguous, hidden,
-   disabled, zero-area or covered targets. `simulate_mouse_click` uses the same dispatch at a
+   run as with a real mouse. `clicked` is true when a `ClickEvent` arrived, the receiver's
+   `clicked` handler ran (`handler_invoked`) or the receiver disabled or removed itself, since a
+   disabled element never gets the `ClickEvent` that follows. A text query that matches a Button's
+   inner Label clicks the Button. It refuses ambiguous, hidden, disabled, zero-area or covered
+   targets; a partly clipped element is clicked in its visible part and a fully clipped one returns
+   `ELEMENT_CLIPPED` with the clipping ancestor and ScrollView. `scroll_into_view=true`, or
+   `scroll_ui_toolkit(selector|text|element_path)` beforehand, scrolls the enclosing ScrollViews
+   (`ScrollView.ScrollTo`); `scroll_ui_toolkit` with `delta_x`/`delta_y` offsets a ScrollView by
+   panel pixels. `simulate_mouse_click` uses the same dispatch at a
    screen point (strategy `ui-toolkit`) with or without an EventSystem, and
    `raycast_at_point` / `pick_ui_toolkit_element` report the topmost element, its click receiver
    or the element swallowing the pointer under `ui_toolkit`.

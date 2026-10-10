@@ -48,6 +48,7 @@ namespace Funplay.Editor.MCP.Server
             "create_ui_toolkit_panel",
             "get_visual_tree",
             "click_ui_toolkit_element",
+            "scroll_ui_toolkit",
             // Editor state -- high-frequency reads/writes
             "get_editor_state",
             "get_selection",

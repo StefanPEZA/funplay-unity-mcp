@@ -243,6 +243,41 @@ namespace Funplay.Editor
         }
 
         [Test]
+        public void InterruptedByReloadResponse_PointsKeyedPrepareEditorAtGetTask()
+        {
+            var response = MCPServerService.CreateInterruptedByReloadResponse(new MCPRequest
+            {
+                Id = "req-8",
+                Method = "tools/call",
+                Params = new Dictionary<string, object>
+                {
+                    ["name"] = "prepare_editor",
+                    ["arguments"] = new Dictionary<string, object> { ["request_key"] = "prep-1", ["wait_seconds"] = 20 }
+                }
+            });
+
+            Assert.AreEqual("req-8", response.Id);
+            Assert.AreEqual(-32001, response.Error.Code);
+            var data = (Dictionary<string, object>)response.Error.Data;
+            Assert.AreEqual("RELOAD_IN_PROGRESS", data["code"]);
+            Assert.AreEqual(true, data["retryable"]);
+            Assert.AreEqual("editor", data["kind"]);
+            Assert.AreEqual("prep-1", data["request_key"]);
+            StringAssert.Contains("get_task(kind=\"editor\", request_key=\"prep-1\")", (string)data["hint"]);
+
+            var unkeyed = MCPServerService.CreateInterruptedByReloadResponse(new MCPRequest
+            {
+                Id = 9,
+                Method = "tools/call",
+                Params = new Dictionary<string, object> { ["name"] = "execute_code" }
+            });
+            var unkeyedData = (Dictionary<string, object>)unkeyed.Error.Data;
+            Assert.AreEqual("RELOAD_IN_PROGRESS", unkeyedData["code"]);
+            Assert.IsFalse(unkeyedData.ContainsKey("kind"));
+            StringAssert.Contains("get_reload_recovery_status", (string)unkeyedData["hint"]);
+        }
+
+        [Test]
         public void SettingsRestartCompletion_CoalescesWaitersUntilFinalCompletion()
         {
             var completion = new MCPServerRestartCompletion();

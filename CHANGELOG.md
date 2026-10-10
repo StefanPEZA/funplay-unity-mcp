@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-10
+
+### Added
+
+- `scroll_ui_toolkit` (Core, 45 tools; Full has 188): scrolls the ScrollViews around a matched element until it is in view (`ScrollView.ScrollTo`), or offsets a ScrollView by `delta_x`/`delta_y` panel pixels. `click_ui_toolkit_element` gains `scroll_into_view`.
+- `get_visual_tree` reports `visible_fraction`, `clipped_by` and `scroll_view` per element (ScrollView viewports and `overflow: hidden` ancestors), `click_receiver_path` for a Label inside a Button, and `tree_source` (`uxml`, `code`, `none`) per host.
+
+### Changed
+
+- `get_visual_tree` findings cover the matched elements and their subtrees when a selector/text is given, capped at 50 per host with `findings_omitted`; `all_findings` restores the whole-tree audit. Content scrolled out of a ScrollView is no longer reported as `OUTSIDE_PANEL`, and only the topmost element of a subtree outside the panel is listed.
+- `click_ui_toolkit_element` with `text` that matches a Button's inner Label clicks the Button and counts the pair as one match; an explicit `Label` selector still targets the label.
+- Requests interrupted by a domain reload return `RELOAD_IN_PROGRESS`; for keyed `prepare_editor`/`start_ui_preview_session` calls the error names the `get_task` kind and `request_key` to poll.
+- Strict `execute_code` filesystem safety allows writes whose path resolves inside the project's `Library/` or `Temp/` (for example cropped screenshots), still blocking system paths, traversal and unresolvable paths.
+
+### Fixed
+
+- `click_ui_toolkit_element` reported a miss when the button's `clicked` handler disabled or removed the button (the `ClickEvent` that follows is never delivered to a disabled element). The result now has `clicked`, `handler_invoked`, `receiver_disabled` and `receiver_detached` alongside `click_event_received`; `simulate_mouse_click` uses the same evidence.
+- Elements scrolled outside a ScrollView returned `ELEMENT_COVERED` with `covered_by: null`. They now return `ELEMENT_CLIPPED` with the clipping ancestor and ScrollView; partly visible elements are clicked in their visible part, and an element with nothing pickable at its center returns `ELEMENT_NOT_PICKABLE`.
+- `NO_VISUAL_TREE_ASSET` was flagged on every host whose tree is built in code; it is now an issue only when the root is still empty in Play Mode.
+- `pick_ui_toolkit_element` (and the UI Toolkit section of `raycast_at_point`) returned `screen_bounds: null` for the picked element.
+- Project Skills sync rewrote generated files whose content was unchanged when only line endings differed (CRLF checkouts under `core.autocrlf`). Unchanged files are left untouched, rewritten CRLF files stay CRLF, and installed skills are updated in place instead of deleted and recreated.
+- The operation journal (`Library/FunplayMcp/Operations/editor-operations.json`) retries briefly on Windows sharing violations when writing and reading, and a later successful write clears an earlier `OPERATION_JOURNAL_UNAVAILABLE`.
+- After a domain reload, `prepare_editor` re-checks pending scripts for a few seconds instead of failing at once with `REFRESH_FAILED` ("Scripts are still pending").
+
 ## [0.8.0] - 2026-10-10
 
 ### Added

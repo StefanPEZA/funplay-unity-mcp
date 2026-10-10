@@ -981,6 +981,148 @@ namespace Funplay.Editor.Tests
             }
         }
 
+        [Test]
+        public void ApplyConfiguration_RemovesStaleManagedReferencesAndKeepsUserFiles()
+        {
+            var projectRoot = CreateTempProjectPath();
+
+            try
+            {
+                ProjectSkillsManager.ApplyConfiguration(projectRoot, new[] { "claude", "cursor" }, Array.Empty<string>());
+
+                var workflowDirectory = Path.Combine(ProjectSkillsManager.GetClaudeSkillsRoot(projectRoot), "funplay-unity-mcp-workflow");
+                var rulesRoot = ProjectSkillsManager.GetCursorRulesPath(projectRoot);
+                var recorded = ProjectSkillsManager.LoadManifest(projectRoot).generatedReferences;
+                foreach (var relative in ProjectSkillReferences.GetForSkill("unity-mcp-workflow").Keys)
+                {
+                    CollectionAssert.Contains(recorded, ".claude/skills/funplay-unity-mcp-workflow/" + relative);
+                    CollectionAssert.Contains(recorded, ".cursor/rules/" + relative);
+                }
+
+                // References an earlier package version generated and this one renamed or dropped.
+                var managed = ProjectSkillsManager.ManagedMarker + "\n\nold reference\n";
+                var staleSkillReference = Path.Combine(workflowDirectory, "references", "unity-mcp-workflow", "renamed.md");
+                var staleRetiredReference = Path.Combine(rulesRoot, "references", "retired-skill", "gone.md");
+                var userCopy = Path.Combine(workflowDirectory, "references", "unity-mcp-workflow", "my-copy.md");
+                var userEmptyFolder = Path.Combine(workflowDirectory, "references", "unity-mcp-workflow", "drafts");
+                foreach (var path in new[] { staleSkillReference, staleRetiredReference, userCopy })
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(path));
+                    File.WriteAllText(path, managed);
+                }
+                Directory.CreateDirectory(userEmptyFolder);
+                var manifest = ProjectSkillsManager.LoadManifest(projectRoot);
+                manifest.generatedReferences.Add(".claude/skills/funplay-unity-mcp-workflow/references/unity-mcp-workflow/renamed.md");
+                manifest.generatedReferences.Add(".cursor/rules/references/retired-skill/gone.md");
+                // Entries outside a generated references folder are never deleted, even if managed.
+                manifest.generatedReferences.Add("CLAUDE.md");
+                manifest.generatedReferences.Add(".claude/skills/funplay-unity-mcp-workflow/SKILL.md");
+                ProjectSkillsManager.SaveManifest(projectRoot, manifest);
+
+                ProjectSkillsManager.ApplyConfiguration(projectRoot, new[] { "claude", "cursor" }, Array.Empty<string>());
+
+                Assert.IsFalse(File.Exists(staleSkillReference));
+                Assert.IsFalse(File.Exists(staleRetiredReference));
+                Assert.IsFalse(Directory.Exists(Path.GetDirectoryName(staleRetiredReference)), "an emptied generated folder is removed");
+                Assert.IsTrue(File.Exists(userCopy), "unrecorded files are kept even when they carry the marker");
+                Assert.IsTrue(Directory.Exists(userEmptyFolder), "user folders are kept");
+                Assert.IsTrue(File.Exists(ProjectSkillsManager.GetClaudeInstructionsPath(projectRoot)), "shared instruction files are never deleted");
+                Assert.IsTrue(File.Exists(Path.Combine(workflowDirectory, "SKILL.md")));
+                foreach (var relative in ProjectSkillReferences.GetForSkill("unity-mcp-workflow").Keys)
+                {
+                    Assert.IsTrue(File.Exists(Path.Combine(workflowDirectory, relative)), relative);
+                    Assert.IsTrue(File.Exists(Path.Combine(rulesRoot, relative)), relative);
+                }
+                CollectionAssert.DoesNotContain(ProjectSkillsManager.LoadManifest(projectRoot).generatedReferences,
+                    ".cursor/rules/references/retired-skill/gone.md");
+
+                // Disabling every platform empties the record.
+                ProjectSkillsManager.ApplyConfiguration(projectRoot, Array.Empty<string>(), Array.Empty<string>());
+                Assert.IsEmpty(ProjectSkillsManager.LoadManifest(projectRoot).generatedReferences);
+                Assert.IsTrue(File.Exists(userCopy));
+            }
+            finally
+            {
+                DeleteTempProjectPath(projectRoot);
+            }
+        }
+
+        [Test]
+        public void ApplyConfiguration_LeavesUnchangedCrlfFilesUntouched()
+        {
+            var projectRoot = CreateTempProjectPath();
+
+            try
+            {
+                ProjectSkillsManager.ApplyConfiguration(projectRoot, new[] { "claude", "cursor" }, Array.Empty<string>());
+
+                var workflowDirectory = Path.Combine(
+                    ProjectSkillsManager.GetClaudeSkillsRoot(projectRoot),
+                    "funplay-unity-mcp-workflow");
+                var paths = new[]
+                    {
+                        ProjectSkillsManager.GetClaudeInstructionsPath(projectRoot),
+                        Path.Combine(workflowDirectory, "SKILL.md"),
+                        Path.Combine(
+                            ProjectSkillsManager.GetCursorRulesPath(projectRoot),
+                            "funplay-unity-mcp-workflow.mdc")
+                    }
+                    .Concat(ProjectSkillReferences.GetForSkill("unity-mcp-workflow").Keys
+                        .Select(relative => Path.Combine(workflowDirectory, relative)))
+                    .ToArray();
+
+                // Simulate a git autocrlf checkout of the generated files.
+                var stamp = new DateTime(2001, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+                foreach (var path in paths)
+                {
+                    Assert.IsTrue(File.Exists(path), path);
+                    File.WriteAllText(path, File.ReadAllText(path).Replace("\r\n", "\n").Replace("\n", "\r\n"));
+                    File.SetLastWriteTimeUtc(path, stamp);
+                }
+
+                var before = paths.Select(File.ReadAllText).ToArray();
+                ProjectSkillsManager.ApplyConfiguration(projectRoot, new[] { "claude", "cursor" }, Array.Empty<string>());
+
+                for (var i = 0; i < paths.Length; i++)
+                {
+                    Assert.AreEqual(before[i], File.ReadAllText(paths[i]), paths[i]);
+                    Assert.AreEqual(stamp, File.GetLastWriteTimeUtc(paths[i]), paths[i]);
+                }
+            }
+            finally
+            {
+                DeleteTempProjectPath(projectRoot);
+            }
+        }
+
+        [Test]
+        public void WriteTextIfChanged_PreservesExistingLineEndingStyle()
+        {
+            var projectRoot = CreateTempProjectPath();
+
+            try
+            {
+                var crlfPath = Path.Combine(projectRoot, "crlf.md");
+                var lfPath = Path.Combine(projectRoot, "lf.md");
+                var newPath = Path.Combine(projectRoot, "new.md");
+                File.WriteAllText(crlfPath, "# Title\r\n\r\nold\r\n");
+                File.WriteAllText(lfPath, "# Title\n\nold\n");
+
+                Assert.IsFalse(ProjectSkillsManager.WriteTextIfChanged(crlfPath, "# Title\n\nold\n"));
+                Assert.IsTrue(ProjectSkillsManager.WriteTextIfChanged(crlfPath, "# Title\n\nnew\n"));
+                Assert.IsTrue(ProjectSkillsManager.WriteTextIfChanged(lfPath, "# Title\n\nnew\n"));
+                Assert.IsTrue(ProjectSkillsManager.WriteTextIfChanged(newPath, "# Title\n\nnew\n"));
+
+                Assert.AreEqual("# Title\r\n\r\nnew\r\n", File.ReadAllText(crlfPath));
+                Assert.AreEqual("# Title\n\nnew\n", File.ReadAllText(lfPath));
+                Assert.AreEqual("# Title\n\nnew\n", File.ReadAllText(newPath));
+            }
+            finally
+            {
+                DeleteTempProjectPath(projectRoot);
+            }
+        }
+
         private static string GetCodexWorkflowSkillPath(string projectRoot)
         {
             return Path.Combine(

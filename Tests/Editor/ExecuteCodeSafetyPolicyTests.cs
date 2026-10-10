@@ -30,6 +30,55 @@ namespace Funplay.Editor.Tests
         }
 
         [Test]
+        public void StrictSafety_AllowsWritesUnderProjectLibraryAndTemp()
+        {
+            var projectRoot = Path.Combine(Path.GetTempPath(), "Funplay Project");
+
+            AssertAllowedIn(projectRoot, "File.WriteAllBytes(\"Library/FunplayMcp/Screenshots/crop.png\", bytes);");
+            AssertAllowedIn(projectRoot, "System.IO.File.WriteAllText(@\"Temp/out.txt\", \"x\");");
+            AssertAllowedIn(projectRoot,
+                "var dir = Path.Combine(Application.dataPath, \"..\", \"Library\", \"FunplayMcp\");\n" +
+                "Directory.CreateDirectory(dir);\n" +
+                "var path = Path.Combine(dir, \"crop.png\");\n" +
+                "File.WriteAllBytes(path, bytes);");
+            AssertAllowedIn(projectRoot, "using (var writer = new StreamWriter(\"Temp/log.txt\")) { }");
+            AssertAllowedIn(projectRoot, "File.Copy(\"Assets/a.png\", \"Library/a.png\", true);");
+
+            // Absolute literals are allowed when they canonicalize into the project's Library/;
+            // the Windows check compares mixed separators and case-insensitively.
+            var absolute = Path.Combine(projectRoot, "Library", "crop.png");
+            AssertAllowedIn(projectRoot, "File.WriteAllBytes(@\"" + absolute + "\", bytes);");
+            if (Path.DirectorySeparatorChar == '\\')
+                AssertAllowedIn(projectRoot, "File.WriteAllBytes(@\"" + absolute.ToUpperInvariant().Replace('\\', '/') + "\", bytes);");
+        }
+
+        [Test]
+        public void StrictSafety_StillBlocksWritesOutsideLibraryAndTemp()
+        {
+            var projectRoot = Path.Combine(Path.GetTempPath(), "Funplay Project");
+
+            AssertBlockedIn(projectRoot, "File.WriteAllBytes(\"Assets/crop.png\", bytes);", "File write");
+            AssertBlockedIn(projectRoot, "File.WriteAllBytes(\"Library\", bytes);", "File write");
+            AssertBlockedIn(projectRoot, "File.WriteAllBytes(\"LibraryOther/crop.png\", bytes);", "File write");
+            AssertBlockedIn(projectRoot, "File.WriteAllBytes(\"Library/x/../y.png\", bytes);", "Path traversal");
+            AssertBlockedIn(projectRoot, "File.WriteAllBytes(Path.Combine(\"Library\", \"..\", \"Assets\", \"x\"), bytes);", "File write");
+            AssertBlockedIn(projectRoot, "File.WriteAllBytes(path, bytes);", "File write");
+            AssertBlockedIn(projectRoot, "var path = \"Library/a.png\"; path = \"Assets/a.png\"; File.WriteAllBytes(path, bytes);", "File write");
+            AssertBlockedIn(projectRoot, "var path = \"Library/x\"; path += \"y\"; File.WriteAllBytes(path, bytes);", "File write");
+            AssertBlockedIn(projectRoot, "File.WriteAllBytes($\"Library/{name}.png\", bytes);", "File write");
+            // A second binding of the name (other scope, lambda, deconstruction) is not resolvable.
+            AssertBlockedIn(projectRoot, "{ var p = \"Library/a\"; } foreach (var p in targets) File.WriteAllText(p, \"x\");", "File write");
+            AssertBlockedIn(projectRoot, "var p = \"Library/a\"; targets.ForEach(p => File.WriteAllText(p, \"x\"));", "File write");
+            AssertBlockedIn(projectRoot, "string p = \"Library/a\"; (p, q) = (target, 1); File.WriteAllText(p, \"x\");", "File write");
+            AssertBlockedIn(projectRoot, "Directory.SetCurrentDirectory(home); File.WriteAllText(\"Library/a\", \"x\");", "working directory");
+            AssertBlockedIn(projectRoot, "Environment.CurrentDirectory = home;", "working directory");
+            AssertBlockedIn(projectRoot, "File.Move(\"Assets/a.png\", \"Library/a.png\");", "File write");
+            AssertBlockedIn(projectRoot, "Directory.Move(\"Library\", \"Temp/Library\");", "Directory write");
+            AssertBlockedIn(projectRoot, "var path = \"/etc/passwd\";", "Absolute");
+            AssertBlockedIn(projectRoot, "var path = @\"" + Path.Combine(projectRoot + "Other", "Library", "x.png") + "\";", "Absolute");
+        }
+
+        [Test]
         public void NonStrictSafety_DoesNotApplyStrictFilesystemRules()
         {
             AssertAllowed("File.WriteAllText(\"Assets/test.txt\", \"x\");", false);
@@ -139,6 +188,17 @@ namespace Funplay.Editor.Tests
         private static void AssertAllowed(string code, bool strict)
         {
             Assert.IsFalse(ExecuteCodeSafetyPolicy.TryFindViolation(code, strict, out _, out _));
+        }
+
+        private static void AssertAllowedIn(string projectRoot, string code)
+        {
+            Assert.IsFalse(ExecuteCodeSafetyPolicy.TryFindViolation(code, true, projectRoot, out _, out var reason), reason + "\n" + code);
+        }
+
+        private static void AssertBlockedIn(string projectRoot, string code, string expectedReasonPart)
+        {
+            Assert.IsTrue(ExecuteCodeSafetyPolicy.TryFindViolation(code, true, projectRoot, out _, out var reason), code);
+            StringAssert.Contains(expectedReasonPart, reason, code);
         }
     }
 }
