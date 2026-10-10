@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using Newtonsoft.Json.Linq;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using Funplay.Editor.Tools.Helpers;
 using UnityEditor;
@@ -194,7 +195,7 @@ namespace Funplay.Editor.Tools.Builtins
                 if (settings != null) UIToolkitPanels.SetPanelSettings(host, settings);
                 if (order.HasValue) UIToolkitPanels.SetSortingOrder(host, order.Value);
                 UIToolkitPanels.MarkHostModified(host);
-                return Response.Success($"Configured '{host.gameObject.name}'.", new { host = DescribeHost(host) });
+                return Response.Success($"Configured '{host.gameObject.name}'.", new { host = DescribeHost(host, treeChanged: clearTree || tree != null) });
             }
             catch (UIToolkitException ex) { return Response.Error(ex.Code, new { detail = ex.Message, details = ex.Details }); }
             catch (Exception ex) { return Response.Error("UI_TOOLKIT_PANEL_NOT_CONFIGURED", new { detail = ex.Message }); }
@@ -260,7 +261,7 @@ namespace Funplay.Editor.Tools.Builtins
             catch (Exception ex) { return Response.Error("PANEL_SETTINGS_NOT_CREATED", new { detail = ex.Message, created_assets = createdAssets }); }
         }
 
-        [Description("Read the live VisualElement tree of PanelRenderer/UIDocument hosts (Edit or Play Mode): type, name, classes, text/value, displayed/enabled/picking state, visible_fraction/clipped_by (ScrollView viewport or overflow clipping), panel bounds and Game View screen bounds (render bottom-left + image top-left, same contract as clicks/screenshots), optional resolved styles. Filter with selector (Type#name.class) and/or exact text; a text match inside a Button reports the Button's click_receiver_path. Includes findings such as zero-size or picking-ignored controls, elements outside the panel and duplicate names, limited to the matched elements' subtrees unless all_findings. Element paths feed click_ui_toolkit_element.")]
+        [Description("Read the live VisualElement tree of PanelRenderer/UIDocument hosts (Edit or Play Mode): type, name, classes, text/value, displayed/enabled/picking state, visible_fraction/clipped_by (ScrollView viewport or overflow clipping), panel bounds and Game View screen bounds (render bottom-left + image top-left, same contract as clicks/screenshots), optional resolved styles. Filter with selector (Type#name.class) and/or exact text; a text match inside a Button reports the Button's click_receiver_path. Includes findings such as zero-size or picking-ignored controls, elements outside the panel and duplicate names, limited to the matched elements' subtrees unless all_findings. Element paths feed click_ui_toolkit_element; they are child indices that shift when the tree changes, so re-read after UI changes.")]
         [ReadOnlyTool]
         public static object GetVisualTree(
             [ToolParam("Panel host GameObject name/path/ID; omitted reads every host", Required = false)] string target = null,
@@ -269,7 +270,9 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Maximum depth below each root, 0..64", Required = false)] int max_depth = 24,
             [ToolParam("Maximum elements returned across hosts, 1..2000", Required = false)] int max_elements = 300,
             [ToolParam("Include resolved styles per element", Required = false)] bool include_styles = false,
-            [ToolParam("Report findings for the whole tree, uncapped, instead of the matched subtrees (at most 50 per host)", Required = false)] bool all_findings = false)
+            [ToolParam("Report findings for the whole tree, uncapped, instead of the matched subtrees (at most 50 per host)", Required = false)] bool all_findings = false,
+            [ToolParam("Omit null/empty fields, duplicate bounds and most host details", Required = false)] bool compact = false,
+            [ToolParam("Skip hidden elements (e.g. closed dialogs)", Required = false)] bool displayed_only = false)
         {
             try
             {
@@ -278,6 +281,9 @@ namespace Funplay.Editor.Tools.Builtins
                 var filter = UIToolkitPanels.Selector.Parse(selector, text);
                 var hosts = ResolveHosts(target);
                 var hostRoots = UIToolkitPanels.HostRoots(hosts);
+                // A targeted parent still lists nested panels' elements, but they are not its content.
+                var allHosts = string.IsNullOrWhiteSpace(target) ? hosts : UIToolkitPanels.FindHosts(sorted: false);
+                var allRoots = string.IsNullOrWhiteSpace(target) ? hostRoots : UIToolkitPanels.HostRoots(allHosts);
                 var renderHeight = TryGetRenderHeight(out var geometryError);
                 var matched = 0;
                 var results = new List<object>();
@@ -300,22 +306,26 @@ namespace Funplay.Editor.Tools.Builtins
                     foreach (var entry in walked)
                     {
                         if (!filter.IsEmpty && !filter.Matches(entry.Value)) continue;
+                        if (displayed_only && !displayCache.IsDisplayed(entry.Value)) continue;
                         hostMatches.Add(entry.Value);
-                        if (++matched <= max_elements)
-                            elements.Add(UIToolkitPanels.DescribeElement(entry.Value, entry.Key, mapping, renderHeight, include_styles, displayCache, clipCache));
+                        if (++matched > max_elements) continue;
+                        var described = UIToolkitPanels.DescribeElement(entry.Value, entry.Key, mapping, renderHeight, include_styles, displayCache, clipCache);
+                        elements.Add(compact ? CompactElement(described) : described);
                     }
 
                     // A query's findings cover what it matched (and their subtrees), not the whole tree.
                     var scope = filter.IsEmpty || all_findings ? null : hostMatches;
                     var findings = Audit(root, walked, displayCache, clipCache, scope);
                     var findingsOmitted = all_findings ? 0 : Math.Max(0, findings.Count - MaxFindingsPerHost);
+                    var hostInfo = DescribeHost(host, walked.Count, allRoots);
                     results.Add(new
                     {
-                        host = DescribeHost(host, walked.Count),
+                        host = compact ? CompactHost(hostInfo) : hostInfo,
                         root_ready = true,
                         layout_ready = UIToolkitPanels.HasLayout(root),
                         screen_mapping = mapping.HasValue ? "screen_space" : UIToolkitPanels.IsWorldSpace(UIToolkitPanels.GetPanelSettings(host)) ? "world_space_unmapped" : "unavailable",
                         element_count = walked.Count,
+                        nested_hosts = NestedHosts(root, allHosts),
                         elements,
                         findings = findingsOmitted > 0 ? findings.Take(MaxFindingsPerHost).ToList() : findings,
                         findings_omitted = findingsOmitted > 0 ? (int?)findingsOmitted : null,
@@ -338,7 +348,7 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("X coordinate")] float x,
             [ToolParam("Y coordinate")] float y,
             [ToolParam("render_pixels, image_pixels or normalized", Required = false)] string coordinate_space = "render_pixels",
-            [ToolParam("bottom_left or top_left", Required = false)] string origin = "bottom_left",
+            [ToolParam("top_left (default for image_pixels) or bottom_left (default otherwise)", Required = false)] string origin = null,
             [ToolParam("Screenshot ID; required for image_pixels", Required = false)] string capture_id = null)
         {
             if (!VisualCoordinates.TryResolve(x, y, coordinate_space, origin, capture_id, out var point, out var geometry, out var coordinateError))
@@ -360,7 +370,7 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Panel host GameObject name/path/ID", Required = false)] string target = null,
             [ToolParam("Compound selector Type#name.class", Required = false)] string selector = null,
             [ToolParam("Exact element text, case-insensitive", Required = false)] string text = null,
-            [ToolParam("Element path from get_visual_tree (requires a single host)", Required = false)] string element_path = null,
+            [ToolParam("Element path from get_visual_tree (requires a single host; shifts when the tree changes)", Required = false)] string element_path = null,
             [ToolParam("left, right or middle", Required = false)] string button = "left",
             [ToolParam("Click even when another element covers the center", Required = false)] bool allow_covered = false,
             [ToolParam("Scroll enclosing ScrollViews so a clipped element is in view before clicking", Required = false)] bool scroll_into_view = false)
@@ -375,7 +385,7 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Panel host GameObject name/path/ID", Required = false)] string target = null,
             [ToolParam("Compound selector Type#name.class", Required = false)] string selector = null,
             [ToolParam("Exact element text, case-insensitive", Required = false)] string text = null,
-            [ToolParam("Element path from get_visual_tree (requires a single host)", Required = false)] string element_path = null,
+            [ToolParam("Element path from get_visual_tree (requires a single host; shifts when the tree changes)", Required = false)] string element_path = null,
             [ToolParam("Horizontal scroll in panel pixels; 0 with delta_y 0 scrolls the element into view", Required = false)] float delta_x = 0,
             [ToolParam("Vertical scroll in panel pixels, positive scrolls down", Required = false)] float delta_y = 0)
         {
@@ -394,6 +404,8 @@ namespace Funplay.Editor.Tools.Builtins
                 var (matchHost, matchPath, element) = ResolveUniqueElement(target, selector, text, elementPath);
                 var panel = element.panel ?? throw new UIToolkitException("ROOT_NOT_READY", "The element is not attached to a panel.");
                 UIToolkitPanels.ValidateLayout(panel);
+                // A hidden ScrollView has no layout to clamp against, so an offset would be reported but never applied.
+                if (!UIToolkitPanels.IsDisplayed(element)) throw new UIToolkitException("ELEMENT_NOT_DISPLAYED", "The element is hidden (display:none or visibility:hidden on it or an ancestor).");
 
                 List<KeyValuePair<ScrollView, Vector2>> scrolled;
                 if (deltaX != 0f || deltaY != 0f)
@@ -575,9 +587,10 @@ namespace Funplay.Editor.Tools.Builtins
         // ---- Helpers -----------------------------------------------------------------------
 
         /// <param name="elementCount">Already-walked element count, to avoid a second walk.</param>
-        /// <param name="nestedRoots">Roots of the other hosts in the same response; their subtrees are
-        /// counted under those hosts, not this one.</param>
-        internal static object DescribeHost(Component host, int? elementCount = null, ISet<VisualElement> nestedRoots = null)
+        /// <param name="nestedRoots">Roots of other hosts; their subtrees are counted under those hosts,
+        /// not this one. Omitted, every host in the loaded scenes is considered.</param>
+        /// <param name="treeChanged">The UXML was just set; the root still holds the previous build until it rebuilds.</param>
+        internal static object DescribeHost(Component host, int? elementCount = null, ISet<VisualElement> nestedRoots = null, bool treeChanged = false)
         {
             var settings = UIToolkitPanels.GetPanelSettings(host);
             var tree = UIToolkitPanels.GetVisualTreeAsset(host);
@@ -587,7 +600,10 @@ namespace Funplay.Editor.Tools.Builtins
             if (parent == null && settings == null) issues.Add("NO_PANEL_SETTINGS: the panel is not displayed until PanelSettings is assigned.");
             if (settings != null && settings.themeStyleSheet == null) issues.Add("NO_THEME_STYLE_SHEET: built-in controls render unstyled without a theme.");
             // Code-built trees (no UXML) are normal; only a built root that stays empty in Play Mode is an issue.
-            var treeSource = tree != null ? "uxml" : root != null && root.hierarchy.childCount > 0 ? "code" : "none";
+            // A nested host's root is a child of this root but is not this host's content.
+            if (root != null && (tree == null || elementCount == null))
+                nestedRoots = nestedRoots ?? UIToolkitPanels.HostRoots(UIToolkitPanels.FindHosts(sorted: false));
+            var treeSource = tree != null ? "uxml" : !treeChanged && root != null && root.hierarchy.Children().Any(c => !nestedRoots.Contains(c)) ? "code" : "none";
             if (treeSource == "none" && root != null && EditorApplication.isPlaying)
                 issues.Add("NO_VISUAL_TREE_ASSET: no UXML is assigned and no code has added elements to the root.");
             if (host is UIDocument && UIToolkitPanels.PanelRendererAvailable) issues.Add("LEGACY_UI_DOCUMENT: PanelRenderer is the current host on this Unity version; keep unless migrating deliberately.");
@@ -611,6 +627,51 @@ namespace Funplay.Editor.Tools.Builtins
                 element_count = elementCount ?? (root != null ? UIToolkitPanels.CountElements(root, nestedRoots) : 0),
                 issues
             };
+        }
+
+        /// <summary>
+        /// get_visual_tree's compact element: no null/empty fields, and panel_bounds/render_bottom_left
+        /// dropped when screen bounds exist (image_top_left and center_render_pixels carry the same rect).
+        /// </summary>
+        internal static JObject CompactElement(object described)
+        {
+            var json = JObject.FromObject(described);
+            if (json["screen_bounds"] is JObject screen)
+            {
+                json.Remove("panel_bounds");
+                screen.Remove("render_bottom_left");
+            }
+            PruneEmpty(json);
+            return json;
+        }
+
+        private static JObject CompactHost(object described)
+        {
+            var full = JObject.FromObject(described);
+            var json = new JObject();
+            foreach (var key in new[] { "object_id", "path", "component", "tree_source", "issues" })
+                if (full[key] != null) json[key] = full[key];
+            PruneEmpty(json);
+            return json;
+        }
+
+        private static void PruneEmpty(JObject json)
+        {
+            foreach (var property in json.Properties().ToList())
+            {
+                if (property.Value is JObject child) PruneEmpty(child);
+                if (property.Value.Type == JTokenType.Null || property.Value is JContainer container && !container.HasValues) property.Remove();
+            }
+        }
+
+        /// <summary>Hosts whose roots sit in <paramref name="root"/>'s tree (nested PanelRenderer/UIDocument), or null.</summary>
+        private static object[] NestedHosts(VisualElement root, IEnumerable<Component> hosts)
+        {
+            var nested = hosts.Select(h => (host: h, root: UIToolkitPanels.GetRoot(h)))
+                .Where(x => x.root != null && !ReferenceEquals(x.root, root) && root.Contains(x.root))
+                .Select(x => (object)new { object_id = ObjectIdHelper.GetSerializableId(x.host.gameObject), element_path = UIToolkitPanels.PathOf(root, x.root) })
+                .ToArray();
+            return nested.Length > 0 ? nested : null;
         }
 
         private const int MaxFindingsPerHost = 50;

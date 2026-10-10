@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Added
+
+- `get_visual_tree`: `compact` (no empty fields or duplicate bounds), `displayed_only`, and `nested_hosts` per host.
+
+### Changed
+
+- Omitted `origin` defaults to `top_left` for `image_pixels`, `bottom_left` otherwise, in all coordinate tools.
+
+### Fixed
+
+- `image_pixels` points without `origin` were flipped vertically and hit the wrong element.
+- Hidden elements reported `visible_fraction: 1`; now `0`, with no `clipped_by`.
+- `scroll_ui_toolkit` reported a fake offset on hidden ScrollViews; now `ELEMENT_NOT_DISPLAYED`.
+- `tree_source` reported `code` for an empty host holding only a nested panel, or right after `configure_ui_toolkit_panel` cleared the UXML.
+
 ## [0.8.1] - 2026-10-10
 
 ### Added

@@ -23,7 +23,7 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Vertical wheel delta; negative normally scrolls down")] float delta_y,
             [ToolParam("Horizontal wheel delta", Required = false)] float delta_x = 0,
             [ToolParam("render_pixels, image_pixels or normalized", Required = false)] string coordinate_space = "render_pixels",
-            [ToolParam("bottom_left or top_left", Required = false)] string origin = "bottom_left",
+            [ToolParam("top_left (default for image_pixels) or bottom_left (default otherwise)", Required = false)] string origin = null,
             [ToolParam("Fresh screenshot ID; required for image_pixels", Required = false)] string capture_id = null)
         {
             if (!EditorApplication.isPlaying) return Response.Error("PLAY_MODE_REQUIRED");
@@ -48,7 +48,7 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Y coordinate (pixels by default)")] float y,
             [ToolParam("Mouse button: left, right, or middle", Required = false)] string button = "left",
             [ToolParam("render_pixels (legacy default), image_pixels, or normalized", Required = false)] string coordinate_space = "render_pixels",
-            [ToolParam("bottom_left (legacy default) or top_left", Required = false)] string origin = "bottom_left",
+            [ToolParam("top_left (default for image_pixels) or bottom_left (default otherwise)", Required = false)] string origin = null,
             [ToolParam("Screenshot capture ID; required for image_pixels. Rejects changed geometry/mode or captures older than 30 seconds.", Required = false)] string capture_id = null)
         {
             if (!EditorApplication.isPlaying)
@@ -127,7 +127,7 @@ namespace Funplay.Editor.Tools.Builtins
                     {
                         x,
                         y,
-                        coordinate_space, origin, capture_id,
+                        coordinate_space, origin = VisualCoordinates.DefaultOrigin(coordinate_space, origin), capture_id,
                         button = inputButton.ToString().ToLowerInvariant()
                     },
                     attempted,

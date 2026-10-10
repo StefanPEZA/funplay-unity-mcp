@@ -229,7 +229,7 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("X coordinate of the point to test.")] float x,
             [ToolParam("Y coordinate of the point to test.")] float y,
             [ToolParam("Interpret x/y as normalized 0-1 viewport coordinates instead of pixels.", Required = false)] bool normalized = false,
-            [ToolParam("Coordinate origin: 'bottom_left' (Unity screen space, default) or 'top_left' (screenshot/image space).", Required = false)] string origin = "bottom_left",
+            [ToolParam("top_left (default for image_pixels) or bottom_left (default otherwise)", Required = false)] string origin = null,
             [ToolParam("Maximum number of hits to include in the result. Default 20.", Required = false)] int max_results = 20,
             [ToolParam("render_pixels, image_pixels or normalized. Omitted preserves the normalized flag.", Required = false)] string coordinate_space = null,
             [ToolParam("Screenshot ID, required for image_pixels; freshness/geometry validated", Required = false)] string capture_id = null)

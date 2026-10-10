@@ -89,6 +89,7 @@ namespace Funplay.Editor.Tools.Helpers
         {
             point = default; error = null;
             if (float.IsNaN(x) || float.IsNaN(y) || float.IsInfinity(x) || float.IsInfinity(y)) { error = "INVALID_COORDINATES"; return false; }
+            origin = DefaultOrigin(space, origin);
             if (origin != "top_left" && origin != "bottom_left") { error = "INVALID_COORDINATE_ORIGIN"; return false; }
             if (g == null || g.render_width <= 0 || g.render_height <= 0 || g.output_width <= 0 || g.output_height <= 0) { error = "INVALID_GEOMETRY"; return false; }
             float width, height;
@@ -112,6 +113,9 @@ namespace Funplay.Editor.Tools.Helpers
             }
             point = new Vector2(x, y); return true;
         }
+        /// <summary>Omitted origin: top-left for screenshot pixels, Unity's bottom-left otherwise.</summary>
+        internal static string DefaultOrigin(string space, string origin)
+            => !string.IsNullOrEmpty(origin) ? origin : space == "image_pixels" ? "top_left" : "bottom_left";
         internal static Vector2 ToImage(Vector2 renderPoint, VisualGeometry g, string origin)
         {
             float x = g.viewport.x + renderPoint.x * g.viewport.width / g.render_width;

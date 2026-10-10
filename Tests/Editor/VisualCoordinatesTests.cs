@@ -30,6 +30,18 @@ namespace Funplay.Editor.Tests
             Assert.IsTrue(VisualCoordinates.TryConvert(x, y, space, origin, Geometry(), out var point, out var error), error);
             Assert.AreEqual(expectedX, point.x, .001f); Assert.AreEqual(expectedY, point.y, .001f);
         }
+        [TestCase("image_pixels", 125f, 50f, 250f, 400f)]
+        [TestCase("render_pixels", 125f, 50f, 125f, 50f)]
+        [TestCase("normalized", .25f, .2f, 250f, 100f)]
+        public void OmittedOriginFollowsTheCoordinateSpace(string space, float x, float y, float expectedX, float expectedY)
+        {
+            // Screenshot pixels are measured from the top-left; render/normalized keep Unity's bottom-left.
+            foreach (var origin in new[] { null, "" })
+            {
+                Assert.IsTrue(VisualCoordinates.TryConvert(x, y, space, origin, Geometry(), out var point, out var error), error);
+                Assert.AreEqual(expectedX, point.x, .001f); Assert.AreEqual(expectedY, point.y, .001f);
+            }
+        }
         [Test] public void LetterboxedImageViewportIsExplicitAndBarsAreRejected()
         {
             var g = Geometry(); g.output_height = 300; g.viewport.y = 25;
