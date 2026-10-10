@@ -285,7 +285,7 @@ namespace Funplay.Editor.MCP.Server
                     resourceProvider,
                     promptProvider,
                     serverName,
-                    PackageVersionUtility.CurrentVersion,
+                    () => PackageVersionUtility.CurrentVersion,
                     projectIdentity);
 
                 transport.OnRequestReceived += HandleRequestReceived;
