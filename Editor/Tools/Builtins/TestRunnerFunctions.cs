@@ -1,7 +1,9 @@
 // Copyright (C) Funplay. Licensed under MIT.
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
+using Funplay.Editor.Api;
 using Funplay.Editor.Tools.Helpers;
 using Funplay.Editor.State;
 using Newtonsoft.Json.Linq;
@@ -95,7 +97,8 @@ namespace Funplay.Editor.Tools.Builtins
                      "when finished, reports pass/fail/skip counts and details for failed tests. If no test-runner " +
                      "callback has fired for a while, the response includes possiblyStuck=true with the current phase, " +
                      "current test (when known), and a diagnostic hint. Runner start/transition uses a 30-second threshold; " +
-                     "a known in-progress test uses 120 seconds to avoid flagging ordinary long-running tests too early.")]
+                     "a known in-progress test uses 120 seconds to avoid flagging ordinary long-running tests too early. " +
+                     "blockingTests lists the tests that held Unity's main thread for a second or more (Unity's 'Hold on' dialog).")]
         [ReadOnlyTool]
         public static object GetTestJob(
             [ToolParam("Job id returned by run_tests. Omit to query the most recent run.", Required = false)] string job_id = null)
@@ -164,6 +167,26 @@ namespace Funplay.Editor.Tools.Builtins
             return new TestRunnerStuckAssessment(phase, elapsedSeconds, hint);
         }
 
+        // Unity runs a plain [Test] inside a single Editor update, so a slow one freezes the Editor
+        // (the "Hold on ... TestJobRunner.ExecuteCallback" dialog) and every MCP status read with
+        // it. Report the worst offenders so the agent can name them instead of guessing.
+        internal const int MaxBlockingTests = 10;
+        internal const string BlockingTestsHint =
+            "These tests held Unity's main thread for blocked_seconds without letting the Editor update, which shows " +
+            "Unity's 'Hold on' dialog and stalls MCP status reads. Make them [UnityTest] and yield while waiting " +
+            "(processes, network, file I/O, polling), or move the slow work off the main thread.";
+
+        internal static void RecordBlockingTest(JObject job, string testName, double heldSeconds)
+        {
+            if (job == null || heldSeconds < EditorMainThreadMonitor.BlockedThresholdSeconds) return;
+            var list = job["blockingTests"] as JArray ?? new JArray();
+            list.Add(new JObject { ["test"] = testName, ["blocked_seconds"] = Math.Round(heldSeconds, 2) });
+            var ordered = new JArray();
+            foreach (var entry in list.OrderByDescending(e => e.Value<double>("blocked_seconds")).Take(MaxBlockingTests))
+                ordered.Add(entry);
+            job["blockingTests"] = ordered;
+        }
+
         internal static string FormatTimestamp(DateTime value)
         {
             return value.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
@@ -214,6 +237,7 @@ namespace Funplay.Editor.Tools.Builtins
             if (cancelled && job.Value<string>("jobId") == guid)
             {
                 job["status"] = "cancelled";
+                EditorMainThreadMonitor.SetCurrentTest(null, null, 0);
                 job.Remove("currentTest");
                 job.Remove("currentTestStartedAt");
                 SaveJob(job);
@@ -230,7 +254,7 @@ namespace Funplay.Editor.Tools.Builtins
         {
             var raw = SessionState.GetString(ActiveJobKey, null);
             if (string.IsNullOrEmpty(raw)) return null;
-            try { return JObject.Parse(raw); }
+            try { return JsonParse.ParseObject(raw); }
             catch { return null; }
         }
 
@@ -292,6 +316,7 @@ namespace Funplay.Editor.Tools.Builtins
         {
             public void RunStarted(ITestAdaptor testsToRun)
             {
+                EditorMainThreadMonitor.SetCurrentTest(null, null, 0);
                 var job = TestRunnerFunctions.LoadJob();
                 if (job == null || job.Value<string>("status") != "running") return;
                 if (job.Value<bool?>("hasFilters") == true)
@@ -320,6 +345,8 @@ namespace Funplay.Editor.Tools.Builtins
                 job["currentTestStartedAt"] = now;
                 job["currentTest"] = test.FullName;
                 TestRunnerFunctions.SaveJob(job);
+                EditorMainThreadMonitor.SetCurrentTest(job.Value<string>("jobId"), test.FullName, job.Value<int?>("testsCompleted") ?? 0);
+                EditorMainThreadMonitor.BeginWindow();
             }
 
             public void TestFinished(ITestResultAdaptor result)
@@ -327,6 +354,8 @@ namespace Funplay.Editor.Tools.Builtins
                 if (result.Test.IsSuite) return;
                 var job = TestRunnerFunctions.LoadJob();
                 if (job == null || job.Value<string>("status") != "running") return;
+                EditorMainThreadMonitor.SetCurrentTest(null, null, 0);
+                TestRunnerFunctions.RecordBlockingTest(job, result.FullName, EditorMainThreadMonitor.LongestHoldInWindowSeconds());
                 job["testsCompleted"] = (job.Value<int?>("testsCompleted") ?? 0) + 1;
                 job["lastActivityAt"] = TestRunnerFunctions.FormatTimestamp(DateTime.Now);
                 job.Remove("currentTest");
@@ -336,6 +365,7 @@ namespace Funplay.Editor.Tools.Builtins
 
             public void RunFinished(ITestResultAdaptor result)
             {
+                EditorMainThreadMonitor.SetCurrentTest(null, null, 0);
                 var job = TestRunnerFunctions.LoadJob();
                 if (job == null || job.Value<string>("status") != "running") return;
 
@@ -357,6 +387,8 @@ namespace Funplay.Editor.Tools.Builtins
                 job["totalTests"] = finalTotal;
                 job["durationSeconds"] = Math.Round(result.Duration, 2);
                 job["failures"] = failures;
+                if (job["blockingTests"] is JArray blocking && blocking.Count > 0)
+                    job["blockingHint"] = TestRunnerFunctions.BlockingTestsHint;
                 TestRunnerFunctions.SaveJob(job);
             }
 

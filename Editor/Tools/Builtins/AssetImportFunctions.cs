@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
+using Funplay.Editor.Api;
 using Funplay.Editor.Tools.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -142,7 +143,7 @@ namespace Funplay.Editor.Tools.Builtins
                 JObject obj;
                 try
                 {
-                    obj = JObject.Parse(settings_json ?? string.Empty);
+                    obj = JsonParse.ParseObject(settings_json ?? string.Empty);
                 }
                 catch (Exception ex)
                 {

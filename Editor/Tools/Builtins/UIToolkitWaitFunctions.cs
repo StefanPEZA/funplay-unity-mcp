@@ -17,7 +17,7 @@ namespace Funplay.Editor.Tools.Builtins
     {
         internal const float MaxWaitSeconds = 10f;
 
-        [Description("Wait (up to 10 s) until a UI Toolkit element reaches a state, checking once per Editor update. States: exists, displayed, hidden (absent counts), enabled, has_class:<c>, lacks_class:<c>, text:<t> (exact, case-insensitive) and settled (the element's and its ancestors' opacity, translate, scale, rotate, colours and bounds unchanged for settle_frames consecutive frames, and no observed transition still running). Use settled before capturing an animated dialog. Match by selector, text and/or element_path as for clicks. Schedulers and transitions only advance while Play Mode frames tick; a stall is reported instead of waiting it out. Returns WAIT_TIMEOUT with the last observed state.")]
+        [Description("Wait (up to 10 s) until a UI Toolkit element reaches a state, checking once per Editor update. States: exists, displayed, hidden (absent counts), enabled, has_class:<c>, lacks_class:<c>, text:<t> (exact, case-insensitive) and settled (the element's and its ancestors' opacity, translate, scale, rotate, colours and bounds, and the classes of the element, its ancestors and descendants, unchanged for settle_frames frames after the first check, and no transition on the element, an ancestor or a descendant still running). Use settled before capturing an animated dialog. Match by selector, text and/or element_path as for clicks. Schedulers and transitions only advance while Play Mode frames tick; a stall is reported instead of waiting it out. Returns WAIT_TIMEOUT with the last observed state.")]
         [ReadOnlyTool]
         public static Task<object> WaitForUiToolkit(
             [ToolParam("Panel host GameObject name/path/ID", Required = false)] string target = null,
@@ -99,6 +99,36 @@ namespace Funplay.Editor.Tools.Builtins
             return values.ToArray();
         }
 
+        internal const int MaxClassKeyElements = 256;
+
+        /// <summary>
+        /// Class lists of the element, its ancestors and (up to a cap) its descendants. A dialog often
+        /// adds its "open" class a frame after it is shown and the transition starts only then, so a
+        /// class change restarts the settle count.
+        /// </summary>
+        internal static string ClassKey(VisualElement element)
+        {
+            var key = new System.Text.StringBuilder();
+            for (var current = element.hierarchy.parent; current != null; current = current.hierarchy.parent)
+                AppendClasses(key, current);
+            key.Append('|');
+            var stack = new Stack<VisualElement>();
+            stack.Push(element);
+            for (var visited = 0; stack.Count > 0 && visited < MaxClassKeyElements; visited++)
+            {
+                var current = stack.Pop();
+                AppendClasses(key, current);
+                for (var i = current.hierarchy.childCount - 1; i >= 0; i--) stack.Push(current.hierarchy[i]);
+            }
+            return key.ToString();
+        }
+
+        private static void AppendClasses(System.Text.StringBuilder key, VisualElement element)
+        {
+            foreach (var name in element.GetClasses()) key.Append(name).Append(' ');
+            key.Append(';');
+        }
+
         private static void AddColor(List<float> values, Color color)
         {
             values.Add(color.r); values.Add(color.g); values.Add(color.b); values.Add(color.a);
@@ -155,6 +185,7 @@ namespace Funplay.Editor.Tools.Builtins
 
             private int _editorTicks, _lastPlayerFrame = -1, _stableFrames;
             private float[] _lastSignature;
+            private string _lastClassKey;
             private double _stableSince;
             private string _lastLookupError;
             // The host resolved and the element is not in its tree; host-level misses (wrong target, no
@@ -252,6 +283,7 @@ namespace Funplay.Editor.Tools.Builtins
                 if (!ReferenceEquals(element, _element))
                 {
                     _lastSignature = null;
+                    _lastClassKey = null;
                     _stableFrames = 0;
                     if (_state.Kind == "settled") Watch(element);
                 }
@@ -261,11 +293,15 @@ namespace Funplay.Editor.Tools.Builtins
             private bool TrackSettled()
             {
                 var signature = VisualSignature(_element);
+                var classKey = ClassKey(_element);
                 var now = _clock.Elapsed.TotalSeconds;
-                if (SameSignature(signature, _lastSignature)) _stableFrames++;
+                if (SameSignature(signature, _lastSignature) && string.Equals(classKey, _lastClassKey, StringComparison.Ordinal)) _stableFrames++;
                 else { _stableFrames = 0; _stableSince = now; }
                 _lastSignature = signature;
-                if (_stableFrames + 1 < _settleFrames) return false;
+                _lastClassKey = classKey;
+                // settle_frames frames must pass after the first sample, so a change made on the next
+                // frame (a deferred "open" class, the transition it starts) is still seen.
+                if (_stableFrames < _settleFrames) return false;
                 // A transition still in its delay leaves values unchanged; trust the events unless they
                 // look lost (the element was rebuilt mid-transition) and nothing moved for a while.
                 return _running.Count == 0 || now - _stableSince >= UnbalancedTransitionGraceSeconds;
@@ -295,11 +331,15 @@ namespace Funplay.Editor.Tools.Builtins
                 _running.Clear();
             }
 
+            // The element also hears its descendants' transitions (they bubble); ancestors count only their own.
+            private bool Counts(IEventHandler target, IEventHandler current) =>
+                ReferenceEquals(target, current) || ReferenceEquals(current, _element) && target is VisualElement;
+
             private void OnTransitionRun(TransitionRunEvent evt)
             {
-                if (!ReferenceEquals(evt.target, evt.currentTarget)) return;
+                if (!Counts(evt.target, evt.currentTarget)) return;
                 _transitionsObserved++;
-                foreach (var property in evt.stylePropertyNames) _running.Add(((VisualElement)evt.currentTarget, property.ToString()));
+                foreach (var property in evt.stylePropertyNames) _running.Add(((VisualElement)evt.target, property.ToString()));
             }
 
             private void OnTransitionEnd(TransitionEndEvent evt) => Ended(evt.target, evt.currentTarget, evt.stylePropertyNames);
@@ -307,8 +347,8 @@ namespace Funplay.Editor.Tools.Builtins
 
             private void Ended(IEventHandler target, IEventHandler current, StylePropertyNameCollection properties)
             {
-                if (!ReferenceEquals(target, current)) return;
-                foreach (var property in properties) _running.Remove(((VisualElement)current, property.ToString()));
+                if (!Counts(target, current)) return;
+                foreach (var property in properties) _running.Remove(((VisualElement)target, property.ToString()));
             }
 
             private void OnPlayModeChanged(PlayModeStateChange change)

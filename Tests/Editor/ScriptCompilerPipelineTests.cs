@@ -3,9 +3,11 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using Funplay.Editor.State;
 using Funplay.Editor.Tools.Builtins;
 using Funplay.Editor.Tools.Scripting;
 using NUnit.Framework;
@@ -39,14 +41,18 @@ public class AmbiguousRandomSyntax
             StringAssert.Contains("MonoBleedingEdge", monoLibRoot);
         }
 
-        [Test]
-        public void RoslynCompiler_GivesEachSnippetAUniqueAssemblyName()
+        [UnityTest]
+        public IEnumerator RoslynCompiler_GivesEachSnippetAUniqueAssemblyName()
         {
             var compiler = new RoslynCscScriptCompiler();
             const string code = "public class UniqueNameSmoke { public static string Run() { return \"ok\"; } }";
 
-            var first = compiler.Compile(code);
-            var second = compiler.Compile(code);
+            var firstTask = compiler.CompileAsync(code);
+            yield return WaitForCompile(firstTask);
+            var secondTask = compiler.CompileAsync(code);
+            yield return WaitForCompile(secondTask);
+            var first = firstTask.Result;
+            var second = secondTask.Result;
 
             Assert.AreEqual(ScriptCompilationStatus.Success, first.Status, first.Message);
             Assert.AreEqual(ScriptCompilationStatus.Success, second.Status, second.Message);
@@ -54,6 +60,32 @@ public class AmbiguousRandomSyntax
             var secondName = second.Assembly.GetName().Name;
             Assert.AreNotEqual(firstName, secondName);
             StringAssert.StartsWith("FunplaySnippet_", firstName);
+        }
+
+        [UnityTest]
+        public IEnumerator RoslynCompiler_KeepsTheEditorUpdatingWhileCscRuns()
+        {
+            var compiler = new RoslynCscScriptCompiler();
+            yield return WaitForCompile(compiler.CompileAsync("public class WarmUp { }"));
+
+            EditorMainThreadMonitor.BeginWindow();
+            var task = compiler.CompileAsync("public class Responsive { public static int Run() { return 1; } }");
+            var clock = Stopwatch.StartNew();
+            yield return WaitForCompile(task);
+
+            Assert.AreEqual(ScriptCompilationStatus.Success, task.Result.Status, task.Result.Message);
+            var held = EditorMainThreadMonitor.LongestHoldInWindowSeconds();
+            Assert.Less(held, Math.Max(0.5, clock.Elapsed.TotalSeconds * 0.6),
+                $"Compiling for {clock.Elapsed.TotalSeconds:F2}s held the main thread for {held:F2}s.");
+        }
+
+        // csc normally needs about a second; fail instead of hanging when it never finishes.
+        private static IEnumerator WaitForCompile(Task<ScriptCompilationResult> task)
+        {
+            var clock = Stopwatch.StartNew();
+            while (!task.IsCompleted && clock.Elapsed.TotalSeconds < 30)
+                yield return null;
+            Assert.IsTrue(task.IsCompleted, "Roslyn compile did not finish within 30 s.");
         }
 
         [Test]
@@ -292,10 +324,11 @@ public class AmbiguousRandomWithOtherError
         return typeof(Random).FullName;
     }
 }";
-            var baseline = ScriptCompilerPipeline.Compile(code);
-            var expectedLine = baseline.Errors.Single(error => error.code == "CS0246").line;
+            var baselineTask = ScriptCompilerPipeline.CompileAsync(code);
+            yield return WaitForCompile(baselineTask);
+            var expectedLine = baselineTask.Result.Errors.Single(error => error.code == "CS0246").line;
 
-            return ExecuteCodeAndAssert(
+            yield return ExecuteCodeAndAssert(
                 code,
                 result =>
                 {

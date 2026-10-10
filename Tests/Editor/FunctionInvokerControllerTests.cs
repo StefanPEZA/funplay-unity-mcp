@@ -40,6 +40,20 @@ namespace Funplay.Editor.Tests
         }
 
         [Test]
+        public void Invoke_RejectsUnknownParameterInsteadOfIgnoringIt()
+        {
+            var result = Newtonsoft.Json.Linq.JObject.Parse(new FunctionInvokerController().Invoke(new FunctionCall
+            {
+                FunctionName = "get_hierarchy",
+                Parameters = new Dictionary<string, string> { ["depth"] = "1", ["element_path"] = "0/1", ["_raw"] = "{}" }
+            }));
+
+            Assert.AreEqual("UNKNOWN_PARAM", (string)result["code"], result.ToString());
+            CollectionAssert.AreEqual(new[] { "element_path" }, result["data"]["unknown"].ToObject<string[]>(), "keys starting with '_' are internal");
+            CollectionAssert.Contains(result["data"]["valid"].ToObject<string[]>(), "depth");
+        }
+
+        [Test]
         public void Invoke_WrapsLegacyStringSuccess()
         {
             var result = new FunctionInvokerController().Invoke(new FunctionCall

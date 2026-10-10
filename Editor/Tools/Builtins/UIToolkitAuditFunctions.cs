@@ -18,7 +18,7 @@ namespace Funplay.Editor.Tools.Builtins
     {
         internal const int MaxAuditFindings = 200;
 
-        [Description("Audit live UI Toolkit screens (Edit or Play Mode, current Game View size) and report problems a reviewer would flag: ZERO_SIZE_CONTROL, CONTROL_PICKING_IGNORED, OUTSIDE_PANEL, DUPLICATE_NAME, TEXT_OVERFLOWS (unwrapped), TEXT_HEIGHT_OVERFLOW (wrapped text taller than its box), TEXT_ELIDED, SMALL_TOUCH_TARGET (interactive controls under min_touch_size panel px), COVERED_CONTROL (another element, on any panel, receives the pointer at its center), LOW_CONTRAST (WCAG ratio below 4.5, or 3 for large text, composited in linear space with opacity; only where every layer behind the text is a solid colour, otherwise counted as indeterminate, never reported), MISSING_GLYPHS (characters missing from the element's -unity-font-definition font asset and its fallbacks; never adds glyphs to dynamic atlases; text on the theme default font is not judged), OUTSIDE_SAFE_AREA / OUTSIDE_PLAY_AREA (only with rects you pass; Screen.safeArea in the Editor is the whole view). For several screen sizes, run preview_ui_toolkit(audit=true).")]
+        [Description("Audit live UI Toolkit screens (Edit or Play Mode, current Game View size) and report problems a reviewer would flag: ZERO_SIZE_CONTROL, CONTROL_PICKING_IGNORED, OUTSIDE_PANEL, DUPLICATE_NAME, TEXT_OVERFLOWS (unwrapped), TEXT_HEIGHT_OVERFLOW (wrapped text taller than its box), TEXT_ELIDED, SMALL_TOUCH_TARGET (interactive controls under min_touch_size panel px), COVERED_CONTROL (another element, on any panel, receives the pointer at its center; controls behind a full-panel modal backdrop that dims the screen are listed per host under blocked_by_modal instead and not counted), LOW_CONTRAST (WCAG ratio below 4.5, or 3 for large text, composited in linear space with opacity; only where every layer behind the text is a solid colour, otherwise counted as indeterminate, never reported), MISSING_GLYPHS (characters missing from the element's -unity-font-definition font asset and its fallbacks; never adds glyphs to dynamic atlases; text on the theme default font is not judged), OUTSIDE_SAFE_AREA / OUTSIDE_PLAY_AREA (only with rects you pass; Screen.safeArea in the Editor is the whole view). For several screen sizes, run preview_ui_toolkit(audit=true).")]
         [ReadOnlyTool]
         public static object AuditUiToolkit(
             [ToolParam("Panel host GameObject name/path/ID; default: every live screen-space host", Required = false)] string target = null,
@@ -99,6 +99,7 @@ namespace Funplay.Editor.Tools.Builtins
                 var displayCache = new UIToolkitPanels.DisplayCache();
                 var clipCache = new UIToolkitPanels.ClipCache();
                 var findings = new List<object>();
+                var blockedByModal = new List<object>();
                 void Add(string code, object finding)
                 {
                     if (options.Skip.Contains(code)) return;
@@ -134,7 +135,14 @@ namespace Funplay.Editor.Tools.Builtins
                         if (mapping.HasValue && renderHeight > 0)
                         {
                             var covering = CoveringElement(element, visibility, mapping.Value, renderHeight, allPanels);
-                            if (covering != null)
+                            var modal = covering != null ? ModalBackdrop(covering, element) : null;
+                            // Blocking the screen behind an open dialog is the backdrop's job, not a defect.
+                            if (modal != null)
+                            {
+                                if (blockedByModal.Count < MaxFindingsPerHost)
+                                    blockedByModal.Add(new { element_path = entry.Key, element = Label(element), modal = Label(modal) });
+                            }
+                            else if (covering != null)
                                 Add("COVERED_CONTROL", new { code = "COVERED_CONTROL", element_path = entry.Key, element = Label(element), covered_by = Label(covering),
                                     detail = "Another element receives the pointer at this control's visible center." });
                         }
@@ -195,10 +203,39 @@ namespace Funplay.Editor.Tools.Builtins
                     host = host.gameObject.name,
                     panel_settings = settings != null ? settings.name : null,
                     elements = walked.Count,
-                    findings
+                    findings,
+                    blocked_by_modal = blockedByModal.Count > 0 ? blockedByModal : null
                 });
             }
             return report;
+        }
+
+        /// <summary>
+        /// The full-panel overlay that <paramref name="covering"/> belongs to (a modal backdrop), or null.
+        /// A displayed, pickable element that covers its whole panel, draws a visible background (dims
+        /// the screen) and does not contain the control is taken as a modal backdrop. A transparent
+        /// full-panel element is not: an invisible layer that swallows clicks is the defect to report.
+        /// </summary>
+        internal static VisualElement ModalBackdrop(VisualElement covering, VisualElement control)
+        {
+            var panelRoot = covering.panel?.visualTree;
+            if (panelRoot == null) return null;
+            var panelBound = panelRoot.worldBound;
+            VisualElement modal = null;
+            for (var current = covering; current != null && !ReferenceEquals(current, panelRoot); current = current.hierarchy.parent)
+            {
+                if (current.Contains(control)) break;
+                if (current.pickingMode == PickingMode.Position && UIToolkitPanels.IsDisplayed(current) &&
+                    Contains(current.worldBound, panelBound) && DrawsBackdrop(current))
+                    modal = current;
+            }
+            return modal;
+        }
+
+        private static bool DrawsBackdrop(VisualElement element)
+        {
+            var style = element.resolvedStyle;
+            return style.opacity > 0.01f && (style.backgroundColor.a > 0.01f || HasImageContent(element));
         }
 
         /// <summary>Inside another control or a ScrollView (below the host root): a part, not a target of its own.</summary>

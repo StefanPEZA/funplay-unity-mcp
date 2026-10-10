@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Funplay.Editor.Api;
 using Funplay.Editor.Tools.Builtins;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -171,7 +172,7 @@ namespace Funplay.Editor.Tools.Helpers
             if (string.IsNullOrEmpty(result) || !result.Contains("funplay_capture")) return result;
             try
             {
-                var json = JObject.Parse(result);
+                var json = JsonParse.ParseObject(result);
                 if ((int?)json["_meta"]?["funplay_capture"] != 1) return result;
                 (json["data"] as JObject)?.Remove("inline_image");
                 return json.ToString(Newtonsoft.Json.Formatting.None);

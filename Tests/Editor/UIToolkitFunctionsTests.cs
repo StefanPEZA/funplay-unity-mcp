@@ -705,7 +705,57 @@ namespace Funplay.Editor.Tests
             yield return Await(settled);
             var settledJson = JObject.FromObject(settled.Result);
             Assert.IsTrue((bool)settledJson["success"], settledJson.ToString());
-            Assert.GreaterOrEqual((int)settledJson["data"]["frames"], 2, settledJson.ToString());
+            Assert.GreaterOrEqual((int)settledJson["data"]["frames"], 3, "settle_frames frames pass after the first check: " + settledJson);
+        }
+
+        [UnityTest]
+        public IEnumerator WaitForSettledRestartsWhenADescendantClassChangesLater()
+        {
+            yield return BuildLivePanel("UitkSettleLate");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var play = liveRoot.Q<Button>("play");
+
+            // Like a dialog that adds its "open" class to an inner panel a frame after it is shown.
+            var wait = UIToolkitFunctions.WaitForElementAsync(id, "#menu", null, null, "settled", 5f, 3);
+            yield return null;
+            yield return null;
+            Assert.IsFalse(wait.IsCompleted, "two frames are not enough for settle_frames=3");
+            play.AddToClassList("late-open");
+            var ticksAfterChange = 0;
+            EditorApplication.CallbackFunction count = () => ticksAfterChange++;
+            EditorApplication.update += count;
+            try { yield return Await(wait); }
+            finally { EditorApplication.update -= count; }
+
+            var json = JObject.FromObject(wait.Result);
+            Assert.IsTrue((bool)json["success"], json.ToString());
+            Assert.GreaterOrEqual(ticksAfterChange, 3, "the class change on a descendant restarts the settle count: " + json);
+        }
+
+        [UnityTest]
+        public IEnumerator VisualTreeQueriesSearchBelowMaxDepthAndElementPathScopesTheSubtree()
+        {
+            yield return BuildLivePanel("UitkDepth");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var play = liveRoot.Q<Button>("play");
+            var playPath = UIToolkitPanels.PathOf(liveRoot, play);
+            var menuPath = UIToolkitPanels.PathOf(liveRoot, liveRoot.Q("menu"));
+
+            var deep = Data(UIToolkitFunctions.GetVisualTree(id, "#play", max_depth: 0));
+            var matched = (JArray)deep["hosts"][0]["elements"];
+            Assert.AreEqual(1, matched.Count, "max_depth limits listings, not selector matching: " + deep);
+            Assert.AreEqual(playPath, (string)matched[0]["path"]);
+
+            var subtree = Data(UIToolkitFunctions.GetVisualTree(id, max_depth: 1, element_path: menuPath));
+            var paths = ((JArray)subtree["hosts"][0]["elements"]).Select(e => (string)e["path"]).ToList();
+            Assert.AreEqual(menuPath, paths[0], "the subtree starts at element_path: " + subtree);
+            CollectionAssert.Contains(paths, playPath, "children keep host-relative paths");
+            Assert.IsTrue(paths.All(path => path.StartsWith(menuPath, StringComparison.Ordinal)), subtree.ToString());
+
+            var missing = JObject.FromObject(UIToolkitFunctions.GetVisualTree(id, element_path: "99/99"));
+            Assert.AreEqual("ELEMENT_NOT_FOUND", (string)missing["code"], missing.ToString());
+            var snapshot = Data(UIToolkitFunctions.GetVisualTree(id, max_depth: 0, snapshot: true));
+            Assert.AreEqual("whole_tree", (string)snapshot["snapshot_scope"]);
         }
 
         private static IEnumerator Await(System.Threading.Tasks.Task task)
@@ -881,6 +931,15 @@ namespace Funplay.Editor.Tests
             Assert.AreEqual(expected, UIToolkitFunctions.ContrastRatio(liveRoot.Q<Label>("group-text")).Value, 0.02f, "the blue group background is hidden under the red label");
             if (UIToolkitPanels.TryGetScreenMapping(liveRoot.panel, out _) && RenderHeightOrZero() > 0)
                 Assert.IsTrue(Has("COVERED_CONTROL", "#play"), json.ToString());
+
+            // The same overlay dimming the screen is an open dialog's backdrop: blocking is its purpose.
+            cover.style.backgroundColor = new Color(0f, 0f, 0f, 0.5f);
+            UIToolkitPanels.ValidateLayout(liveRoot.panel);
+            var modal = JObject.FromObject(UIToolkitFunctions.AuditHosts(new System.Collections.Generic.List<Component> { host }, new UIToolkitFunctions.AuditOptions()).ToResponse());
+            Assert.IsFalse(((JArray)modal["hosts"][0]["findings"]).Any(f => (string)f["code"] == "COVERED_CONTROL"), modal.ToString());
+            Assert.IsNull(modal["counts"]["COVERED_CONTROL"], modal.ToString());
+            if (UIToolkitPanels.TryGetScreenMapping(liveRoot.panel, out _) && RenderHeightOrZero() > 0)
+                Assert.IsTrue(((JArray)modal["hosts"][0]["blocked_by_modal"]).Any(b => ((string)b["element"]).Contains("#play") && ((string)b["modal"]).Contains("#cover")), modal.ToString());
 
             cover.RemoveFromHierarchy();
             var skipped = UIToolkitFunctions.AuditHosts(new System.Collections.Generic.List<Component> { host },
@@ -1126,6 +1185,19 @@ namespace Funplay.Editor.Tests
             Assert.AreEqual(Color.clear, liveRoot.Q<Button>("quit").resolvedStyle.backgroundColor, clear.ToString());
             Assert.AreEqual("bold", (string)((JArray)clear["styles"]).First(x => (string)x["property"] == "-unity-font-style")["resolved_after"], "the alias resolves");
             Assert.AreEqual("UNSUPPORTED_STYLE_PROPERTY", (string)JObject.FromObject(unknown.Result)["code"]);
+
+            // A theme transition on the property: the report waits for the end value instead of a midpoint.
+            var quit = liveRoot.Q<Button>("quit");
+            quit.style.transitionProperty = new System.Collections.Generic.List<StylePropertyName> { "background-color" };
+            quit.style.transitionDuration = new System.Collections.Generic.List<TimeValue> { new TimeValue(0.25f, TimeUnit.Second) };
+            yield return null;
+            var animated = UIToolkitFunctions.StyleUiToolkit(id, "#quit", inline: "{\"background-color\":\"#ff0000\"}");
+            yield return Await(animated);
+            var animatedData = Data(animated.Result);
+            if (animatedData["transitions_running"] != null && animatedData["transitions_running"].Type != JTokenType.Null)
+                Assert.IsTrue((bool)animatedData["styles"][0]["transitioning"], "a capped wait flags the mid-transition value: " + animatedData);
+            else
+                Assert.AreEqual("#FF0000FF", (string)animatedData["styles"][0]["resolved_after"], "the end value, not a midpoint: " + animatedData);
 
             var styled = UIToolkitFunctions.StyleUiToolkit(id, "#play", add_classes: "big", inline: "{\"background-color\":\"rgb(0, 255, 0)\",\"width\":\"123px\",\"margin\":\"1px 2px\",\"justify-content\":\"flex-end\"}");
             yield return Await(styled);

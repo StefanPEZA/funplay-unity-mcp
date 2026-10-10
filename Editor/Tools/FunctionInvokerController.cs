@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
 using System.Threading.Tasks;
+using Funplay.Editor.Api;
 using Funplay.Editor.Tools.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -55,6 +56,17 @@ namespace Funplay.Editor.Tools
             if (method == null)
                 return ToolResultFormatter.Error("UNKNOWN_FUNCTION",
                     new { function = functionCall.FunctionName });
+
+            var unknown = FindUnknownParameters(method, functionCall.Parameters);
+            if (unknown.Count > 0)
+                return ToolResultFormatter.Error("UNKNOWN_PARAM", new
+                {
+                    tool = functionCall.FunctionName,
+                    unknown,
+                    valid = ValidParameterNames(method),
+                    hint = "Remove or rename the unknown argument(s); nothing was executed. If the tool's schema " +
+                           "looks outdated after a package update, reconnect the MCP client to reload it."
+                });
 
             try
             {
@@ -143,7 +155,7 @@ namespace Funplay.Editor.Tools
                 return false;
             try
             {
-                var obj = JObject.Parse(s);
+                var obj = JsonParse.ParseObject(s);
                 return obj.TryGetValue("success", out var token) && token.Type == JTokenType.Boolean;
             }
             catch
@@ -167,6 +179,40 @@ namespace Funplay.Editor.Tools
             }
 
             return null;
+        }
+
+        // An argument the method does not declare would otherwise be dropped silently, and the
+        // call would succeed doing something other than what the caller asked for (for example
+        // element_path on a tool that has no such parameter). Keys starting with '_' are internal.
+        internal static List<string> FindUnknownParameters(MethodInfo method, Dictionary<string, string> parameters)
+        {
+            var unknown = new List<string>();
+            if (parameters == null || parameters.Count == 0)
+                return unknown;
+
+            var known = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var param in method.GetParameters())
+            {
+                known.Add(param.Name);
+                known.Add(ToolRegistry.ToSnakeCase(param.Name));
+            }
+
+            foreach (var key in parameters.Keys)
+            {
+                if (!string.IsNullOrEmpty(key) && key[0] != '_' && !known.Contains(key))
+                    unknown.Add(key);
+            }
+
+            unknown.Sort(StringComparer.Ordinal);
+            return unknown;
+        }
+
+        private static List<string> ValidParameterNames(MethodInfo method)
+        {
+            var names = new List<string>();
+            foreach (var param in method.GetParameters())
+                names.Add(ToolRegistry.ToSnakeCase(param.Name));
+            return names;
         }
 
         private object[] BuildArguments(MethodInfo method, Dictionary<string, string> parameters)

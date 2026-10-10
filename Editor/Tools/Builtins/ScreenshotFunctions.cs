@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Threading.Tasks;
 
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
+using Funplay.Editor.Api;
 using Funplay.Editor.Tools.Helpers;
 using Newtonsoft.Json;
 using UnityEditor;
@@ -51,7 +52,7 @@ namespace Funplay.Editor.Tools.Builtins
         {
             var result = FinishCaptureCore(pngBytes, saveToFile, outputPath, defaultBaseName, geometry);
             if (extra == null || extra.Count == 0) return result;
-            var json = Newtonsoft.Json.Linq.JObject.Parse(result);
+            var json = JsonParse.ParseObject(result);
             if (json["data"] is Newtonsoft.Json.Linq.JObject data)
                 foreach (var pair in extra)
                     data[pair.Key] = pair.Value == null ? Newtonsoft.Json.Linq.JValue.CreateNull() : Newtonsoft.Json.Linq.JToken.FromObject(pair.Value);

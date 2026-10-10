@@ -267,13 +267,14 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Panel host GameObject name/path/ID; omitted reads every host", Required = false)] string target = null,
             [ToolParam("Selector: Type#name.class compounds, descendant (space) or child (>) combinators, :nth-of-type(n)/:nth-child(n); omitted returns the tree", Required = false)] string selector = null,
             [ToolParam("Exact element text, case-insensitive", Required = false)] string text = null,
-            [ToolParam("Maximum depth below each root, 0..64", Required = false)] int max_depth = 24,
+            [ToolParam("Maximum depth below each root (or below element_path), 0..64. A selector/text query searches the whole tree regardless", Required = false)] int max_depth = 24,
             [ToolParam("Maximum elements returned across hosts, 1..2000", Required = false)] int max_elements = 300,
             [ToolParam("Include resolved styles per element", Required = false)] bool include_styles = false,
             [ToolParam("Report findings for the whole tree, uncapped, instead of the matched subtrees (at most 50 per host)", Required = false)] bool all_findings = false,
             [ToolParam("Omit null/empty fields, duplicate bounds and most host details", Required = false)] bool compact = false,
             [ToolParam("Skip hidden elements (e.g. closed dialogs)", Required = false)] bool displayed_only = false,
-            [ToolParam("Also store the hosts' whole trees (regardless of selector/max_depth) and return snapshot_id for diff_visual_tree", Required = false)] bool snapshot = false)
+            [ToolParam("Also store the hosts' whole trees (regardless of selector/max_depth) and return snapshot_id for diff_visual_tree", Required = false)] bool snapshot = false,
+            [ToolParam("Element path relative to one host (as for clicks): read only that element's subtree", Required = false)] string element_path = null)
         {
             try
             {
@@ -281,6 +282,8 @@ namespace Funplay.Editor.Tools.Builtins
                 max_elements = Mathf.Clamp(max_elements, 1, 2000);
                 var filter = UIToolkitPanels.Selector.Parse(selector, text);
                 var hosts = ResolveHosts(target);
+                if (!string.IsNullOrEmpty(element_path) && hosts.Count != 1)
+                    throw new UIToolkitException("TARGET_REQUIRED", "element_path is relative to one host; pass target.");
                 var hostRoots = UIToolkitPanels.HostRoots(hosts);
                 // A targeted parent still lists nested panels' elements, but they are not its content.
                 var allHosts = string.IsNullOrWhiteSpace(target) ? hosts : UIToolkitPanels.FindHosts(sorted: false);
@@ -300,7 +303,8 @@ namespace Funplay.Editor.Tools.Builtins
                     UIToolkitPanels.ValidateLayout(root.panel);
                     var mapping = MappingFor(host, root.panel);
                     var elements = new List<object>();
-                    var walked = UIToolkitPanels.Walk(root, max_depth, hostRoots).ToList();
+                    // max_depth limits a listing; a query must not miss deeper matches.
+                    var walked = WalkForTree(root, element_path, filter.IsEmpty ? max_depth : int.MaxValue, hostRoots);
                     var displayCache = new UIToolkitPanels.DisplayCache();
                     var clipCache = new UIToolkitPanels.ClipCache();
                     var hostMatches = new HashSet<VisualElement>();
@@ -339,10 +343,27 @@ namespace Funplay.Editor.Tools.Builtins
                 return Response.Success(filter.IsEmpty
                         ? $"Visual tree for {hosts.Count} host(s)."
                         : $"{matched} element(s) matched.",
-                    new { hosts = results, truncated = matched > max_elements, render_height = renderHeight > 0 ? (int?)renderHeight : null, geometry_error = geometryError, snapshot_id = snapshotId });
+                    new
+                    {
+                        hosts = results, truncated = matched > max_elements, render_height = renderHeight > 0 ? (int?)renderHeight : null, geometry_error = geometryError, snapshot_id = snapshotId,
+                        snapshot_scope = snapshotId != null ? "whole_tree" : null
+                    });
             }
             catch (UIToolkitException ex) { return Response.Error(ex.Code, new { detail = ex.Message, details = ex.Details }); }
             catch (Exception ex) { return Response.Error("VISUAL_TREE_UNAVAILABLE", new { detail = ex.Message }); }
+        }
+
+        /// <summary>The host tree, or the subtree at <paramref name="elementPath"/> with host-relative paths.</summary>
+        private static List<KeyValuePair<string, VisualElement>> WalkForTree(VisualElement root, string elementPath, int maxDepth, ISet<VisualElement> hostRoots)
+        {
+            if (string.IsNullOrEmpty(elementPath))
+                return UIToolkitPanels.Walk(root, maxDepth, hostRoots).ToList();
+            var start = UIToolkitPanels.ResolvePath(root, elementPath) ?? throw new UIToolkitException("ELEMENT_NOT_FOUND",
+                "element_path does not resolve in the current tree; re-read get_visual_tree or use a selector.");
+            var prefix = UIToolkitPanels.PathOf(root, start) ?? elementPath;
+            return UIToolkitPanels.Walk(start, maxDepth, hostRoots)
+                .Select(e => new KeyValuePair<string, VisualElement>(e.Key.Length == 0 ? prefix : prefix.Length == 0 ? e.Key : prefix + "/" + e.Key, e.Value))
+                .ToList();
         }
 
         [Description("Pick the UI Toolkit elements under a Game View point (Edit or Play Mode) across all screen-space PanelRenderer/UIDocument panels, topmost panel first. Returns the topmost element, its ancestor chain, the click receiver (Button/Toggle/Clickable owner) or the element swallowing the click. Uses the same coordinate contract as raycast_at_point/simulate_mouse_click. World-space panels are reported but not picked.")]

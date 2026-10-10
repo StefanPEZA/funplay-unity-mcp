@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
+using Funplay.Editor.Api;
 using Funplay.Editor.State;
 using Funplay.Editor.Tools.Helpers;
 using Newtonsoft.Json.Linq;
@@ -110,7 +111,7 @@ namespace Funplay.Editor.Tools.Builtins
                             else
                             {
                                 var geometry = VisualCoordinates.Create("game_view", frame.width, frame.height, frame.width, frame.height, false);
-                                var saved = JObject.Parse(ScreenshotFunctions.FinishCapture(frame.EncodeToPNG(), true, null, "ui-preview-" + FileSafe(size.Name), geometry));
+                                var saved = JsonParse.ParseObject(ScreenshotFunctions.FinishCapture(frame.EncodeToPNG(), true, null, "ui-preview-" + FileSafe(size.Name), geometry));
                                 path = (string)saved["data"]?["path"];
                                 if (path == null) captureError = saved["code"]?.ToString() ?? "SCREENSHOT_SAVE_FAILED";
                             }
@@ -201,7 +202,7 @@ namespace Funplay.Editor.Tools.Builtins
             var items = new List<JToken>();
             if (trimmed.StartsWith("[", StringComparison.Ordinal))
             {
-                try { items.AddRange(JArray.Parse(trimmed)); }
+                try { items.AddRange(JsonParse.ParseArray(trimmed)); }
                 catch (Newtonsoft.Json.JsonException ex) { throw new ArgumentException("sizes is not a valid JSON array: " + ex.Message); }
             }
             else items.AddRange(trimmed.Split(',').Select(s => (JToken)s.Trim()).Where(s => ((string)s).Length > 0));

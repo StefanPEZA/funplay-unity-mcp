@@ -52,18 +52,17 @@ namespace Funplay.Editor
 
             try
             {
-                Assume.That(!string.IsNullOrEmpty(MCPBrokerProcessManager.ResolveMono(string.Empty)),
-                    "Unity-bundled Mono is required for broker process tests.");
+                var mono = MCPBrokerProcessManager.ResolveMono(string.Empty);
+                Assume.That(!string.IsNullOrEmpty(mono), "Unity-bundled Mono is required for broker process tests.");
 
-                Assert.IsTrue(MCPBrokerProcessManager.EnsureRunning(port, string.Empty, paths), MCPBrokerProcessManager.LastError);
+                yield return AssertOffMainThread(() => MCPBrokerProcessManager.EnsureRunning(port, mono, paths));
                 Assert.IsTrue(MCPBrokerProcessManager.TryGetConnectionInfo(paths, port, out var connection));
 
                 Assert.IsFalse(MCPBrokerProcessManager.TryProbeBroker(port, "wrong-token", out _));
                 Assert.IsTrue(MCPBrokerProcessManager.TryProbeBroker(port, connection.Token, out var health));
                 Assert.AreEqual(connection.Pid, health.Pid);
 
-                MCPBrokerProcessManager.Stop(paths);
-                yield return null;
+                yield return StopOffMainThread(paths);
 
                 Assert.IsFalse(MCPBrokerProcessManager.TryProbeBroker(port, connection.Token, out _));
             }
@@ -87,7 +86,7 @@ namespace Funplay.Editor
                 listener.Start();
 
                 Assert.IsFalse(MCPBrokerProcessManager.TryProbeBroker(port, "token", out _));
-                Assert.IsFalse(MCPBrokerProcessManager.EnsureRunning(port, string.Empty, paths));
+                yield return AssertOffMainThread(() => !MCPBrokerProcessManager.EnsureRunning(port, string.Empty, paths));
                 StringAssert.Contains("Port is already in use", MCPBrokerProcessManager.LastError);
             }
             finally
@@ -96,8 +95,6 @@ namespace Funplay.Editor
                 MCPBrokerProcessManager.Stop(paths);
                 DeleteTempRoot(root);
             }
-
-            yield return null;
         }
 
         [UnityTest]
@@ -110,26 +107,25 @@ namespace Funplay.Editor
 
             try
             {
-                Assume.That(!string.IsNullOrEmpty(MCPBrokerProcessManager.ResolveMono(string.Empty)),
-                    "Unity-bundled Mono is required for broker process tests.");
+                var mono = MCPBrokerProcessManager.ResolveMono(string.Empty);
+                Assume.That(!string.IsNullOrEmpty(mono), "Unity-bundled Mono is required for broker process tests.");
 
-                Assert.IsTrue(MCPBrokerProcessManager.EnsureRunning(oldPort, string.Empty, paths), MCPBrokerProcessManager.LastError);
+                yield return AssertOffMainThread(() => MCPBrokerProcessManager.EnsureRunning(oldPort, mono, paths));
                 Assert.IsTrue(MCPBrokerProcessManager.TryGetConnectionInfo(paths, oldPort, out var oldConnection));
 
-                Assert.IsTrue(MCPBrokerProcessManager.EnsureRunning(newPort, string.Empty, paths), MCPBrokerProcessManager.LastError);
+                yield return AssertOffMainThread(() => MCPBrokerProcessManager.EnsureRunning(newPort, mono, paths));
                 Assert.IsTrue(MCPBrokerProcessManager.TryGetConnectionInfo(paths, newPort, out var newConnection));
 
                 Assert.IsFalse(MCPBrokerProcessManager.TryProbeBroker(oldPort, oldConnection.Token, out _));
                 Assert.IsTrue(MCPBrokerProcessManager.TryProbeBroker(newPort, newConnection.Token, out var health));
                 Assert.AreEqual(newConnection.Pid, health.Pid);
+                yield return StopOffMainThread(paths);
             }
             finally
             {
                 MCPBrokerProcessManager.Stop(paths);
                 DeleteTempRoot(root);
             }
-
-            yield return null;
         }
 
         [UnityTest]
@@ -141,10 +137,10 @@ namespace Funplay.Editor
 
             try
             {
-                Assume.That(!string.IsNullOrEmpty(MCPBrokerProcessManager.ResolveMono(string.Empty)),
-                    "Unity-bundled Mono is required for broker process tests.");
+                var mono = MCPBrokerProcessManager.ResolveMono(string.Empty);
+                Assume.That(!string.IsNullOrEmpty(mono), "Unity-bundled Mono is required for broker process tests.");
 
-                Assert.IsTrue(MCPBrokerProcessManager.EnsureRunning(port, string.Empty, paths), MCPBrokerProcessManager.LastError);
+                yield return AssertOffMainThread(() => MCPBrokerProcessManager.EnsureRunning(port, mono, paths));
                 Assert.IsTrue(MCPBrokerProcessManager.TryGetConnectionInfo(paths, port, out var first));
 
                 // Force the recorded broker to fail the identity probe (bogus pid) while keeping
@@ -154,19 +150,18 @@ namespace Funplay.Editor
                 // the just-closed socket lingers; with it, replacement completes in one call.
                 WriteBrokerState(paths, pid: 999999, port: port, token: first.Token);
 
-                Assert.IsTrue(MCPBrokerProcessManager.EnsureRunning(port, string.Empty, paths), MCPBrokerProcessManager.LastError);
+                yield return AssertOffMainThread(() => MCPBrokerProcessManager.EnsureRunning(port, mono, paths));
                 Assert.IsTrue(MCPBrokerProcessManager.TryGetConnectionInfo(paths, port, out var second));
                 Assert.IsTrue(MCPBrokerProcessManager.TryProbeBroker(port, second.Token, out var health));
                 Assert.AreEqual(second.Pid, health.Pid);
                 Assert.AreNotEqual(first.Pid, second.Pid, "The recorded broker must be replaced by a new process on the same port.");
+                yield return StopOffMainThread(paths);
             }
             finally
             {
                 MCPBrokerProcessManager.Stop(paths);
                 DeleteTempRoot(root);
             }
-
-            yield return null;
         }
 
         [UnityTest]
@@ -187,7 +182,7 @@ namespace Funplay.Editor
                 unrelatedProcess = StartLongRunningProcess();
                 WriteBrokerState(paths, unrelatedProcess.Id, recordedPort, "stale-token");
 
-                Assert.IsFalse(MCPBrokerProcessManager.EnsureRunning(requestedPort, string.Empty, paths));
+                yield return AssertOffMainThread(() => !MCPBrokerProcessManager.EnsureRunning(requestedPort, string.Empty, paths));
                 StringAssert.Contains("Port is already in use", MCPBrokerProcessManager.LastError);
                 Assert.IsFalse(unrelatedProcess.HasExited, "A stale pid file must not let broker cleanup kill an unverified process.");
             }
@@ -199,8 +194,6 @@ namespace Funplay.Editor
                 MCPBrokerProcessManager.Stop(paths);
                 DeleteTempRoot(root);
             }
-
-            yield return null;
         }
 
         [Test]
@@ -272,12 +265,13 @@ namespace Funplay.Editor
                 WriteBrokerState(paths, oldProcess.Id, port, token, oldProtocol);
 
                 Assert.IsFalse(MCPBrokerProcessManager.TryProbeBroker(port, token, out _));
-                Assert.IsTrue(MCPBrokerProcessManager.EnsureRunning(port, string.Empty, paths), MCPBrokerProcessManager.LastError);
+                yield return AssertOffMainThread(() => MCPBrokerProcessManager.EnsureRunning(port, mono, paths));
                 Assert.IsTrue(MCPBrokerProcessManager.TryGetConnectionInfo(paths, port, out var replacement));
                 Assert.IsTrue(MCPBrokerProcessManager.TryProbeBroker(port, replacement.Token, out var health));
                 Assert.AreEqual(replacement.Pid, health.Pid);
                 Assert.AreNotEqual(oldProcess.Id, replacement.Pid);
                 Assert.IsTrue(oldProcess.HasExited, "The previous broker must not remain on the port after an upgrade.");
+                yield return StopOffMainThread(paths);
             }
             finally
             {
@@ -298,9 +292,9 @@ namespace Funplay.Editor
 
             try
             {
-                Assume.That(!string.IsNullOrEmpty(MCPBrokerProcessManager.ResolveMono(string.Empty)),
-                    "Unity-bundled Mono is required for broker process tests.");
-                Assert.IsTrue(MCPBrokerProcessManager.EnsureRunning(port, string.Empty, paths), MCPBrokerProcessManager.LastError);
+                var mono = MCPBrokerProcessManager.ResolveMono(string.Empty);
+                Assume.That(!string.IsNullOrEmpty(mono), "Unity-bundled Mono is required for broker process tests.");
+                yield return AssertOffMainThread(() => MCPBrokerProcessManager.EnsureRunning(port, mono, paths));
                 Assert.IsTrue(MCPBrokerProcessManager.TryGetConnectionInfo(paths, port, out var connection));
                 transport = new MCPBrokerClientTransport(port, connection.Token);
                 transport.OnRequestReceived += (request, sendResponse) =>
@@ -380,10 +374,10 @@ namespace Funplay.Editor
 
             try
             {
-                Assume.That(!string.IsNullOrEmpty(MCPBrokerProcessManager.ResolveMono(string.Empty)),
-                    "Unity-bundled Mono is required for broker process tests.");
+                var mono = MCPBrokerProcessManager.ResolveMono(string.Empty);
+                Assume.That(!string.IsNullOrEmpty(mono), "Unity-bundled Mono is required for broker process tests.");
 
-                Assert.IsTrue(MCPBrokerProcessManager.EnsureRunning(port, string.Empty, paths), MCPBrokerProcessManager.LastError);
+                yield return AssertOffMainThread(() => MCPBrokerProcessManager.EnsureRunning(port, mono, paths));
                 Assert.IsTrue(MCPBrokerProcessManager.TryGetConnectionInfo(paths, port, out var connection));
 
                 var calls = 0;
@@ -427,10 +421,10 @@ namespace Funplay.Editor
 
             try
             {
-                Assume.That(!string.IsNullOrEmpty(MCPBrokerProcessManager.ResolveMono(string.Empty)),
-                    "Unity-bundled Mono is required for broker process tests.");
+                var mono = MCPBrokerProcessManager.ResolveMono(string.Empty);
+                Assume.That(!string.IsNullOrEmpty(mono), "Unity-bundled Mono is required for broker process tests.");
 
-                Assert.IsTrue(MCPBrokerProcessManager.EnsureRunning(port, string.Empty, paths), MCPBrokerProcessManager.LastError);
+                yield return AssertOffMainThread(() => MCPBrokerProcessManager.EnsureRunning(port, mono, paths));
                 Assert.IsTrue(MCPBrokerProcessManager.TryGetConnectionInfo(paths, port, out var connection));
 
                 var firstReceived = new TaskCompletionSource<bool>();
@@ -487,10 +481,10 @@ namespace Funplay.Editor
 
             try
             {
-                Assume.That(!string.IsNullOrEmpty(MCPBrokerProcessManager.ResolveMono(string.Empty)),
-                    "Unity-bundled Mono is required for broker process tests.");
+                var mono = MCPBrokerProcessManager.ResolveMono(string.Empty);
+                Assume.That(!string.IsNullOrEmpty(mono), "Unity-bundled Mono is required for broker process tests.");
 
-                Assert.IsTrue(MCPBrokerProcessManager.EnsureRunning(port, string.Empty, paths), MCPBrokerProcessManager.LastError);
+                yield return AssertOffMainThread(() => MCPBrokerProcessManager.EnsureRunning(port, mono, paths));
 
                 var startedAt = DateTime.UtcNow;
                 var requestTask = SendToolCallAsync(port, "get_editor_state");
@@ -520,10 +514,10 @@ namespace Funplay.Editor
 
             try
             {
-                Assume.That(!string.IsNullOrEmpty(MCPBrokerProcessManager.ResolveMono(string.Empty)),
-                    "Unity-bundled Mono is required for broker process tests.");
+                var mono = MCPBrokerProcessManager.ResolveMono(string.Empty);
+                Assume.That(!string.IsNullOrEmpty(mono), "Unity-bundled Mono is required for broker process tests.");
 
-                Assert.IsTrue(MCPBrokerProcessManager.EnsureRunning(port, string.Empty, paths), MCPBrokerProcessManager.LastError);
+                yield return AssertOffMainThread(() => MCPBrokerProcessManager.EnsureRunning(port, mono, paths));
                 Assert.IsTrue(MCPBrokerProcessManager.TryGetConnectionInfo(paths, port, out var connection));
 
                 transport = new MCPBrokerClientTransport(port, connection.Token);
@@ -565,10 +559,10 @@ namespace Funplay.Editor
                 // [SetUp]/[TearDown] capture and restore it so it cannot leak into other tests.
                 Environment.SetEnvironmentVariable(SessionStaleEnvVar, "1500");
 
-                Assume.That(!string.IsNullOrEmpty(MCPBrokerProcessManager.ResolveMono(string.Empty)),
-                    "Unity-bundled Mono is required for broker process tests.");
+                var mono = MCPBrokerProcessManager.ResolveMono(string.Empty);
+                Assume.That(!string.IsNullOrEmpty(mono), "Unity-bundled Mono is required for broker process tests.");
 
-                Assert.IsTrue(MCPBrokerProcessManager.EnsureRunning(port, string.Empty, paths), MCPBrokerProcessManager.LastError);
+                yield return AssertOffMainThread(() => MCPBrokerProcessManager.EnsureRunning(port, mono, paths));
                 Assert.IsTrue(MCPBrokerProcessManager.TryGetConnectionInfo(paths, port, out var connection));
 
                 // Simulate an editor that attached and then CRASHED: it registers a session (so
@@ -607,10 +601,10 @@ namespace Funplay.Editor
 
             try
             {
-                Assume.That(!string.IsNullOrEmpty(MCPBrokerProcessManager.ResolveMono(string.Empty)),
-                    "Unity-bundled Mono is required for broker process tests.");
+                var mono = MCPBrokerProcessManager.ResolveMono(string.Empty);
+                Assume.That(!string.IsNullOrEmpty(mono), "Unity-bundled Mono is required for broker process tests.");
 
-                Assert.IsTrue(MCPBrokerProcessManager.EnsureRunning(port, string.Empty, paths), MCPBrokerProcessManager.LastError);
+                yield return AssertOffMainThread(() => MCPBrokerProcessManager.EnsureRunning(port, mono, paths));
                 Assert.IsTrue(MCPBrokerProcessManager.TryGetConnectionInfo(paths, port, out var connection));
 
                 var firstReceived = new TaskCompletionSource<bool>();
@@ -795,6 +789,21 @@ namespace Funplay.Editor
                 request.Content = new StringContent(string.Empty);
                 await client.SendAsync(request);
             }
+        }
+
+        // Broker process management waits on sockets and processes. Run it on a worker so a slow
+        // start/stop does not freeze the Editor (Unity's "Hold on" dialog). Callers pass a mono path
+        // resolved on the main thread; the rest uses no main-thread-only Unity APIs.
+        private static IEnumerator AssertOffMainThread(Func<bool> action, float timeoutSeconds = 20f)
+        {
+            var task = Task.Run(action);
+            yield return WaitForTask(task, timeoutSeconds);
+            Assert.IsTrue(task.Result, MCPBrokerProcessManager.LastError);
+        }
+
+        private static IEnumerator StopOffMainThread(MCPBrokerProcessManager.MCPBrokerRuntimePaths paths)
+        {
+            yield return WaitForTask(Task.Run(() => MCPBrokerProcessManager.Stop(paths)), 10f);
         }
 
         private static IEnumerator WaitForTask(Task task, float timeoutSeconds = 5f)

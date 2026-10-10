@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using System.Linq;
+using Funplay.Editor.Api;
 using Funplay.Editor.DI;
 using Funplay.Editor.MCP.Server;
 using Funplay.Editor.Settings;
@@ -44,7 +45,7 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Dependent scan limit, 1..5000", Required = false)] int dependent_scan_limit = 1000)
         {
             JArray inputs;
-            try { inputs = JArray.Parse(selectors); }
+            try { inputs = JsonParse.ParseArray(selectors); }
             catch (Exception ex) { return Response.Error("INVALID_SELECTORS", new { detail = ex.Message }); }
             if (inputs.Count < 1 || inputs.Count > 100 || dependent_scan_limit < 1 || dependent_scan_limit > 5000) return Response.Error("INVALID_INSPECTION_LIMIT");
             var results = new List<object>(); var sources = new HashSet<string>(); int success = 0, totalItems = 0;
@@ -122,6 +123,7 @@ namespace Funplay.Editor.Tools.Builtins
                     read_only = ToolRegistry.GetMethod(name) != null && ToolRegistry.IsReadOnly(ToolRegistry.GetMethod(name)),
                     role = name == "execute_code" ? "fallback" : "structured"
                 }).ToArray(),
+                schemas = MCPToolListChangeNotifier.SchemaStatus(),
                 hint = "If implemented but unexposed, adjust MCP Server tool exposure deliberately; do not assume the plugin lacks the capability."
             });
         }

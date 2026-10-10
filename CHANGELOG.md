@@ -1,10 +1,26 @@
 # Changelog
 
-## [Unreleased]
+## [0.8.6] - 2026-10-10
+
+### Added
+
+- `run_tests`: `blockingTests` lists tests that froze the Editor (Unity's "Hold on" dialog); `get_task` names the blocking test (`editor_busy`).
+- `get_tool_capabilities`: `schemas` flags client tool schemas that may be stale after an update.
+- `get_visual_tree(element_path)`.
+
+### Changed
+
+- Unknown tool arguments fail with `UNKNOWN_PARAM` instead of being ignored.
+- `audit_ui_toolkit`: controls behind a modal backdrop go to `blocked_by_modal`, not `COVERED_CONTROL`.
+- `style_ui_toolkit` reports values after transitions end.
 
 ### Fixed
 
-- The installed version stayed stale after a package update that changed no scripts (server info and the update check showed the old version).
+- Stale installed version after a package update without script changes.
+- `execute_code` froze the Editor while compiling.
+- `wait_for_ui_toolkit(settled)` finished before late class changes and their transitions.
+- `get_visual_tree` with `max_depth` missed deeper selector matches.
+- Mixed timestamp offsets; date-like tool arguments were reformatted.
 
 ## [0.8.5] - 2026-10-10
 
