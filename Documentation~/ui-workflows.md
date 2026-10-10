@@ -303,6 +303,52 @@ Returned IDs, chosen policy and actual geometry describe in-memory authoring wit
 `persisted=false`. Save the intended scene/prefab explicitly. These creation APIs do not
 rebuild an existing screen, migrate its text system, or replace existing controls.
 
+## UI Toolkit panels (PanelRenderer and UIDocument)
+
+The Canvas tools above, `audit_ui` and UI preview composition are uGUI-only. UI Toolkit screens
+are UXML/USS displayed by a panel host: `PanelRenderer` on Unity 6.6+ (where
+`GameObject > UI Toolkit > Legacy > UI Document` is the old host) and `UIDocument` on earlier
+versions. `get_ui_toolkit_info` reports which host the running Editor recommends, every host in
+the loaded scenes/Prefab Stage, a per-scene `framework` (`ui_toolkit`, `ugui`, `mixed`, `none`),
+PanelSettings/theme/UXML/USS assets and setup issues (no PanelSettings, no theme, no UXML,
+legacy host, tree not built).
+
+The hosts are not interchangeable in code. `PanelRenderer` is a `Renderer` and sorts with
+`sortingOrder`; its root element is not public, so scripts receive the tree through
+`RegisterUIReloadCallback((renderer, root, version) => ...)` instead of reading
+`UIDocument.rootVisualElement` in `OnEnable`. Keep an existing screen's host unless a migration
+is requested.
+
+Typical flow:
+
+1. Write UXML/USS with ordinary file tools and let Unity import them; UXML/USS import errors
+   appear in `get_console_logs`.
+2. `create_ui_toolkit_panel(name, visual_tree_asset, panel_settings?, component=auto)` creates the
+   version-correct host in Edit Mode with Undo. PanelSettings resolve as: explicit path, else the
+   project's only PanelSettings, else a new `Assets/UI Toolkit/PanelSettings.asset` with the
+   default runtime theme (the same steps as Unity's menu); several candidates return
+   `PANEL_SETTINGS_AMBIGUOUS`. A parent that is itself a host nests the new panel and it inherits
+   the parent's PanelSettings. Created assets are listed and saved; the scene is not.
+3. `configure_ui_toolkit_panel` changes UXML (`none` clears), PanelSettings or sorting order;
+   `create_panel_settings` (Full) creates additional PanelSettings with scale/render mode.
+4. `get_visual_tree(target?, selector?, text?)` reads the live tree in Edit or Play Mode: element
+   paths, type, name, classes, text/value, display/enabled/picking state, panel bounds, Game View
+   screen bounds in the shared coordinate contract, optional resolved styles and findings such as
+   `ZERO_SIZE_CONTROL`, `CONTROL_PICKING_IGNORED`, `OUTSIDE_PANEL`, `TEXT_OVERFLOWS` and
+   `DUPLICATE_NAME`. Selectors are one compound `Type#name.class` (base types match, so
+   `TextElement` matches `Label`).
+5. In Play Mode, `click_ui_toolkit_element(selector|text|element_path)` dispatches pointer
+   move/down/up through the panel, so Clickable manipulators, `:hover`/`:active` and `ClickEvent`
+   run as with a real mouse, and reports `click_event_received`. It refuses ambiguous, hidden,
+   disabled, zero-area or covered targets. `simulate_mouse_click` uses the same dispatch at a
+   screen point (strategy `ui-toolkit`) with or without an EventSystem, and
+   `raycast_at_point` / `pick_ui_toolkit_element` report the topmost element, its click receiver
+   or the element swallowing the pointer under `ui_toolkit`.
+
+World-space panels are listed and inspected but not picked from screen points.
+`capture_game_view` includes screen-space UI Toolkit panels; Scene View UI compositing remains
+Canvas-only.
+
 ## Recording markers and extracted frames
 
 When exposed (`full` by default), `mark_recording(recording_id,label)` records explicit markers using the same elapsed clock as

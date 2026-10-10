@@ -406,7 +406,7 @@ namespace Funplay.Editor.Tools.Helpers
         {
             try
             {
-                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                foreach (var assembly in LoadedAssemblies.All())
                 {
                     var name = assembly.GetName().Name;
                     if (name != null &&

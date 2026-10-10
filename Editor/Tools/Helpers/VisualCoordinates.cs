@@ -121,10 +121,24 @@ namespace Funplay.Editor.Tools.Helpers
         internal static Vector3 WorldToRender(Vector3 world, Camera camera, VisualGeometry geometry)
         {
             if (camera == null) return world; // Overlay Canvas world xy already uses framebuffer pixels.
-            var viewport = camera.WorldToViewportPoint(world);
+            var viewport = WorldToViewport(world, camera);
             var rect = camera.rect;
             return new Vector3((rect.x + viewport.x * rect.width) * geometry.render_width,
                 (rect.y + viewport.y * rect.height) * geometry.render_height, viewport.z);
+        }
+        /// <summary>
+        /// Camera-relative viewport point from the camera matrices. Camera.WorldToViewportPoint
+        /// snaps the camera pixel rect to whole pixels while normalizing with the fractional rect,
+        /// so a sub-rect starting at a half pixel (e.g. 0.25 of a 1170 px view) is off by ~0.5 px.
+        /// The non-jittered matrix also keeps temporal-AA jitter out of the coordinate contract.
+        /// z is the camera-forward depth, matching WorldToViewportPoint.
+        /// </summary>
+        internal static Vector3 WorldToViewport(Vector3 world, Camera camera)
+        {
+            var cameraSpace = camera.worldToCameraMatrix.MultiplyPoint(world);
+            var clip = camera.nonJitteredProjectionMatrix * new Vector4(cameraSpace.x, cameraSpace.y, cameraSpace.z, 1f);
+            if (Mathf.Abs(clip.w) < 1e-12f) return camera.WorldToViewportPoint(world);
+            return new Vector3((clip.x / clip.w + 1f) * .5f, (clip.y / clip.w + 1f) * .5f, -cameraSpace.z);
         }
         internal static Vector2Int PngSize(byte[] png)
         {

@@ -477,7 +477,7 @@ namespace Funplay.Editor.Tools.Builtins
                     return type;
             }
 
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            foreach (var asm in LoadedAssemblies.All())
             {
                 Type[] types;
                 try { types = asm.GetTypes(); }
@@ -678,7 +678,7 @@ namespace Funplay.Editor.Tools.Builtins
                 return _fdGetFrameEvents != null && _fdWindowOpen != null;
 
             System.Type fdUtilType = null;
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            foreach (var asm in LoadedAssemblies.All())
             {
                 var found = asm.GetType("UnityEditorInternal.FrameDebuggerInternal.FrameDebuggerUtility");
                 if (found != null) { fdUtilType = found; break; }
@@ -694,7 +694,7 @@ namespace Funplay.Editor.Tools.Builtins
             _fdGetFrameEventInfoName = fdUtilType.GetMethod("GetFrameEventInfoName", staticPublic);
             _fdGetFrameEventObject = fdUtilType.GetMethod("GetFrameEventObject", staticPublic);
 
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            foreach (var asm in LoadedAssemblies.All())
             {
                 var found = asm.GetType("UnityEditor.FrameDebuggerWindow");
                 if (found != null) { _fdWindowType = found; break; }

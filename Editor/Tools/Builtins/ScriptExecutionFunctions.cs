@@ -697,7 +697,7 @@ public static class {className}
         internal static string GetReachableProjectNamespaceUsings()
         {
             var projectRoot = Path.GetDirectoryName(Application.dataPath);
-            return GetReachableProjectNamespaceUsings(AppDomain.CurrentDomain.GetAssemblies(), projectRoot);
+            return GetReachableProjectNamespaceUsings(LoadedAssemblies.All(), projectRoot);
         }
 
         internal static string GetReachableProjectNamespaceUsings(IEnumerable<Assembly> assemblies, string projectRoot)
@@ -734,7 +734,7 @@ public static class {className}
 
             try
             {
-                var location = assembly.Location;
+                var location = LoadedAssemblies.PathOf(assembly);
                 if (string.IsNullOrEmpty(location) || !File.Exists(location))
                     return false;
 

@@ -1,5 +1,6 @@
 // Copyright (C) Funplay. Licensed under MIT.
 using System;
+using System.Linq;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using Funplay.Editor.Tools.Helpers;
 using UnityEngine;
@@ -9,7 +10,7 @@ namespace Funplay.Editor.Tools.Builtins
     [ToolProvider("UI")]
     internal static class UIConfigurationFunctions
     {
-        [Description("Read project UI templates/defaults and bounded counts of existing Text/TMP fonts and input modules. Ties/incomplete scans are unresolved, never silently guessed. New projects prefer TMP. Does not install packages or change settings.")]
+        [Description("Read project uGUI templates/defaults and bounded counts of existing Text/TMP fonts and input modules, plus a ui_frameworks summary (Canvas vs UI Toolkit hosts, PanelRenderer availability). Ties/incomplete scans are unresolved, never silently guessed. New projects prefer TMP. Does not install packages or change settings.")]
         [ReadOnlyTool]
         public static object GetUiDefaults([ToolParam("Prefab scan cap, 1..2000", Required = false)] int prefab_scan_limit = 200)
         {
@@ -19,6 +20,7 @@ namespace Funplay.Editor.Tools.Builtins
                     configuration_path = ProjectUIDefaults.ConfigurationPath, configuration = ProjectUIDefaults.Load(),
                     conventions = ProjectUIDefaults.Probe(prefab_scan_limit),
                     tmp_component_available = ProjectUIDefaults.TmpType != null,
+                    ui_frameworks = DescribeUiFrameworks(),
                     input_system_component_available = ProjectUIDefaults.NewInputType != null,
                     precedence = "Explicit arguments > configured prefab/defaults > verified existing conventions > TMP for an empty project. Templates retain their component types and authored layout."
                 });
@@ -38,7 +40,7 @@ namespace Funplay.Editor.Tools.Builtins
             catch (Exception ex) { return Response.Error("UI_DEFAULTS_NOT_SAVED", new { detail = ex.Message }); }
         }
 
-        [Description("Author a canvas/button/text in Edit Mode using a configured or explicit UI prefab, or project-aware primitives when no template is configured. Preserve prefab references, typography and layout unless explicitly overridden. Save the resulting scene/prefab deliberately. Requires TMP resources when TMP is selected; never substitutes legacy Text silently.")]
+        [Description("Author a uGUI canvas/button/text in Edit Mode using a configured or explicit UI prefab, or project-aware primitives when no template is configured. Preserve prefab references, typography and layout unless explicitly overridden. Save the resulting scene/prefab deliberately. Requires TMP resources when TMP is selected; never substitutes legacy Text silently. Not for UI Toolkit screens: use create_ui_toolkit_panel with UXML/USS.")]
         [SceneEditingTool]
         public static object CreateProjectUi(
             [ToolParam("canvas, button or text")] string kind,
@@ -58,5 +60,19 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Optional Canvas render mode", Required = false)] string render_mode = null,
             [ToolParam("auto, input_system or legacy", Required = false)] string input_module = null)
             => UICreationService.Create(kind, name, text, parent, position, size, anchor, pivot, font_size, render_mode, text_component, template_path, text_path, font_asset, font_material, input_module);
+
+        private static object DescribeUiFrameworks()
+        {
+            var hosts = UIToolkitPanels.FindHosts(sorted: false);
+            var canvases = UIToolkitPanels.FindRootCanvases().Length;
+            return new
+            {
+                ugui_root_canvases = canvases,
+                ui_toolkit_panel_renderers = hosts.Count(h => UIToolkitPanels.KindOf(h) == UIToolkitPanels.KindPanelRenderer),
+                ui_toolkit_ui_documents = hosts.Count(h => UIToolkitPanels.KindOf(h) == UIToolkitPanels.KindUiDocument),
+                panel_renderer_available = UIToolkitPanels.PanelRendererAvailable,
+                note = "These defaults and create_project_ui apply to uGUI only. Match the target screen's framework; for UI Toolkit use get_ui_toolkit_info / create_ui_toolkit_panel."
+            };
+        }
     }
 }

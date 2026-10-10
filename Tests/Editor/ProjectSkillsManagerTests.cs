@@ -278,7 +278,9 @@ namespace Funplay.Editor.Tests
                 ProjectSkillsManager.SaveManifest(projectRoot, manifest);
                 manifest = ProjectSkillsManager.LoadManifest(projectRoot);
                 var agentsPath = ProjectSkillsManager.GetCodexAgentsPath(projectRoot);
-                var legacy = BuildLegacyCodexContent(projectRoot, manifest).Replace("\n", "\r\n");
+                // Normalize first so this is a genuine CRLF file even if the generated text already
+                // carried CRLF (verbatim strings take the source checkout's line endings).
+                var legacy = BuildLegacyCodexContent(projectRoot, manifest).Replace("\r\n", "\n").Replace("\n", "\r\n");
                 File.WriteAllText(agentsPath, legacy);
 
                 var before = ProjectSkillsManager.GetUpgradeStatus(projectRoot, manifest, "codex");

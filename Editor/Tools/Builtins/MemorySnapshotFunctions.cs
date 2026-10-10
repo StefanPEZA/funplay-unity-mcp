@@ -493,7 +493,7 @@ namespace Funplay.Editor.Tools.Builtins
 
         private static Type ResolvePackageType(string fullName)
         {
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            foreach (var assembly in LoadedAssemblies.All())
             {
                 if (!assembly.GetName().Name.Equals(PackageEditorAssemblyName, StringComparison.Ordinal))
                     continue;

@@ -147,7 +147,7 @@ namespace Funplay.Editor.Tools.Builtins
                 return type;
 
             // Fallback: scan loaded assemblies for a ScriptableObject-derived type with a matching short name
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            foreach (var asm in LoadedAssemblies.All())
             {
                 Type[] types;
                 try { types = asm.GetTypes(); }

@@ -87,6 +87,24 @@ namespace Funplay.Editor.Tests
             }
             finally { Object.DestroyImmediate(go); }
         }
+        [Test] public void MatrixViewportMatchesUnityConventionsForFullRectCameras()
+        {
+            var go = new GameObject("CoordinateCamera", typeof(Camera));
+            try
+            {
+                var camera = go.GetComponent<Camera>();
+                camera.transform.SetPositionAndRotation(new Vector3(1, 2, -10), Quaternion.Euler(10, 20, 0));
+                foreach (var world in new[] { new Vector3(0.5f, -1, 3), new Vector3(-2, 1, 12), new Vector3(1, 2, -30) })
+                {
+                    var expected = camera.WorldToViewportPoint(world);
+                    var actual = VisualCoordinates.WorldToViewport(world, camera);
+                    Assert.AreEqual(expected.x, actual.x, 1e-4, world.ToString());
+                    Assert.AreEqual(expected.y, actual.y, 1e-4, world.ToString());
+                    Assert.AreEqual(expected.z, actual.z, 1e-3, world.ToString());
+                }
+            }
+            finally { Object.DestroyImmediate(go); }
+        }
         [Test] public void CaptureReceiptKeepsNativeMcpImageAndStructuredMetadataWithoutBase64InLog()
         {
             var response = JsonConvert.SerializeObject(Response.Success("captured", new { geometry = Geometry(), inline_image = "data:image/png;base64,iVBORw0KGgo=" }, new { funplay_capture = 1 }));

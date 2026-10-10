@@ -52,11 +52,15 @@ This is original Funplay workflow guidance, informed by Unity's official plugin 
 
 Read this before applying the Canvas component guidance to an unfamiliar or mixed-framework project.
 
-- Classify the target screen, not the whole repository: uGUI uses `Canvas`, `RectTransform` and `Graphic`; UI Toolkit uses `UIDocument`, UXML, USS and `VisualElement`; IMGUI uses `OnGUI` / `EditorGUI` / `GUILayout`. Runtime and Editor tooling can use different systems in the same project.
+- Classify the target screen, not the whole repository: uGUI uses `Canvas`, `RectTransform` and `Graphic`; UI Toolkit uses a `PanelRenderer` (Unity 6.6+) or `UIDocument` host with UXML, USS, PanelSettings and `VisualElement`; IMGUI uses `OnGUI` / `EditorGUI` / `GUILayout`. Runtime and Editor tooling can use different systems in the same project. `get_ui_toolkit_info` reports each loaded scene's framework and every panel host.
 - Follow the target's existing framework and bindings. Do not convert a working screen, install a package, or wrap UI Toolkit in a new Canvas to make uGUI instructions fit. If a new screen's framework is genuinely undecided, explain the project-compatible choices and clarify a consequential choice.
-- The component table, prefab-first authoring, layout audits and raycast advice in the main skill primarily describe uGUI. Do not claim that a uGUI audit covers UI Toolkit or IMGUI. Inspect the tool's supported scope; use scoped public Editor APIs through MCP for actual gaps.
+- The component table, prefab-first authoring, layout audits and raycast advice in the main skill primarily describe uGUI. `create_canvas`/`create_button`/`create_text`/`create_image`/`create_project_ui`/`audit_ui` are uGUI-only. Do not claim that a uGUI audit covers UI Toolkit or IMGUI. Inspect the tool's supported scope; use scoped public Editor APIs through MCP for actual gaps.
 
 ## UI Toolkit
+
+On Unity 6.6+ `PanelRenderer` is the runtime host for new screens and `UIDocument` is listed under Legacy; earlier versions only have `UIDocument`. Keep an existing screen's host. They are not drop-in replacements: `PanelRenderer` is a `Renderer` (it sorts with `sortingOrder`), has no public `rootVisualElement`, and hands the tree to scripts through `RegisterUIReloadCallback((renderer, root, version) => ...)`; `UIDocument` code that reads `rootVisualElement` in `OnEnable` must be rewritten deliberately, not by renaming the type. Panels sharing a PanelSettings asset share one panel; a host parented under another host nests and inherits its PanelSettings.
+
+MCP workflow: `get_ui_toolkit_info` (framework, hosts, PanelSettings/themes) -> write UXML/USS with file tools and let them import (check the console for UXML/USS import errors) -> `create_ui_toolkit_panel` (version-correct host, PanelSettings with a theme, UXML) or `configure_ui_toolkit_panel` -> `get_visual_tree` (live elements, screen bounds, findings) -> Play Mode -> `click_ui_toolkit_element` / `simulate_mouse_click` / `raycast_at_point` (its `ui_toolkit` section) and a Game View capture.
 
 Reuse project UXML/USS, reusable visual-tree templates, PanelSettings, styles and data/event conventions. Author stable structure in those assets rather than rebuilding it procedurally; add runtime behavior only when the task requires it. UXML/USS/C# are source files and can use normal repository tools; Unity-owned PanelSettings `.asset` edits still require Unity APIs.
 

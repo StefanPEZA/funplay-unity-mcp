@@ -337,7 +337,7 @@ $@"Goal: build a minimal playable prototype from: {idea}.
 
 1. Build the environment (create_primitive / create_game_object) and ensure a camera exists.
 2. Add input + control: create_script for behaviour, then request_recompile, wait_for_compilation, and get_compilation_errors before using the new types.
-3. Add minimal helper UI if needed (create_canvas / create_text / create_button).
+3. Add minimal helper UI if needed, in the project's framework: uGUI (create_canvas / create_text / create_button) or UI Toolkit (UXML + create_ui_toolkit_panel; PanelRenderer on Unity 6.6+).
 4. enter_play_mode.
 5. Poll get_reload_recovery_status until the server is ready, then inspect runtime objects and get_console_logs(group_duplicates=true).
 6. Capture a Game View image when visual verification matters, then exit_play_mode.

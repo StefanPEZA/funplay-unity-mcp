@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.ComponentModel;
 using System.Reflection;
 using Funplay.Editor.Tools.Helpers;
@@ -41,7 +42,7 @@ namespace Funplay.Editor.Tools.Builtins
                 point = new { x = point.x, y = point.y }, delta_x, delta_y, geometry });
         }
 
-        [Description("Simulate a mouse click at a screen position in Play Mode. Coordinates are in screen pixels with 0,0 at the bottom-left. Works without the Input System by dispatching UI and physics events. Returns a structured result reporting whether a target was actually hit, by which strategy, and the object that was clicked (or null when nothing was hit).")]
+        [Description("Simulate a mouse click at a screen position in Play Mode. Coordinates are in screen pixels with 0,0 at the bottom-left. Works without the Input System by dispatching uGUI, UI Toolkit (PanelRenderer/UIDocument, with or without an EventSystem) and physics events. Returns a structured result reporting whether a target was actually hit, by which strategy, and the object that was clicked (or null when nothing was hit).")]
         public static object SimulateMouseClick(
             [ToolParam("X coordinate (pixels by default)")] float x,
             [ToolParam("Y coordinate (pixels by default)")] float y,
@@ -76,7 +77,8 @@ namespace Funplay.Editor.Tools.Builtins
                     Mathf.RoundToInt(uiPosition.x),
                     Mathf.RoundToInt(uiPosition.y),
                     inputButton,
-                    attempts);
+                    attempts,
+                    geometry.render_height);
                 ClickOutcome winner = uiOutcome.Hit ? uiOutcome : null;
 
                 // Match normal input precedence: UI gets first refusal. A raycast blocker
@@ -222,25 +224,114 @@ namespace Funplay.Editor.Tools.Builtins
             return viewport;
         }
 
-        private static ClickOutcome PerformUiClick(int x, int y, PointerEventData.InputButton inputButton, List<ClickOutcome> attempts)
+        private static ClickOutcome PerformUiClick(int x, int y, PointerEventData.InputButton inputButton, List<ClickOutcome> attempts, int renderHeight)
         {
             Canvas.ForceUpdateCanvases();
 
-            var eventSystem = EventSystem.current ?? UnityEngine.Object.FindFirstObjectByType<EventSystem>();
+            var position = new Vector2(x, y);
+            // After an EventSystem miss: UI Toolkit (which handles input itself without an
+            // EventSystem, or has not registered a PanelRaycaster yet), then direct Buttons.
+            ClickOutcome Fallback()
+            {
+                var toolkit = PerformUiToolkitClick(position, inputButton, attempts, renderHeight);
+                return toolkit.Hit ? toolkit : PerformDirectButtonFallback(position, inputButton, attempts);
+            }
+
+            // Explicit Unity null check: a destroyed current EventSystem is not C# null.
+            var eventSystem = EventSystem.current;
+            if (eventSystem == null) eventSystem = SceneObjectLookup.FindAny<EventSystem>();
             if (eventSystem == null)
             {
                 attempts.Add(ClickOutcome.Miss("ui-eventsystem", "no EventSystem found"));
-                return PerformDirectButtonFallback(new Vector2(x, y), inputButton, attempts);
+                return Fallback();
             }
 
-            var pointerData = CreatePointerData(eventSystem, new Vector2(x, y), inputButton);
+            var pointerData = CreatePointerData(eventSystem, position, inputButton);
             if (!TryGetTopUiTarget(eventSystem, pointerData, out var target, out var raycast))
             {
                 attempts.Add(ClickOutcome.Miss("ui-eventsystem", "no UI element at position"));
-                return PerformDirectButtonFallback(new Vector2(x, y), inputButton, attempts);
+                return Fallback();
             }
 
-            return DispatchUiClick(target, raycast, pointerData, attempts);
+            var outcome = DispatchUiClick(target, raycast, pointerData, attempts);
+            if (outcome.Hit && IsUiToolkitBridge(target))
+            {
+                // The EventSystem forwarded the pointer to UI Toolkit through PanelEventHandler;
+                // name the element that actually received it instead of the bridge object.
+                var pick = UIToolkitPanels.TopPick(UIToolkitPanels.PickAt(position, renderHeight));
+                if (pick != null)
+                {
+                    outcome.Strategy = "ui-eventsystem-ui-toolkit";
+                    outcome.Target = CreateUiToolkitSnapshot(pick);
+                    outcome.Detail = $"EventSystem forwarded the pointer to UI Toolkit element {UIToolkitPanels.Label(pick.Element)}";
+                }
+            }
+            return outcome;
+        }
+
+        private static bool IsUiToolkitBridge(GameObject target)
+        {
+            if (target == null) return false;
+            foreach (var component in target.GetComponents<UnityEngine.Component>())
+                if (component != null && component.GetType().Name == "PanelEventHandler") return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Picks the topmost screen-space UI Toolkit panel at the point and sends a pointer
+        /// move/down/up sequence through its dispatcher. This path only runs when no EventSystem
+        /// routes the pointer to the panel, and then UI Toolkit input does not stop OnMouseDown or
+        /// other input from seeing the same click. So an element without a click-handling control
+        /// in its chain (a full-screen HUD root, or a card using RegisterCallback&lt;ClickEvent&gt;,
+        /// whose handlers still ran) is reported as a non-blocking miss and dispatch continues.
+        /// </summary>
+        internal static ClickOutcome PerformUiToolkitClick(Vector2 position, PointerEventData.InputButton inputButton, List<ClickOutcome> attempts, int renderHeight)
+        {
+            var pick = renderHeight > 0
+                ? UIToolkitPanels.TopPick(UIToolkitPanels.PickAt(position, renderHeight))
+                : null;
+            if (pick == null)
+            {
+                var miss = ClickOutcome.Miss("ui-toolkit", "no UI Toolkit element at position");
+                attempts.Add(miss);
+                return miss;
+            }
+
+            var snapshot = CreateUiToolkitSnapshot(pick);
+            var receiver = UIToolkitPanels.FindClickReceiver(pick.Element);
+            var received = UIToolkitPanels.DispatchClick(pick.Panel.Panel, pick.Element, pick.PanelPosition, (int)inputButton);
+            if (receiver == null)
+            {
+                var passThrough = ClickOutcome.Miss(
+                    "ui-toolkit",
+                    $"pointer events sent to UI Toolkit element {UIToolkitPanels.Label(pick.Element)} ({(received ? "ClickEvent callbacks ran" : "no ClickEvent observed")}), " +
+                    "but it has no Button/Toggle/Clickable in its parent chain; without an EventSystem UI Toolkit does not block other input, so dispatch continues");
+                passThrough.Target = snapshot;
+                attempts.Add(passThrough);
+                return passThrough;
+            }
+
+            var outcome = new ClickOutcome
+            {
+                Strategy = "ui-toolkit",
+                Hit = true,
+                Target = snapshot,
+                Detail = received
+                    ? $"dispatched pointer events; ClickEvent reached {UIToolkitPanels.Label(receiver)}"
+                    : $"dispatched pointer events to {UIToolkitPanels.Label(receiver)}; no ClickEvent was observed"
+            };
+            attempts.Add(outcome);
+            return outcome;
+        }
+
+        private static ClickTargetSnapshot CreateUiToolkitSnapshot(UIToolkitPanels.PanelPick pick)
+        {
+            return new ClickTargetSnapshot
+            {
+                Name = UIToolkitPanels.Label(pick.Element),
+                InstanceId = pick.Host != null ? ObjectIdHelper.GetSerializableId(pick.Host.gameObject) : null,
+                Path = pick.Host != null ? ObjectsHelper.GetGameObjectPath(pick.Host.gameObject) + " > " + (pick.ElementPath ?? "?") : null
+            };
         }
 
         internal static ClickOutcome DispatchUiClick(
@@ -315,7 +406,7 @@ namespace Funplay.Editor.Tools.Builtins
                 return unsupported;
             }
 
-            foreach (var button in UnityEngine.Object.FindObjectsByType<Button>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            foreach (var button in SceneObjectLookup.FindAll<Button>(includeInactive: true))
             {
                 if (button == null || !button.isActiveAndEnabled)
                     continue;
@@ -480,7 +571,7 @@ namespace Funplay.Editor.Tools.Builtins
             return false;
         }
 
-        private static bool TryParseButton(string button, out PointerEventData.InputButton inputButton)
+        internal static bool TryParseButton(string button, out PointerEventData.InputButton inputButton)
         {
             switch ((button ?? "left").Trim().ToLowerInvariant())
             {

@@ -174,7 +174,7 @@ namespace Funplay.Editor.Tools.Builtins
         private static Camera FindCamera(string name)
         {
             if (string.IsNullOrEmpty(name))
-                return Camera.main ?? Object.FindFirstObjectByType<Camera>();
+                return Camera.main != null ? Camera.main : SceneObjectLookup.FindAny<Camera>();
 
             var go = ObjectsHelper.FindTarget(name);
             if (go == null) return null;

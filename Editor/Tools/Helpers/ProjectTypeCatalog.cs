@@ -15,7 +15,7 @@ namespace Funplay.Editor.Tools.Helpers
         {
             get
             {
-                var assemblies = AppDomain.CurrentDomain.GetAssemblies().Where(x => !x.IsDynamic).ToArray();
+                var assemblies = LoadedAssemblies.All().Where(x => !x.IsDynamic).ToArray();
                 if (types != null && assemblyCount == assemblies.Length) return types;
                 var all = new List<Type>();
                 foreach (var assembly in assemblies)

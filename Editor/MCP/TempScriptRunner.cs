@@ -133,7 +133,7 @@ namespace Funplay.Editor.MCP
 
         private static Type FindType(string className)
         {
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            foreach (var assembly in LoadedAssemblies.All())
             {
                 if (assembly.IsDynamic)
                     continue;

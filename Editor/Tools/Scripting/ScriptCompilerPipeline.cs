@@ -13,6 +13,7 @@ using System.Threading;
 using Funplay.Editor.Settings;
 using UnityEditor;
 using UnityEngine;
+using Funplay.Editor.Tools.Helpers;
 
 namespace Funplay.Editor.Tools.Scripting
 {
@@ -182,13 +183,17 @@ namespace Funplay.Editor.Tools.Scripting
             if (!TryResolveToolchain(out var compilerHostPath, out var cscPath, out var monoLibRoot, out var toolchainError))
                 return ScriptCompilationResult.Unavailable(Name, toolchainError);
 
-            var tempRoot = Path.Combine(Path.GetTempPath(), "FunplayExecuteCode", Guid.NewGuid().ToString("N"));
+            var compilationId = Guid.NewGuid().ToString("N");
+            var tempRoot = Path.Combine(Path.GetTempPath(), "FunplayExecuteCode", compilationId);
             Directory.CreateDirectory(tempRoot);
 
             try
             {
+                // csc derives the assembly name from -out. Every snippet is loaded into the same
+                // domain, so a fixed name makes Unity warn that several loaded assemblies share it.
+                var assemblyName = "FunplaySnippet_" + compilationId;
                 var sourcePath = Path.Combine(tempRoot, "Snippet.cs");
-                var outputPath = Path.Combine(tempRoot, "Snippet.dll");
+                var outputPath = Path.Combine(tempRoot, assemblyName + ".dll");
                 var responsePath = Path.Combine(tempRoot, "csc.rsp");
 
                 File.WriteAllText(sourcePath, code ?? string.Empty, Encoding.UTF8);
@@ -270,7 +275,7 @@ namespace Funplay.Editor.Tools.Scripting
                     return ScriptCompilationResult.Unavailable(Name, "Roslyn csc completed without producing an output assembly.");
 
                 var assemblyBytes = File.ReadAllBytes(outputPath);
-                var assembly = Assembly.Load(assemblyBytes);
+                var assembly = LoadedAssemblies.LoadFromBytes(assemblyBytes);
                 return ScriptCompilationResult.Success(Name, assembly);
             }
             finally
@@ -367,14 +372,14 @@ namespace Funplay.Editor.Tools.Scripting
         {
             var references = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            foreach (var assembly in LoadedAssemblies.All())
             {
                 if (assembly.IsDynamic)
                     continue;
 
                 try
                 {
-                    var location = assembly.Location;
+                    var location = LoadedAssemblies.PathOf(assembly);
                     if (string.IsNullOrEmpty(location) || !File.Exists(location))
                         continue;
 
@@ -595,14 +600,14 @@ namespace Funplay.Editor.Tools.Scripting
                 var addMethod = referencedAssemblies?.GetType().GetMethod("Add", new[] { typeof(string) });
 
                 var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                foreach (var assembly in LoadedAssemblies.All())
                 {
                     if (assembly.IsDynamic)
                         continue;
 
                     try
                     {
-                        var location = assembly.Location;
+                        var location = LoadedAssemblies.PathOf(assembly);
                         if (!string.IsNullOrEmpty(location) && File.Exists(location) && referenced.Add(location))
                             addMethod?.Invoke(referencedAssemblies, new object[] { location });
                     }
@@ -684,7 +689,7 @@ namespace Funplay.Editor.Tools.Scripting
 
                 if (_providerType == null || _paramsType == null)
                 {
-                    foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                    foreach (var assembly in LoadedAssemblies.All())
                     {
                         if (assembly.IsDynamic)
                             continue;

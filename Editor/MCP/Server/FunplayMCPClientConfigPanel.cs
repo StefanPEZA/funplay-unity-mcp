@@ -855,6 +855,8 @@ namespace Funplay.Editor.MCP.Server
             servers[serverName] = entry;
             RemoveSupersededFunplayEntries(
                 servers, serverName, previousServerName, target.UrlFieldName);
+            if (target.UseProjectScope)
+                RemoveProjectKeyVariantEntries(root, rootKey, GetProjectScopeKeyPath(), serverName, previousServerName);
 
             var directory = Path.GetDirectoryName(target.ConfigPath);
             if (!string.IsNullOrEmpty(directory))
@@ -1097,17 +1099,35 @@ namespace Funplay.Editor.MCP.Server
             object topLevelValue;
             var hasTopLevelEntry = TryGetLoopbackEntry(topLevelServers, recordedKey, out topLevelValue);
 
-            Dictionary<string, object> legacyServers = null;
-            object legacyValue = null;
-            var hasLegacyProjectEntry = false;
-            if (!string.IsNullOrEmpty(legacyProjectPath) &&
-                !string.Equals(legacyProjectPath, projectScopePath, StringComparison.Ordinal))
+            // Legacy project scopes: backslash spellings of the git-root key (written before keys
+            // were normalized) and the Unity project path (before git-root keys). The Unity path
+            // matches only by the exact spelling older versions wrote: its forward-slash form is a
+            // key Claude Code itself uses for sessions started in the Unity project folder, and
+            // that live entry must not be moved. Ordered so the most recently written layout wins
+            // when several stale copies exist: git-root spelling variants first.
+            var projects = FindNestedDictionary(root, "projects");
+            var legacySources = new List<KeyValuePair<string, Dictionary<string, object>>>();
+            if (projects != null)
             {
-                var projects = FindNestedDictionary(root, "projects");
-                var legacyEntry = projects != null ? FindNestedDictionary(projects, legacyProjectPath) : null;
-                legacyServers = legacyEntry != null ? FindNestedDictionary(legacyEntry, rootKey) : null;
-                hasLegacyProjectEntry = TryGetLoopbackEntry(legacyServers, recordedKey, out legacyValue);
+                var candidates = projects.Keys
+                    .Select(key => new { key, stale = IsStaleSpellingOfProjectKey(key, projectScopePath) })
+                    .Where(c => c.stale ||
+                                (!string.IsNullOrEmpty(legacyProjectPath) &&
+                                 !string.Equals(c.key, projectScopePath, StringComparison.Ordinal) &&
+                                 string.Equals(c.key, legacyProjectPath, StringComparison.Ordinal)))
+                    .OrderBy(c => c.stale ? 0 : 1)
+                    .Select(c => c.key)
+                    .ToList();
+                foreach (var key in candidates)
+                {
+                    var entry = FindNestedDictionary(projects, key);
+                    var servers = entry != null ? FindNestedDictionary(entry, rootKey) : null;
+                    object value;
+                    if (TryGetLoopbackEntry(servers, recordedKey, out value))
+                        legacySources.Add(new KeyValuePair<string, Dictionary<string, object>>(key, servers));
+                }
             }
+            var hasLegacyProjectEntry = legacySources.Count > 0;
 
             if (!hasTopLevelEntry && !hasLegacyProjectEntry)
                 return false;
@@ -1125,7 +1145,7 @@ namespace Funplay.Editor.MCP.Server
             {
                 // The Unity-project scope was the newer of the two legacy layouts, so prefer its
                 // endpoint when both stale copies exist.
-                destinationServers[recordedKey] = hasLegacyProjectEntry ? legacyValue : topLevelValue;
+                destinationServers[recordedKey] = hasLegacyProjectEntry ? legacySources[0].Value[recordedKey] : topLevelValue;
             }
 
             var sources = new List<string>();
@@ -1135,14 +1155,109 @@ namespace Funplay.Editor.MCP.Server
                 sources.Add("the top level");
             }
 
-            if (hasLegacyProjectEntry)
+            foreach (var source in legacySources)
             {
-                legacyServers.Remove(recordedKey);
-                sources.Add($"projects[\"{legacyProjectPath}\"]");
+                source.Value.Remove(recordedKey);
+                RemoveEmptyFunplayOnlyProjectEntry(projects, source.Key, rootKey);
+                sources.Add($"projects[\"{source.Key}\"]");
             }
 
             migratedFrom = string.Join(" and ", sources);
             return true;
+        }
+
+        /// <summary>
+        /// Claude Code keys <c>projects</c> by the session's working directory with forward slashes
+        /// (<c>C:/repo</c> on Windows, <c>/repo</c> elsewhere). .NET path APIs return backslashes
+        /// on Windows, and a <c>C:\repo</c> key is never read by Claude Code, so every key this
+        /// plugin writes or looks up goes through this normalization.
+        /// </summary>
+        internal static string ToClaudeProjectKey(string path)
+        {
+            if (string.IsNullOrEmpty(path))
+                return path;
+
+            var key = path.Replace('\\', '/');
+            while (key.Length > 1 && key.EndsWith("/", StringComparison.Ordinal) &&
+                   !(key.Length == 3 && key[1] == ':'))
+            {
+                key = key.Substring(0, key.Length - 1);
+            }
+
+            return key;
+        }
+
+        /// <summary>
+        /// Whether two <c>projects</c> keys are spellings of the same path that differ only in
+        /// separators. Case stays significant: Claude Code keys by the session's working directory
+        /// as typed, so <c>c:/repo</c> and <c>C:/repo</c> can both be live entries.
+        /// </summary>
+        internal static bool IsSameClaudeProjectKey(string a, string b)
+        {
+            if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b))
+                return false;
+
+            return string.Equals(ToClaudeProjectKey(a), ToClaudeProjectKey(b), StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// A backslash spelling of <paramref name="projectScopeKey"/>: written by older versions of
+        /// this plugin and never read by Claude Code, so its Funplay entries are dead config.
+        /// </summary>
+        internal static bool IsStaleSpellingOfProjectKey(string key, string projectScopeKey)
+        {
+            return !string.IsNullOrEmpty(key) &&
+                   key.IndexOf('\\') >= 0 &&
+                   !string.Equals(key, projectScopeKey, StringComparison.Ordinal) &&
+                   IsSameClaudeProjectKey(key, projectScopeKey);
+        }
+
+        /// <summary>
+        /// Drops a <c>projects</c> entry that only ever held this plugin's servers once they have
+        /// been moved away. Entries Claude Code created itself carry other keys (allowedTools,
+        /// history, ...) and are always kept.
+        /// </summary>
+        private static void RemoveEmptyFunplayOnlyProjectEntry(
+            Dictionary<string, object> projects, string projectKey, string rootKey)
+        {
+            var entry = projects != null ? FindNestedDictionary(projects, projectKey) : null;
+            var servers = entry != null ? FindNestedDictionary(entry, rootKey) : null;
+            if (entry != null && entry.Count == 1 && servers != null && servers.Count == 0)
+                projects.Remove(projectKey);
+        }
+
+        /// <summary>
+        /// Configure writes under the exact Claude Code key; Funplay entries this project left under
+        /// another spelling of the same directory (see <see cref="ToClaudeProjectKey"/>) would
+        /// otherwise linger as dead config, so they are removed in the same write.
+        /// </summary>
+        private static void RemoveProjectKeyVariantEntries(
+            Dictionary<string, object> root, string rootKey, string projectScopeKey,
+            string serverName, string previousServerName)
+        {
+            var projects = FindNestedDictionary(root, "projects");
+            if (projects == null)
+                return;
+
+            var variants = projects.Keys
+                .Where(key => IsStaleSpellingOfProjectKey(key, projectScopeKey))
+                .ToList();
+            foreach (var key in variants)
+            {
+                var entry = FindNestedDictionary(projects, key);
+                var servers = entry != null ? FindNestedDictionary(entry, rootKey) : null;
+                if (servers == null)
+                    continue;
+                // Same ownership proof as the migration: only loopback entries this plugin writes,
+                // never a hand-edited remote endpoint that happens to reuse the name.
+                foreach (var name in new[] { serverName, previousServerName })
+                {
+                    object value;
+                    if (!string.IsNullOrEmpty(name) && TryGetLoopbackEntry(servers, name, out value))
+                        servers.Remove(name);
+                }
+                RemoveEmptyFunplayOnlyProjectEntry(projects, key, rootKey);
+            }
         }
 
         /// <summary>
@@ -1747,7 +1862,7 @@ namespace Funplay.Editor.MCP.Server
         /// </summary>
         private static string GetProjectScopeKeyPath()
         {
-            return FindGitRootOrSelf(GetProjectRootPath());
+            return ToClaudeProjectKey(FindGitRootOrSelf(GetProjectRootPath()));
         }
 
         /// <summary>
@@ -1794,7 +1909,7 @@ namespace Funplay.Editor.MCP.Server
         /// </summary>
         private static string GetOpenCodeConfigPath()
         {
-            return Path.Combine(GetProjectScopeKeyPath(), ".opencode", "opencode.json");
+            return Path.Combine(FindGitRootOrSelf(GetProjectRootPath()), ".opencode", "opencode.json");
         }
 
         /// <summary>

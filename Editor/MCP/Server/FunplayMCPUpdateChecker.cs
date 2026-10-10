@@ -374,7 +374,11 @@ namespace Funplay.Editor.MCP.Server
                 Debug.Log($"[Funplay MCP] {filterSummary}");
 
                 SetUpdateProgress($"Importing {safeFileName}...", 0.95f);
+#if UNITY_6000_6_OR_NEWER
+                UnityEditor.AssetPackage.Package.Import(filteredPackagePath, false);
+#else
                 AssetDatabase.ImportPackage(filteredPackagePath, false);
+#endif
                 AssetDatabase.Refresh();
 
                 EditorUtility.ClearProgressBar();

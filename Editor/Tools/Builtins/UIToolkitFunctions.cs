@@ -1,0 +1,593 @@
+// Copyright (C) Funplay. Licensed under MIT.
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
+using Funplay.Editor.Tools.Helpers;
+using UnityEditor;
+using UnityEditor.SceneManagement;
+using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.SceneManagement;
+using UnityEngine.UIElements;
+
+namespace Funplay.Editor.Tools.Builtins
+{
+    /// <summary>
+    /// UI Toolkit (UXML/USS/VisualElement) authoring and live inspection. Unity 6.6+ hosts runtime
+    /// panels with PanelRenderer; older versions (and Legacy menus) use UIDocument. Both are
+    /// supported through <see cref="UIToolkitPanels"/>; the uGUI Canvas tools do not apply here.
+    /// </summary>
+    [ToolProvider("UIToolkit")]
+    internal static class UIToolkitFunctions
+    {
+        [Description("Read-only UI Toolkit overview: whether this Unity has PanelRenderer (6.6+, UIDocument is Legacy) and which host to create, every PanelRenderer/UIDocument in loaded scenes/Prefab Stage with PanelSettings, UXML, sorting, parent and live-root state, per-scene framework (ui_toolkit/ugui/mixed), PanelSettings/theme assets and setup issues. Use before choosing Canvas vs UI Toolkit tools.")]
+        [ReadOnlyTool]
+        public static object GetUiToolkitInfo(
+            [ToolParam("Include inactive hosts", Required = false)] bool include_inactive = true,
+            [ToolParam("Cap for listed PanelSettings/theme/UXML assets, 1..500", Required = false)] int asset_limit = 50)
+        {
+            try
+            {
+                asset_limit = Mathf.Clamp(asset_limit, 1, 500);
+                var hosts = UIToolkitPanels.FindHosts(include_inactive);
+                var hostRoots = UIToolkitPanels.HostRoots(hosts);
+                var canvases = UIToolkitPanels.FindRootCanvases();
+                var scenes = new List<object>();
+                for (var i = 0; i < SceneManager.sceneCount; i++)
+                {
+                    var scene = SceneManager.GetSceneAt(i);
+                    if (!scene.isLoaded) continue;
+                    int uitk = hosts.Count(h => h.gameObject.scene == scene), ugui = canvases.Count(c => c.gameObject.scene == scene);
+                    scenes.Add(new
+                    {
+                        path = scene.path, name = scene.name, ui_toolkit_hosts = uitk, ugui_root_canvases = ugui,
+                        framework = uitk > 0 && ugui > 0 ? "mixed" : uitk > 0 ? "ui_toolkit" : ugui > 0 ? "ugui" : "none"
+                    });
+                }
+
+                var panelSettingsPaths = UIToolkitPanels.FindPanelSettingsPaths(asset_limit);
+                var uxml = UIToolkitPanels.FindAssetPaths("VisualTreeAsset").ToArray();
+                var uss = UIToolkitPanels.FindAssetPaths("StyleSheet").Where(p => p.EndsWith(".uss", StringComparison.OrdinalIgnoreCase)).ToArray();
+                var eventSystems = SceneObjectLookup.FindAll<EventSystem>(true)
+                    .Count(e => !EditorUtility.IsPersistent(e));
+                var inputConfigurations = UIToolkitPanels.PanelInputConfigurationType != null
+                    ? SceneObjectLookup.FindAll(UIToolkitPanels.PanelInputConfigurationType, true).Length
+                    : (int?)null;
+
+                return Response.Success($"{hosts.Count} UI Toolkit panel host(s) in loaded scenes.", new
+                {
+                    unity_version = Application.unityVersion,
+                    panel_renderer_available = UIToolkitPanels.PanelRendererAvailable,
+                    recommended_component = UIToolkitPanels.ComponentName(UIToolkitPanels.RecommendedKind),
+                    ui_document_status = UIToolkitPanels.PanelRendererAvailable ? "legacy" : "current",
+                    hosts = hosts.Select(h => DescribeHost(h, nestedRoots: hostRoots)).ToArray(),
+                    scenes,
+                    event_systems = eventSystems,
+                    panel_input_configurations = inputConfigurations,
+                    assets = new
+                    {
+                        panel_settings = panelSettingsPaths.Select(p => UIToolkitPanels.DescribePanelSettings(AssetDatabase.LoadAssetAtPath<PanelSettings>(p))).ToArray(),
+                        theme_style_sheets = UIToolkitPanels.FindThemePaths(asset_limit),
+                        uxml_count = uxml.Length, uxml = uxml.Take(asset_limit).ToArray(),
+                        uss_count = uss.Length, uss = uss.Take(asset_limit).ToArray()
+                    },
+                    guidance = UIToolkitPanels.PanelRendererAvailable
+                        ? "Create new runtime UI Toolkit screens with PanelRenderer (create_ui_toolkit_panel). Keep existing UIDocument screens unless asked to migrate: UIDocument.rootVisualElement code does not port as-is; PanelRenderer exposes its tree through RegisterUIReloadCallback."
+                        : "This Unity version hosts runtime UI Toolkit with UIDocument. PanelRenderer requires Unity 6.6+."
+                });
+            }
+            catch (Exception ex) { return Response.Error("UI_TOOLKIT_INFO_FAILED", new { detail = ex.Message }); }
+        }
+
+        [Description("Create a UI Toolkit panel host in Edit Mode: PanelRenderer on Unity 6.6+ (auto), else UIDocument; ui_document is Legacy on 6.6+. Assigns UXML and PanelSettings (explicit path, the project's only PanelSettings, or a new one with the default runtime theme; several candidates require a choice). A parent that is itself a panel host nests the new panel and inherits its PanelSettings. Undoable; does not save the scene. Not for uGUI Canvas UI.")]
+        [SceneEditingTool]
+        public static object CreateUiToolkitPanel(
+            [ToolParam("GameObject name")] string name,
+            [ToolParam("UXML VisualTreeAsset path to display", Required = false)] string visual_tree_asset = null,
+            [ToolParam("Existing PanelSettings asset path", Required = false)] string panel_settings = null,
+            [ToolParam("auto, panel_renderer or ui_document", Required = false)] string component = "auto",
+            [ToolParam("Unique parent name/path/ID; a panel-host parent nests this panel", Required = false)] string parent = null,
+            [ToolParam("Sorting order among panels sharing PanelSettings", Required = false)] string sorting_order = null,
+            [ToolParam("Where to create PanelSettings when the project has none (default Assets/UI Toolkit/PanelSettings.asset)", Required = false)] string new_panel_settings_path = null)
+        {
+            if (EditorApplication.isPlayingOrWillChangePlaymode)
+                return Response.Error("EDIT_MODE_REQUIRED", new { hint = "Author UI Toolkit hosts in Edit Mode or a Prefab Stage." });
+            var createdAssets = new List<string>();
+            try
+            {
+                if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name must not be empty.");
+                var kind = ResolveKind(component);
+                var componentType = kind == UIToolkitPanels.KindPanelRenderer ? UIToolkitPanels.PanelRendererType : typeof(UIDocument);
+                GameObject parentObject = null;
+                if (!string.IsNullOrWhiteSpace(parent))
+                {
+                    var matches = ObjectsHelper.FindObjects(parent, null, true, searchInactive: true);
+                    if (matches.Count != 1 || EditorUtility.IsPersistent(matches[0]))
+                        throw new UIToolkitException("PARENT_NOT_UNIQUE", "parent must identify exactly one live GameObject (prefer its ID).", new { count = matches.Count });
+                    parentObject = matches[0];
+                }
+
+                // Nearest host ancestor of either kind, inactive included (as Unity resolves parentUI).
+                Component parentHost = null;
+                for (var t = parentObject != null ? parentObject.transform : null; t != null && parentHost == null; t = t.parent)
+                    parentHost = UIToolkitPanels.GetHost(t.gameObject);
+                if (parentHost != null && UIToolkitPanels.KindOf(parentHost) != kind)
+                    throw new UIToolkitException("HOST_KIND_MISMATCH",
+                        $"A {UIToolkitPanels.ComponentName(kind)} under a {UIToolkitPanels.ComponentName(UIToolkitPanels.KindOf(parentHost))} does not nest; Unity only nests hosts of the same kind. Match the parent's component or use a parent outside it.");
+                var nested = parentHost != null;
+                var tree = LoadVisualTree(visual_tree_asset);
+                float? order = ParseOrder(sorting_order);
+                PanelSettings settings = null;
+                if (!string.IsNullOrEmpty(panel_settings))
+                {
+                    if (nested) throw new UIToolkitException("NESTED_PANEL_SETTINGS", "Nested panels inherit PanelSettings from their parent host; omit panel_settings or use a non-host parent.");
+                    settings = LoadPanelSettings(panel_settings);
+                }
+                else if (!nested)
+                {
+                    settings = ResolveProjectPanelSettings(new_panel_settings_path, createdAssets);
+                }
+
+                Undo.IncrementCurrentGroup();
+                var undoGroup = Undo.GetCurrentGroup();
+                Undo.SetCurrentGroupName("Create UI Toolkit panel " + name);
+                var go = ObjectFactory.CreateGameObject(name, componentType);
+                StageUtility.PlaceGameObjectInCurrentStage(go);
+                var stage = PrefabStageUtility.GetCurrentPrefabStage();
+                if (parentObject != null) Undo.SetTransformParent(go.transform, parentObject.transform, "Parent UI Toolkit panel");
+                else if (stage != null) Undo.SetTransformParent(go.transform, stage.prefabContentsRoot.transform, "Parent UI Toolkit panel");
+                go.transform.localPosition = Vector3.zero; go.transform.localRotation = Quaternion.identity; go.transform.localScale = Vector3.one;
+                go.layer = parentObject != null ? parentObject.layer : Math.Max(0, LayerMask.NameToLayer("UI"));
+                GameObjectUtility.EnsureUniqueNameForSibling(go);
+
+                var host = go.GetComponent(componentType);
+                if (parentObject != null) UIToolkitPanels.SyncHierarchy(host);
+                if (settings != null && UIToolkitPanels.GetParentUI(host) == null) UIToolkitPanels.SetPanelSettings(host, settings);
+                if (tree != null) UIToolkitPanels.SetVisualTreeAsset(host, tree);
+                if (order.HasValue) UIToolkitPanels.SetSortingOrder(host, order.Value);
+                UIToolkitPanels.MarkHostModified(host);
+                Selection.activeGameObject = go;
+                Undo.CollapseUndoOperations(undoGroup);
+
+                var warnings = new List<string>();
+                if (kind == UIToolkitPanels.KindUiDocument && UIToolkitPanels.PanelRendererAvailable)
+                    warnings.Add("UIDocument is Legacy on this Unity version; PanelRenderer is the default host for new screens.");
+                if (tree == null) warnings.Add("No UXML assigned; the panel renders nothing until configure_ui_toolkit_panel sets visual_tree_asset.");
+                if (createdAssets.Count > 0) warnings.Add("Created assets are saved; the scene is not.");
+                return Response.Success($"Created {UIToolkitPanels.ComponentName(kind)} '{go.name}'.", new
+                {
+                    host = DescribeHost(host),
+                    created_assets = createdAssets,
+                    warnings
+                });
+            }
+            catch (UIToolkitException ex) { return Response.Error(ex.Code, new { detail = ex.Message, details = ex.Details, created_assets = createdAssets }); }
+            catch (Exception ex) { return Response.Error("UI_TOOLKIT_PANEL_NOT_CREATED", new { detail = ex.Message, created_assets = createdAssets }); }
+        }
+
+        [Description("Change an existing PanelRenderer/UIDocument in Edit Mode: UXML (\"none\" clears), PanelSettings (top-level hosts only) and sorting order. Uses the component's own setters so the live panel reloads; undoable; does not save the scene.")]
+        [SceneEditingTool]
+        public static object ConfigureUiToolkitPanel(
+            [ToolParam("Panel host GameObject name/path/ID")] string target,
+            [ToolParam("UXML VisualTreeAsset path, or none to clear", Required = false)] string visual_tree_asset = null,
+            [ToolParam("PanelSettings asset path", Required = false)] string panel_settings = null,
+            [ToolParam("Sorting order", Required = false)] string sorting_order = null)
+        {
+            if (EditorApplication.isPlayingOrWillChangePlaymode)
+                return Response.Error("EDIT_MODE_REQUIRED", new { hint = "Play Mode changes to hosts are lost on exit; configure in Edit Mode." });
+            try
+            {
+                var host = ResolveSingleHost(target);
+                if (string.IsNullOrWhiteSpace(visual_tree_asset) && string.IsNullOrWhiteSpace(panel_settings) && string.IsNullOrWhiteSpace(sorting_order))
+                    throw new ArgumentException("Pass at least one of visual_tree_asset, panel_settings or sorting_order.");
+                var clearTree = string.Equals(visual_tree_asset, "none", StringComparison.OrdinalIgnoreCase);
+                var tree = clearTree ? null : LoadVisualTree(visual_tree_asset);
+                var settings = string.IsNullOrEmpty(panel_settings) ? null : LoadPanelSettings(panel_settings);
+                if (settings != null && UIToolkitPanels.GetParentUI(host) != null)
+                    throw new UIToolkitException("NESTED_PANEL_SETTINGS", "This host is nested and inherits PanelSettings from its parent host.");
+                float? order = ParseOrder(sorting_order);
+
+                Undo.RecordObject(host, "Configure UI Toolkit panel");
+                if (clearTree || tree != null) UIToolkitPanels.SetVisualTreeAsset(host, tree);
+                if (settings != null) UIToolkitPanels.SetPanelSettings(host, settings);
+                if (order.HasValue) UIToolkitPanels.SetSortingOrder(host, order.Value);
+                UIToolkitPanels.MarkHostModified(host);
+                return Response.Success($"Configured '{host.gameObject.name}'.", new { host = DescribeHost(host) });
+            }
+            catch (UIToolkitException ex) { return Response.Error(ex.Code, new { detail = ex.Message, details = ex.Details }); }
+            catch (Exception ex) { return Response.Error("UI_TOOLKIT_PANEL_NOT_CONFIGURED", new { detail = ex.Message }); }
+        }
+
+        [Description("Create a PanelSettings asset the way Unity's Create > UI Toolkit menu does (theme: explicit, project default, first .tss, or a new default runtime theme). Optional scale mode, reference resolution/match, render mode (screen_space_overlay/world_space where supported) and sorting order. Never overwrites an existing asset.")]
+        public static object CreatePanelSettings(
+            [ToolParam("New asset path under Assets/, .asset appended if missing")] string path,
+            [ToolParam("ThemeStyleSheet (.tss) path", Required = false)] string theme_style_sheet = null,
+            [ToolParam("constant_pixel_size, constant_physical_size or scale_with_screen_size", Required = false)] string scale_mode = null,
+            [ToolParam("Reference resolution width,height (scale_with_screen_size)", Required = false)] string reference_resolution = null,
+            [ToolParam("Width/height match 0..1 (scale_with_screen_size)", Required = false)] string match = null,
+            [ToolParam("screen_space_overlay or world_space", Required = false)] string render_mode = null,
+            [ToolParam("Panel sorting order", Required = false)] string sorting_order = null)
+        {
+            var createdAssets = new List<string>();
+            try
+            {
+                PanelScaleMode? scale = null;
+                if (!string.IsNullOrEmpty(scale_mode))
+                {
+                    var enumName = ToolRegistry.ToPascalCase(scale_mode.Trim());
+                    if (!Enum.TryParse(enumName, out PanelScaleMode parsed) || !Enum.IsDefined(typeof(PanelScaleMode), parsed))
+                        throw new ArgumentException("scale_mode must be constant_pixel_size, constant_physical_size or scale_with_screen_size.");
+                    scale = parsed;
+                }
+                Vector2Int? resolution = null;
+                if (!string.IsNullOrEmpty(reference_resolution))
+                {
+                    var parts = reference_resolution.Split(',');
+                    if (parts.Length != 2 || !int.TryParse(parts[0].Trim(), out var w) || !int.TryParse(parts[1].Trim(), out var h) || w <= 0 || h <= 0)
+                        throw new ArgumentException("reference_resolution must be positive width,height.");
+                    resolution = new Vector2Int(w, h);
+                }
+                float? matchValue = null;
+                if (!string.IsNullOrEmpty(match))
+                {
+                    if (!float.TryParse(match, NumberStyles.Float, CultureInfo.InvariantCulture, out var m) || m < 0 || m > 1)
+                        throw new ArgumentException("match must be within 0..1.");
+                    matchValue = m;
+                }
+                float? order = ParseOrder(sorting_order);
+                var renderMode = string.IsNullOrEmpty(render_mode) ? null : render_mode.Trim().ToLowerInvariant();
+                // Validate before the asset exists: a late failure would leave a saved, half-configured
+                // asset behind and make the retry fail with ASSET_ALREADY_EXISTS.
+                if (renderMode != null) UIToolkitPanels.ParseRenderMode(renderMode);
+
+                var settings = UIToolkitPanels.CreatePanelSettingsAsset(path, theme_style_sheet, createdAssets);
+                if (scale.HasValue) settings.scaleMode = scale.Value;
+                if (resolution.HasValue) settings.referenceResolution = resolution.Value;
+                if (matchValue.HasValue) settings.match = matchValue.Value;
+                if (order.HasValue) settings.sortingOrder = order.Value;
+                if (renderMode != null) UIToolkitPanels.SetRenderMode(settings, renderMode);
+                EditorUtility.SetDirty(settings);
+                AssetDatabase.SaveAssets();
+                return Response.Success($"Created PanelSettings at {AssetDatabase.GetAssetPath(settings)}.", new
+                {
+                    panel_settings = UIToolkitPanels.DescribePanelSettings(settings),
+                    created_assets = createdAssets
+                });
+            }
+            catch (UIToolkitException ex) { return Response.Error(ex.Code, new { detail = ex.Message, created_assets = createdAssets }); }
+            catch (Exception ex) { return Response.Error("PANEL_SETTINGS_NOT_CREATED", new { detail = ex.Message, created_assets = createdAssets }); }
+        }
+
+        [Description("Read the live VisualElement tree of PanelRenderer/UIDocument hosts (Edit or Play Mode): type, name, classes, text/value, displayed/enabled/picking state, panel bounds and Game View screen bounds (render bottom-left + image top-left, same contract as clicks/screenshots), optional resolved styles. Filter with selector (Type#name.class) and/or exact text. Includes findings such as zero-size or picking-ignored controls, offscreen elements and duplicate names. Element paths feed click_ui_toolkit_element.")]
+        [ReadOnlyTool]
+        public static object GetVisualTree(
+            [ToolParam("Panel host GameObject name/path/ID; omitted reads every host", Required = false)] string target = null,
+            [ToolParam("Compound selector Type#name.class; omitted returns the tree", Required = false)] string selector = null,
+            [ToolParam("Exact element text, case-insensitive", Required = false)] string text = null,
+            [ToolParam("Maximum depth below each root, 0..64", Required = false)] int max_depth = 24,
+            [ToolParam("Maximum elements returned across hosts, 1..2000", Required = false)] int max_elements = 300,
+            [ToolParam("Include resolved styles per element", Required = false)] bool include_styles = false)
+        {
+            try
+            {
+                max_depth = Mathf.Clamp(max_depth, 0, 64);
+                max_elements = Mathf.Clamp(max_elements, 1, 2000);
+                var filter = UIToolkitPanels.Selector.Parse(selector, text);
+                var hosts = ResolveHosts(target);
+                var hostRoots = UIToolkitPanels.HostRoots(hosts);
+                var renderHeight = TryGetRenderHeight(out var geometryError);
+                var matched = 0;
+                var results = new List<object>();
+                foreach (var host in hosts)
+                {
+                    var root = UIToolkitPanels.GetRoot(host);
+                    if (root == null || root.panel == null)
+                    {
+                        results.Add(new { host = DescribeHost(host, nestedRoots: hostRoots), root_ready = false, elements = Array.Empty<object>(), findings = Array.Empty<object>() });
+                        continue;
+                    }
+
+                    UIToolkitPanels.ValidateLayout(root.panel);
+                    var mapping = MappingFor(host, root.panel);
+                    var elements = new List<object>();
+                    var walked = UIToolkitPanels.Walk(root, max_depth, hostRoots).ToList();
+                    var displayCache = new UIToolkitPanels.DisplayCache();
+                    foreach (var entry in walked)
+                    {
+                        if (!filter.IsEmpty && !filter.Matches(entry.Value)) continue;
+                        if (++matched <= max_elements)
+                            elements.Add(UIToolkitPanels.DescribeElement(entry.Value, entry.Key, mapping, renderHeight, include_styles, displayCache));
+                    }
+
+                    results.Add(new
+                    {
+                        host = DescribeHost(host, walked.Count),
+                        root_ready = true,
+                        layout_ready = UIToolkitPanels.HasLayout(root),
+                        screen_mapping = mapping.HasValue ? "screen_space" : UIToolkitPanels.IsWorldSpace(UIToolkitPanels.GetPanelSettings(host)) ? "world_space_unmapped" : "unavailable",
+                        element_count = walked.Count,
+                        elements,
+                        findings = Audit(root, walked, displayCache)
+                    });
+                }
+
+                return Response.Success(filter.IsEmpty
+                        ? $"Visual tree for {hosts.Count} host(s)."
+                        : $"{matched} element(s) matched.",
+                    new { hosts = results, truncated = matched > max_elements, render_height = renderHeight > 0 ? (int?)renderHeight : null, geometry_error = geometryError });
+            }
+            catch (UIToolkitException ex) { return Response.Error(ex.Code, new { detail = ex.Message, details = ex.Details }); }
+            catch (Exception ex) { return Response.Error("VISUAL_TREE_UNAVAILABLE", new { detail = ex.Message }); }
+        }
+
+        [Description("Pick the UI Toolkit elements under a Game View point (Edit or Play Mode) across all screen-space PanelRenderer/UIDocument panels, topmost panel first. Returns the topmost element, its ancestor chain, the click receiver (Button/Toggle/Clickable owner) or the element swallowing the click. Uses the same coordinate contract as raycast_at_point/simulate_mouse_click. World-space panels are reported but not picked.")]
+        [ReadOnlyTool]
+        public static object PickUiToolkitElement(
+            [ToolParam("X coordinate")] float x,
+            [ToolParam("Y coordinate")] float y,
+            [ToolParam("render_pixels, image_pixels or normalized", Required = false)] string coordinate_space = "render_pixels",
+            [ToolParam("bottom_left or top_left", Required = false)] string origin = "bottom_left",
+            [ToolParam("Screenshot ID; required for image_pixels", Required = false)] string capture_id = null)
+        {
+            if (!VisualCoordinates.TryResolve(x, y, coordinate_space, origin, capture_id, out var point, out var geometry, out var coordinateError))
+                return Response.Error(coordinateError);
+            var picks = UIToolkitPanels.PickAt(point, geometry.render_height);
+            var top = UIToolkitPanels.TopPick(picks);
+            var described = picks.Select(p => UIToolkitPanels.DescribePick(p, geometry.render_height)).ToArray();
+            return Response.Success(top == null ? "No UI Toolkit element at this point." : $"Topmost UI Toolkit element: {Label(top.Element)}.", new
+            {
+                screen_position = new { x = point.x, y = point.y },
+                geometry,
+                top = top != null ? described[picks.IndexOf(top)] : null,
+                panels = described
+            });
+        }
+
+        [Description("Click a UI Toolkit element in Play Mode by selector (Type#name.class), exact text and/or element_path from get_visual_tree, optionally scoped to one host. Requires a unique, displayed, enabled match; refuses when another element covers its center unless allow_covered. Dispatches pointer move/down/up through the panel like real mouse input (Clickable, :hover/:active, ClickEvent). Reports click_event_received. Works without an EventSystem.")]
+        public static object ClickUiToolkitElement(
+            [ToolParam("Panel host GameObject name/path/ID", Required = false)] string target = null,
+            [ToolParam("Compound selector Type#name.class", Required = false)] string selector = null,
+            [ToolParam("Exact element text, case-insensitive", Required = false)] string text = null,
+            [ToolParam("Element path from get_visual_tree (requires a single host)", Required = false)] string element_path = null,
+            [ToolParam("left, right or middle", Required = false)] string button = "left",
+            [ToolParam("Click even when another element covers the center", Required = false)] bool allow_covered = false)
+        {
+            if (!EditorApplication.isPlaying)
+                return Response.Error("PLAY_MODE_REQUIRED", new { hint = "UI callbacks are registered by runtime scripts; enter Play Mode first." });
+            return ClickElement(target, selector, text, element_path, button, allow_covered);
+        }
+
+        // ---- Shared implementation (also used by tests in Edit Mode) -------------------------
+
+        internal static object ClickElement(string target, string selector, string text, string elementPath, string button, bool allowCovered)
+        {
+            try
+            {
+                if (!InputInteractionFunctions.TryParseButton(button, out var inputButton))
+                    throw new ArgumentException("button must be left, right or middle.");
+                var hosts = ResolveHosts(target);
+                var filter = UIToolkitPanels.Selector.Parse(selector, text);
+                var matches = new List<(Component host, string path, VisualElement element)>();
+                if (!string.IsNullOrEmpty(elementPath))
+                {
+                    if (hosts.Count != 1) throw new UIToolkitException("TARGET_REQUIRED", "element_path is relative to one host; pass target.");
+                    var root = UIToolkitPanels.GetRoot(hosts[0]) ?? throw new UIToolkitException("ROOT_NOT_READY", "The panel host has not built its visual tree.");
+                    var element = UIToolkitPanels.ResolvePath(root, elementPath) ?? throw new UIToolkitException("ELEMENT_NOT_FOUND", "element_path does not resolve in the current tree.");
+                    if (!filter.IsEmpty && !filter.Matches(element)) throw new UIToolkitException("ELEMENT_NOT_FOUND", "The element at element_path does not match selector/text.");
+                    matches.Add((hosts[0], elementPath, element));
+                }
+                else
+                {
+                    if (filter.IsEmpty) throw new ArgumentException("Pass selector, text or element_path.");
+                    // A nested host's root lives inside its parent host's tree; excluding host roots
+                    // reaches each element once, relative to the host that owns it.
+                    var hostRoots = UIToolkitPanels.HostRoots(hosts);
+                    foreach (var host in hosts)
+                    {
+                        var root = UIToolkitPanels.GetRoot(host);
+                        if (root == null) continue;
+                        foreach (var entry in UIToolkitPanels.Walk(root, exclude: hostRoots))
+                            if (filter.Matches(entry.Value)) matches.Add((host, entry.Key, entry.Value));
+                    }
+                }
+
+                if (matches.Count == 0) throw new UIToolkitException("ELEMENT_NOT_FOUND", "No element matches; inspect get_visual_tree.");
+                if (matches.Count > 1)
+                    throw new UIToolkitException("AMBIGUOUS_ELEMENT", $"{matches.Count} elements match; narrow the selector or pass element_path.",
+                        matches.Take(10).Select(m => new { host_id = ObjectIdHelper.GetSerializableId(m.host.gameObject), element_path = m.path, element = Label(m.element) }).ToArray());
+
+                var (matchHost, matchPath, matched) = matches[0];
+                var panel = matched.panel ?? throw new UIToolkitException("ROOT_NOT_READY", "The element is not attached to a panel.");
+                UIToolkitPanels.ValidateLayout(panel);
+                if (!UIToolkitPanels.IsDisplayed(matched)) throw new UIToolkitException("ELEMENT_NOT_DISPLAYED", "The element is hidden (display:none or visibility:hidden on it or an ancestor).");
+                if (!matched.enabledInHierarchy) throw new UIToolkitException("ELEMENT_DISABLED", "The element or an ancestor is disabled.");
+                if (!UIToolkitPanels.HasLayout(matched) || matched.worldBound.width < 1f || matched.worldBound.height < 1f)
+                    throw new UIToolkitException("ELEMENT_HAS_NO_AREA", "The element has no laid-out area to click.");
+
+                var center = matched.worldBound.center;
+                var picked = panel.Pick(center);
+                var covered = picked == null || !(ReferenceEquals(picked, matched) || matched.Contains(picked));
+                if (covered && !allowCovered)
+                    throw new UIToolkitException("ELEMENT_COVERED", "Another element (or picking-mode ignore) receives the pointer at this element's center.",
+                        new { covered_by = picked != null ? Label(picked) : null, picking_mode = matched.pickingMode.ToString() });
+
+                var dispatchTarget = covered ? matched : picked;
+                var mapping = MappingFor(matchHost, panel);
+                var renderHeight = TryGetRenderHeight(out _);
+                if (mapping.HasValue && renderHeight > 0)
+                {
+                    var screen = mapping.Value.ToScreen(center);
+                    VideoRecordingFunctions.RecordMarker("click", "UI Toolkit click " + Label(matched), new Vector2(screen.x, renderHeight - screen.y));
+                }
+                var received = UIToolkitPanels.DispatchClick(panel, dispatchTarget, center, (int)inputButton);
+                var receiver = UIToolkitPanels.FindClickReceiver(dispatchTarget);
+                return Response.Success(received ? $"Clicked {Label(matched)}." : $"Pointer sequence sent to {Label(matched)}, but no ClickEvent reached it.", new
+                {
+                    host_id = ObjectIdHelper.GetSerializableId(matchHost.gameObject),
+                    element = UIToolkitPanels.DescribeElement(matched, matchPath, mapping, renderHeight, false),
+                    dispatched_to = Label(dispatchTarget),
+                    click_receiver = receiver != null ? Label(receiver) : null,
+                    click_event_received = received,
+                    covered
+                });
+            }
+            catch (UIToolkitException ex) { return Response.Error(ex.Code, new { detail = ex.Message, details = ex.Details }); }
+            catch (Exception ex) { return Response.Error("UI_TOOLKIT_CLICK_FAILED", new { detail = ex.Message }); }
+        }
+
+        // ---- Helpers -----------------------------------------------------------------------
+
+        /// <param name="elementCount">Already-walked element count, to avoid a second walk.</param>
+        /// <param name="nestedRoots">Roots of the other hosts in the same response; their subtrees are
+        /// counted under those hosts, not this one.</param>
+        internal static object DescribeHost(Component host, int? elementCount = null, ISet<VisualElement> nestedRoots = null)
+        {
+            var settings = UIToolkitPanels.GetPanelSettings(host);
+            var tree = UIToolkitPanels.GetVisualTreeAsset(host);
+            var parent = UIToolkitPanels.GetParentUI(host);
+            var root = UIToolkitPanels.GetRoot(host);
+            var issues = new List<string>();
+            if (parent == null && settings == null) issues.Add("NO_PANEL_SETTINGS: the panel is not displayed until PanelSettings is assigned.");
+            if (settings != null && settings.themeStyleSheet == null) issues.Add("NO_THEME_STYLE_SHEET: built-in controls render unstyled without a theme.");
+            if (tree == null) issues.Add("NO_VISUAL_TREE_ASSET: nothing is loaded unless code builds the tree.");
+            if (host is UIDocument && UIToolkitPanels.PanelRendererAvailable) issues.Add("LEGACY_UI_DOCUMENT: PanelRenderer is the current host on this Unity version; keep unless migrating deliberately.");
+            if (host.gameObject.activeInHierarchy && UIToolkitPanels.IsEnabled(host) && root == null && (settings != null || parent != null))
+                issues.Add("ROOT_NOT_READY: the host has not built its visual tree yet (enter Play Mode or repaint the Game View).");
+            return new
+            {
+                object_id = ObjectIdHelper.GetSerializableId(host.gameObject),
+                component_id = ObjectIdHelper.GetSerializableId(host),
+                path = ObjectsHelper.GetGameObjectPath(host.gameObject),
+                scene = host.gameObject.scene.path,
+                component = UIToolkitPanels.ComponentName(UIToolkitPanels.KindOf(host)),
+                active = host.gameObject.activeInHierarchy,
+                enabled = UIToolkitPanels.IsEnabled(host),
+                visual_tree_asset = tree != null ? AssetDatabase.GetAssetPath(tree) : null,
+                panel_settings = UIToolkitPanels.DescribePanelSettings(settings),
+                parent_ui_id = parent != null ? ObjectIdHelper.GetSerializableId(parent.gameObject) : null,
+                sorting_order = UIToolkitPanels.GetSortingOrder(host),
+                root_ready = root != null,
+                element_count = elementCount ?? (root != null ? UIToolkitPanels.CountElements(root, nestedRoots) : 0),
+                issues
+            };
+        }
+
+        private static List<object> Audit(VisualElement root, List<KeyValuePair<string, VisualElement>> walked, UIToolkitPanels.DisplayCache displayCache)
+        {
+            var findings = new List<object>();
+            var rootBound = root.worldBound;
+            var rootHasLayout = UIToolkitPanels.HasLayout(root) && rootBound.width > 0 && rootBound.height > 0;
+            foreach (var entry in walked)
+            {
+                var element = entry.Value;
+                if (ReferenceEquals(element, root) || !displayCache.IsDisplayed(element) || !UIToolkitPanels.HasLayout(element)) continue;
+                var bound = element.worldBound;
+                var control = UIToolkitPanels.IsControl(element);
+                if (control && (bound.width < 1f || bound.height < 1f))
+                    findings.Add(new { code = "ZERO_SIZE_CONTROL", element_path = entry.Key, element = Label(element), detail = "Displayed control has no clickable area." });
+                if (control && element.pickingMode == PickingMode.Ignore)
+                    findings.Add(new { code = "CONTROL_PICKING_IGNORED", element_path = entry.Key, element = Label(element), detail = "picking-mode Ignore: pointer input passes through this control." });
+                if (rootHasLayout && bound.width > 0 && bound.height > 0 && !rootBound.Overlaps(bound))
+                    findings.Add(new { code = "OUTSIDE_PANEL", element_path = entry.Key, element = Label(element), detail = "Element lies entirely outside its panel root." });
+                if (element is TextElement textElement && !string.IsNullOrEmpty(textElement.text) && bound.width >= 1f && bound.height >= 1f &&
+                    element.resolvedStyle.whiteSpace == WhiteSpace.NoWrap)
+                {
+                    var measured = textElement.MeasureTextSize(textElement.text, 0, VisualElement.MeasureMode.Undefined, 0, VisualElement.MeasureMode.Undefined);
+                    if (measured.x > bound.width + 1f)
+                        findings.Add(new { code = "TEXT_OVERFLOWS", element_path = entry.Key, element = Label(element), detail = $"Unwrapped text needs {measured.x:F0}px but the element is {bound.width:F0}px wide; it overflows or is clipped." });
+                }
+            }
+
+            foreach (var group in walked.Select(e => e.Value).Where(e => !string.IsNullOrEmpty(e.name)).GroupBy(e => e.name).Where(g => g.Count() > 1))
+                findings.Add(new { code = "DUPLICATE_NAME", element = "#" + group.Key, detail = $"{group.Count()} elements share this name; #name selectors are ambiguous." });
+            return findings;
+        }
+
+        private static string ResolveKind(string component)
+        {
+            switch ((component ?? "auto").Trim().ToLowerInvariant())
+            {
+                case "":
+                case "auto": return UIToolkitPanels.RecommendedKind;
+                case "panel_renderer":
+                case "panelrenderer":
+                    if (!UIToolkitPanels.PanelRendererAvailable)
+                        throw new UIToolkitException("PANEL_RENDERER_UNAVAILABLE", $"PanelRenderer requires Unity 6.6+; this is {Application.unityVersion}. Use ui_document.");
+                    return UIToolkitPanels.KindPanelRenderer;
+                case "ui_document":
+                case "uidocument": return UIToolkitPanels.KindUiDocument;
+                default: throw new ArgumentException("component must be auto, panel_renderer or ui_document.");
+            }
+        }
+
+        private static PanelSettings ResolveProjectPanelSettings(string newPath, List<string> createdAssets)
+        {
+            var candidates = UIToolkitPanels.FindPanelSettingsPaths();
+            if (candidates.Length == 1) return AssetDatabase.LoadAssetAtPath<PanelSettings>(candidates[0]);
+            if (candidates.Length > 1)
+                throw new UIToolkitException("PANEL_SETTINGS_AMBIGUOUS", "The project has several PanelSettings assets; pass panel_settings (panels sharing one asset share a panel and sort together).", candidates);
+            return UIToolkitPanels.CreatePanelSettingsAsset(newPath ?? UIToolkitPanels.DefaultPanelSettingsPath, null, createdAssets);
+        }
+
+        private static VisualTreeAsset LoadVisualTree(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return null;
+            var tree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>(path.Trim());
+            if (tree == null)
+                throw new UIToolkitException("UXML_NOT_FOUND", "visual_tree_asset must be an imported .uxml path. After writing UXML with file tools, refresh the AssetDatabase and check the console for import errors.");
+            return tree;
+        }
+
+        private static PanelSettings LoadPanelSettings(string path)
+        {
+            var settings = AssetDatabase.LoadAssetAtPath<PanelSettings>(path.Trim());
+            if (settings == null) throw new UIToolkitException("PANEL_SETTINGS_NOT_FOUND", "panel_settings must be the path of a PanelSettings asset.");
+            return settings;
+        }
+
+        private static float? ParseOrder(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return null;
+            if (!float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var order) || float.IsNaN(order) || float.IsInfinity(order))
+                throw new ArgumentException("sorting_order must be a number.");
+            return order;
+        }
+
+        private static List<Component> ResolveHosts(string target)
+        {
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                var all = UIToolkitPanels.FindHosts();
+                if (all.Count == 0) throw new UIToolkitException("NO_UI_TOOLKIT_HOSTS", "No PanelRenderer or UIDocument in loaded scenes or the Prefab Stage.");
+                return all;
+            }
+            return new List<Component> { ResolveSingleHost(target) };
+        }
+
+        private static Component ResolveSingleHost(string target)
+        {
+            var matches = ObjectsHelper.FindObjects(target, null, true, searchInactive: true);
+            if (matches.Count != 1)
+                throw new UIToolkitException(matches.Count == 0 ? "TARGET_NOT_FOUND" : "AMBIGUOUS_TARGET", "target must identify exactly one GameObject (prefer its ID).", new { count = matches.Count });
+            return UIToolkitPanels.GetHost(matches[0])
+                   ?? throw new UIToolkitException("NOT_A_PANEL_HOST", $"'{matches[0].name}' has no PanelRenderer or UIDocument; it may be uGUI (Canvas) UI.");
+        }
+
+        private static UIToolkitPanels.ScreenMapping? MappingFor(Component host, IPanel panel)
+        {
+            if (UIToolkitPanels.IsWorldSpace(UIToolkitPanels.GetPanelSettings(host))) return null;
+            return UIToolkitPanels.TryGetScreenMapping(panel, out var mapping) ? mapping : (UIToolkitPanels.ScreenMapping?)null;
+        }
+
+        private static int TryGetRenderHeight(out string error)
+        {
+            error = null;
+            try { return VisualCoordinates.Current().render_height; }
+            catch (Exception ex) { error = ex.Message; return 0; }
+        }
+
+        private static string Label(VisualElement element) => UIToolkitPanels.Label(element);
+    }
+}

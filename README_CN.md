@@ -76,7 +76,7 @@ openupm add com.gamebooom.unity.mcp
     }
   ],
   "dependencies": {
-    "com.gamebooom.unity.mcp": "0.7.0"
+    "com.gamebooom.unity.mcp": "0.8.0"
   }
 }
 ```
@@ -323,7 +323,7 @@ url = "http://127.0.0.1:<port>/"
 - 这是一个 **仅限 Editor** 的包，不会向最终构建产物添加运行时代码。
 - MCP Server 端口对**新工程**按工程派生（20000-29999 区间）；从旧版本升级的工程会保留原端口并记为 pin，手填的端口同样是 pin。MCP Server 窗口会显示端口来源与当前实际地址。客户端配置里的条目名按**工程目录名**命名（例如 `funplay-love-town`，只保留 ASCII 字母数字），多个工程不再互相覆盖同一个 `funplay` 条目。两个工程产品名相同时会解析出同一个条目名，此时后配置的那个会**自动追加工程哈希**，既不会覆盖对方，也不需要用户去开任何开关。
 - 本地 MCP Server 配置保存在 `UserSettings/FunplayMcpSettings.json`。
-- v0.7.0 默认 `core` 精选 40 个工具，覆盖结构化检查与修改、UI 巡检和创建、可恢复的编译准备、统一任务查询、视觉证据、输入和日志。短任务可一次返回结果，`get_task` 支持有限等待、状态变化后返回和退避提示；`execute_code` 保留为项目特定逻辑的兜底。`full` 保留全部 180 个工具，包括原有状态、编译与 Play 接口，以及配置、预览管理和专项诊断。已有自定义暴露列表不会被覆盖，可用 `get_tool_capabilities` 区分“已实现”和“已暴露”。升级后请通过 Project Skills 更新已安装的内置技能。
+- v0.8.0 默认 `core` 精选 44 个工具，覆盖结构化检查与修改、UI 巡检和创建、可恢复的编译准备、统一任务查询、视觉证据、输入和日志。短任务可一次返回结果，`get_task` 支持有限等待、状态变化后返回和退避提示；`execute_code` 保留为项目特定逻辑的兜底。`full` 保留全部 187 个工具，包括原有状态、编译与 Play 接口，以及配置、预览管理和专项诊断。已有自定义暴露列表不会被覆盖，可用 `get_tool_capabilities` 区分“已实现”和“已暴露”。升级后请通过 Project Skills 更新已安装的内置技能。
 - `execute_code` safety checks 和更严格的文件系统 guard 现在可在 **Funplay > MCP Settings** 设置默认值，默认开启；它会阻止明显破坏性片段、宽泛的 `System.IO` 写入、原始文件流、绝对路径、用户/系统目录路径和 `../` 穿越路径，但它不是完整沙箱。客户端仍可在单次调用中用可选 `safety_checks` 参数显式覆盖。
 - 插件 debug 日志默认关闭，也可在 **Funplay > MCP Settings** 中开启；Warning 和 Error 始终会输出到 Unity Console。
 - 所有已暴露的 MCP 工具都会直接执行，不再提供额外的 approval 开关。
@@ -335,13 +335,13 @@ url = "http://127.0.0.1:<port>/"
 - **默认安全检查** — `execute_code` 现在有持久化、默认开启的 safety toggle，并包含更严格的文件系统 guard，适合 LM Studio 这类不明显暴露单次参数的客户端
 - **Play Mode 自动化闭环** — 进入运行模式、模拟键鼠输入、截图、查看日志、验证行为都能在同一 MCP 会话里完成
 - **内建项目上下文** — 直接提供项目状态、当前场景、选择对象、编译错误、控制台输出和 MCP 交互记录资源
-- **默认聚焦，必要时全量** — 默认 `core` 工具集更利于 AI 选工具，需要时可切到 `full` 暴露开发版的全部 180 个工具
+- **默认聚焦，必要时全量** — 默认 `core` 工具集更利于 AI 选工具，需要时可切到 `full` 暴露开发版的全部 187 个工具
 - **单 Unity 包落地** — 不需要额外 approval 开关，Unity 侧也不依赖单独 Python 守护进程
 - **可扩展** — 支持 Attribute 发现自定义工具，也支持连接外部 MCP 服务
 
 ## 核心特性
 
-- **180 个内置工具** — 覆盖场景编辑、脚本、资产、运行态控制、截图、性能分析、Prompts、Resources、结构化对象定位、SerializedObject 组件编辑、编辑器状态读写、菜单项兜底以及编辑器自动化，共 42 个模块
+- **187 个内置工具** — 覆盖场景编辑、脚本、资产、运行态控制、截图、性能分析、Prompts、Resources、结构化对象定位、SerializedObject 组件编辑、编辑器状态读写、菜单项兜底以及编辑器自动化，共 43 个模块
 - **结构化返回 + `instanceId` 链式调用** — 工具返回 `{success, message, data}` JSON 并附带稳定的 `instanceId`，agent 后续直接 `by_id` 调用，不再受重名困扰
 - **`execute_code` 的 `IFunplayCommand` 模板** — 新模板自动 Undo（`ctx.RegisterObjectCreation/Modification/DestroyObject`）、结构化日志（`ctx.Log/LogWarning/LogError`），并把改动列表回传给 agent
 - **Resources 与 Prompts** — 暴露实时项目上下文、场景/选择/错误资源、资源模板，以及常见 Unity 工作流的可复用 MCP Prompt
@@ -411,7 +411,7 @@ Coplay 信息来源：[CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-m
 | 协议 / License | MIT 开源 | Unity Terms of Service，私有 |
 | 部署 | Editor 内嵌 HTTP MCP server，纯本地 | Editor + 原生 Relay 子进程 + Unity Cloud 后端 |
 | 计费 | 免费，用户自带 AI 客户端 | Credits 点数制（Unity Dashboard）|
-| 工具暴露 | 开发版 180 工具 / 42 模块，`core` (40) / `full` profile | ~15 个 MCP 工具（多数为 `Manage*` 大粒度族）|
+| 工具暴露 | 开发版 187 工具 / 43 模块，`core` (44) / `full` profile | ~15 个 MCP 工具（多数为 `Manage*` 大粒度族）|
 | 通用逃生口 | `execute_code` — Roslyn 优先内存编译、`IFunplayCommand` + Undo、无沙箱（客户端层审批）| `RunCommand` — 命名空间黑名单沙箱 |
 | Play Mode 验证 | 完整闭环：进入 / 模拟输入 / 截图 / 读日志 / 退出 | 仅进入/退出，无输入模拟 |
 | 资产生成器 | 不内建（通过 `execute_code` 组合外部 API）| 内建 Image / Mesh / PBR / Sound / Animation 五类生成器 |
@@ -424,7 +424,7 @@ Coplay 信息来源：[CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-m
 
 当前开源包有四层高价值能力：
 
-- **Tools** — 开发版 `full` 下共 180 个工具，`core` 下 40 个高频工具
+- **Tools** — 开发版 `full` 下共 187 个工具，`core` 下 44 个高频工具
 - **Primary execution** — `execute_code` 用于复杂编辑器/运行态编排
 - **Prompts** — 参数化工作流 Prompt：`edit_prefab_safely`、`verify_compilation`、`enter_play_and_recover`、`wire_serialized_references`、`create_playable_prototype`。项目可通过根目录下的 `mcp-prompts/*.md` 注册专属 Prompt。
 - **Resources** — 项目上下文、场景摘要、选择状态、编译错误、控制台错误、MCP 交互记录，以及按对象/组件/资源路径展开的模板资源
@@ -446,7 +446,7 @@ Prompt 名称和参数名必须匹配 `[a-z][a-z0-9_-]{0,63}`。`prompts/get` �
 
 ## 内置工具
 
-v0.7.0 提供 **180 个工具函数**，覆盖 42 个模块，默认暴露其中 40 个高频工具。
+v0.8.0 提供 **187 个工具函数**，覆盖 43 个模块，默认暴露其中 44 个高频工具。
 
 新增 UI 工作流包括：`prepare_editor` 持久任务、`audit_ui` 只读巡检、组件属性查询和 Sprite 关联检查、统一截图/输入坐标、项目级 TMP/字体材质/预制体/输入模块默认值、录屏动作标记与关键帧提取，以及可恢复的预览会话。详见 [完整工作流指南](Documentation~/ui-workflows.md) 和 [实现与验证清单](Documentation~/ui-workflow-upgrade-plan.md)。两项内置 skills 也已同步这些规则，仍为 built-in；已有安装可通过 Project Skills 更新。
 
@@ -470,7 +470,8 @@ v0.7.0 提供 **180 个工具函数**，覆盖 42 个模块，默认暴露其中
 | **Timeline** | `director_evaluate` |
 | **预制体** | `create_prefab`, `instantiate_prefab`, `unpack_prefab`, `open_prefab_stage`, `save_prefab_stage`, `close_prefab_stage`, `set_prefab_property`, `set_prefab_properties` |
 | **ScriptableObject** | `create_scriptable_object`, `get_scriptable_object`, `set_scriptable_object_properties` |
-| **UI** | `create_canvas`, `create_button`, `create_text`, `create_image`, `raycast_at_point`, `get_ui_defaults`, `configure_ui_defaults`, `create_project_ui` |
+| **UI (uGUI)** | `create_canvas`, `create_button`, `create_text`, `create_image`, `raycast_at_point`, `get_ui_defaults`, `configure_ui_defaults`, `create_project_ui` |
+| **UI Toolkit** | `get_ui_toolkit_info`, `create_ui_toolkit_panel`, `configure_ui_toolkit_panel`, `create_panel_settings`, `get_visual_tree`, `pick_ui_toolkit_element`, `click_ui_toolkit_element` |
 | **UI 巡检** | `audit_ui`, `get_ui_audit`, `cancel_ui_audit` |
 | **UI 预览** | `start_ui_preview_session`, `get_ui_preview_session`, `end_ui_preview_session` |
 | **结构化检查** | `find_project_types`, `inspect_ui_sprites`, `get_tool_capabilities` |
@@ -541,7 +542,7 @@ MCP Server (HTTP JSON-RPC 2.0)
     └─ MCPRequestHandler (协议处理)
         └─ MCPExecutionBridge
             └─ FunctionInvokerController (反射式调用)
-                └─ Tool Functions (180 个内置工具，42 个模块)
+                └─ Tool Functions (187 个内置工具，43 个模块)
 ```
 
 ```

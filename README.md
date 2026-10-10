@@ -76,7 +76,7 @@ Or add the scoped registry manually in `Packages/manifest.json`:
     }
   ],
   "dependencies": {
-    "com.gamebooom.unity.mcp": "0.7.0"
+    "com.gamebooom.unity.mcp": "0.8.0"
   }
 }
 ```
@@ -321,7 +321,7 @@ Open your AI client and try: *"Create a 3D platformer level with 5 floating plat
 - This package is **Editor-only**. It does not add runtime components to your built game.
 - The MCP server port is derived per project (range 20000-29999) for new projects, or pinned — projects upgraded from an earlier version keep their existing port as a pin, and any port you type is a pin. The MCP Server window shows where the port came from and the active URL. A project's client-config entry is named after the project directory (for example `funplay-love-town`), so configuring several projects no longer overwrites one shared `funplay` entry. Two projects that share a product name would resolve to the same entry name; the second one configured appends a project hash automatically, so nothing is overwritten and no setting has to be turned on.
 - Local MCP server settings are stored in `UserSettings/FunplayMcpSettings.json`.
-- The package defaults to `core`: 40 focused tools for structured inspection/editing, UI audits and authoring, recoverable Editor preparation, shared task status, visual evidence, input and logs. Short MCP tasks can complete in one response; `get_task` supports bounded waits and state-change revisions. `execute_code` remains a project-specific fallback. `full` retains all 180 tools, including legacy status/compile/Play APIs, configuration, preview management and specialized diagnostics. Custom exposure lists are preserved; `get_tool_capabilities` distinguishes implementation from exposure.
+- The package defaults to `core`: 44 focused tools for structured inspection/editing, uGUI and UI Toolkit audits/authoring, recoverable Editor preparation, shared task status, visual evidence, input and logs. Short MCP tasks can complete in one response; `get_task` supports bounded waits and state-change revisions. `execute_code` remains a project-specific fallback. `full` retains all 187 tools, including legacy status/compile/Play APIs, configuration, preview management and specialized diagnostics. Custom exposure lists are preserved; `get_tool_capabilities` distinguishes implementation from exposure.
 - `execute_code` safety checks and the stricter filesystem guard are enabled by default from **Funplay > MCP Settings**. The guard blocks obvious destructive snippets, broad `System.IO` writes, raw file streams, and absolute/user/system/traversal paths, but it is not a complete sandbox. Clients may still override the default per call with the optional `safety_checks` argument.
 - Plugin debug logging is off by default and can also be enabled from **Funplay > MCP Settings**. Warnings and errors are always written to the Unity Console.
 - All exposed MCP tools run directly. There is no extra approval toggle.
@@ -333,13 +333,13 @@ Open your AI client and try: *"Create a 3D platformer level with 5 floating plat
 - **Default Safety Checks** — `execute_code` now has persistent default-on safety toggles, including a stricter filesystem guard for clients that do not expose per-call arguments clearly
 - **Play Mode Automation** — Enter play mode, simulate keyboard/mouse input, capture screenshots, inspect logs, and validate behavior from the same MCP session
 - **Project Context Built In** — Exposes live resources for project state, active scene, selection, compilation, console output, and MCP interaction history
-- **Focused by Default, Full When Needed** — `core` exposes 40 focused tools; `full` exposes all 180 built-in tools
+- **Focused by Default, Full When Needed** — `core` exposes 44 focused tools; `full` exposes all 187 built-in tools
 - **Single Unity Package** — No extra approval UI, no external daemon to click through, and no Python requirement for the Unity-side plugin itself
 - **Extensible** — Add custom tools with attribute-based discovery, or connect Unity to external MCP services when needed
 
 ## Highlights
 
-- **180 Built-in Tools** — Scene editing, assets, scripts, play mode control, screenshots, performance analysis, prompts, resources, structured object location, SerializedObject-based component editing, editor-state inspection, menu-item fallback, and editor automation across 42 modules
+- **187 Built-in Tools** — Scene editing, assets, scripts, play mode control, screenshots, performance analysis, prompts, resources, structured object location, SerializedObject-based component editing, editor-state inspection, menu-item fallback, and editor automation across 43 modules
 - **Structured Returns + `instanceId` Chaining** — Tools return `{success, message, data}` JSON with stable `instanceId` fields so agents can chain `by_id` calls reliably instead of re-resolving by name
 - **`IFunplayCommand` for `execute_code`** — New snippet template with auto-Undo (`ctx.RegisterObjectCreation/Modification/DestroyObject`), structured logs (`ctx.Log/LogWarning/LogError`), and a tracked changelog returned to the agent
 - **Resources & Prompts** — Live project context, scene/selection/error resources, resource templates, and reusable workflow prompts
@@ -409,7 +409,7 @@ The table below compares this repository with Unity Technologies' official `com.
 | License | MIT, open source | Unity Terms of Service, proprietary |
 | Deployment | Local HTTP MCP server in Editor, no cloud | Editor + native Relay subprocess + Unity Cloud backend |
 | Billing | Free, user brings their own AI client | Credits-based (Unity Dashboard) |
-| Tool exposure | 180 tools across 42 modules, `core` (40) / `full` profiles | ~15 MCP tools (mostly `Manage*` families) |
+| Tool exposure | 187 tools across 43 modules, `core` (44) / `full` profiles | ~15 MCP tools (mostly `Manage*` families) |
 | Generic escape hatch | `execute_code` — Roslyn-first in-memory compile, `IFunplayCommand` + Undo, no sandbox (client-side approval) | `RunCommand` — namespace blacklist sandbox |
 | Play mode validation | Full loop: enter / simulate input / capture / read logs / exit | Enter/Exit only; no input simulation |
 | Asset generators | Not built-in (compose external APIs via `execute_code`) | Native Image / Mesh / PBR / Sound / Animation generators |
@@ -422,7 +422,7 @@ For a long-form comparison of the two approaches see [Funplay Unity MCP vs Unity
 
 The current open-source package exposes four high-value capability layers:
 
-- **Tools** — 180 total tools in `full`, 40 focused tools in `core`
+- **Tools** — 187 total tools in `full`, 44 focused tools in `core`
 - **Primary execution** — `execute_code` for rich editor/runtime orchestration
 - **Prompts** — parameterized workflow prompts: `edit_prefab_safely`, `verify_compilation`, `enter_play_and_recover`, `wire_serialized_references`, `create_playable_prototype`. Projects can add their own through `mcp-prompts/*.md` files in the project root.
 - **Resources** — project context, scene summaries, selection state, compile errors, console errors, MCP interaction history, plus resource templates for scene objects, components, and asset paths
@@ -444,7 +444,7 @@ Names and argument names must match `[a-z][a-z0-9_-]{0,63}`. Required, unknown, 
 
 ## Built-in Tools
 
-Version 0.7.0 includes **180 tool functions** across 42 modules, with 40 high-frequency tools exposed by default.
+Version 0.8.0 includes **187 tool functions** across 43 modules, with 44 high-frequency tools exposed by default.
 
 | Category | Tools |
 |----------|-------|
@@ -466,7 +466,8 @@ Version 0.7.0 includes **180 tool functions** across 42 modules, with 40 high-fr
 | **Timeline** | `director_evaluate` |
 | **Prefabs** | `create_prefab`, `instantiate_prefab`, `unpack_prefab`, `open_prefab_stage`, `save_prefab_stage`, `close_prefab_stage`, `set_prefab_property`, `set_prefab_properties` |
 | **ScriptableObject** | `create_scriptable_object`, `get_scriptable_object`, `set_scriptable_object_properties` |
-| **UI** | `create_canvas`, `create_button`, `create_text`, `create_image`, `raycast_at_point`, `get_ui_defaults`, `configure_ui_defaults`, `create_project_ui` |
+| **UI (uGUI)** | `create_canvas`, `create_button`, `create_text`, `create_image`, `raycast_at_point`, `get_ui_defaults`, `configure_ui_defaults`, `create_project_ui` |
+| **UI Toolkit** | `get_ui_toolkit_info`, `create_ui_toolkit_panel`, `configure_ui_toolkit_panel`, `create_panel_settings`, `get_visual_tree`, `pick_ui_toolkit_element`, `click_ui_toolkit_element` |
 | **UI Audit** | `audit_ui`, `get_ui_audit`, `cancel_ui_audit` |
 | **UI Preview** | `start_ui_preview_session`, `get_ui_preview_session`, `end_ui_preview_session` |
 | **Inspection** | `find_project_types`, `inspect_ui_sprites`, `get_tool_capabilities` |
@@ -539,7 +540,7 @@ MCP Server (HTTP JSON-RPC 2.0)
     └─ MCPRequestHandler (protocol handling)
         └─ MCPExecutionBridge
             └─ FunctionInvokerController (reflection-based invocation)
-                └─ Tool Functions (180 built-in tools across 42 modules)
+                └─ Tool Functions (187 built-in tools across 43 modules)
 ```
 
 ```

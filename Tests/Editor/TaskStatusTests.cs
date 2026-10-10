@@ -279,12 +279,14 @@ namespace Funplay.Editor.Tests
         }
         [Test] public void FocusedCoreRetainsDailyWorkAndSafeCancellationWhileFullKeepsManagement()
         {
-            Assert.AreEqual(40, MCPToolExportPolicy.DefaultCoreTools.Count);
-            foreach (var name in new[] { "get_task", "prepare_editor", "audit_ui", "cancel_ui_audit", "cancel_editor_operation", "record_game_view", "set_prefab_properties", "find_game_objects" })
+            Assert.AreEqual(44, MCPToolExportPolicy.DefaultCoreTools.Count);
+            foreach (var name in new[] { "get_task", "prepare_editor", "audit_ui", "cancel_ui_audit", "cancel_editor_operation", "record_game_view", "set_prefab_properties", "find_game_objects",
+                "get_ui_toolkit_info", "create_ui_toolkit_panel", "get_visual_tree", "click_ui_toolkit_element" })
                 Assert.Contains(name, MCPToolExportPolicy.DefaultCoreTools.ToArray());
             foreach (var name in new[] { "get_editor_operation", "list_editor_operations", "get_ui_audit", "get_ui_preview_session",
                 "start_ui_preview_session", "end_ui_preview_session", "configure_ui_defaults", "mark_recording", "get_performance_snapshot",
-                "capture_simulator_view", "capture_editor_window", "request_recompile", "wait_for_compilation", "enter_play_mode", "exit_play_mode" })
+                "capture_simulator_view", "capture_editor_window", "request_recompile", "wait_for_compilation", "enter_play_mode", "exit_play_mode",
+                "configure_ui_toolkit_panel", "pick_ui_toolkit_element", "create_panel_settings" })
             {
                 Assert.IsNotNull(ToolRegistry.GetMethod(name), name + " must remain implemented");
                 Assert.IsFalse(MCPToolExportPolicy.DefaultCoreTools.Contains(name), name);
