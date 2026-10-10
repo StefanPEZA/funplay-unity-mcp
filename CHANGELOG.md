@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-10
+
 ### Added
 
 - UI Toolkit support with Unity 6.6 `PanelRenderer` (and `UIDocument` on earlier versions or as the Legacy host): `get_ui_toolkit_info` (framework per scene, hosts, PanelSettings/themes, issues), `create_ui_toolkit_panel` (version-correct host, PanelSettings resolution/creation with the default runtime theme, UXML, nesting, Undo), `configure_ui_toolkit_panel`, `create_panel_settings`, `get_visual_tree` (live elements, screen bounds, styles, findings), `pick_ui_toolkit_element` and `click_ui_toolkit_element` (pointer dispatch through the panel, so Clickable/`ClickEvent` run as with a real mouse). PanelRenderer is resolved by reflection, so Unity 2022.3 support is unchanged. Core adds `get_ui_toolkit_info`, `create_ui_toolkit_panel`, `get_visual_tree` and `click_ui_toolkit_element` (44 tools); Full has 187 tools across 43 modules.
