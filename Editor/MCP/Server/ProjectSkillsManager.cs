@@ -281,6 +281,18 @@ namespace Funplay.Editor.MCP.Server
                         "Resolve the workspace's shared guidance before applying Antigravity skills.");
             }
 
+            var currentReferences = normalized.platforms
+                .SelectMany(platform => GetExpectedReferenceFiles(projectRoot, normalized, platform))
+                .Select(reference => ToManifestPath(projectRoot, reference.Path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(path => path, StringComparer.Ordinal)
+                .ToList();
+            // Until cleanup has run, keep the previous record too: a sync that throws must not
+            // forget the stale files it still has to remove.
+            normalized.generatedReferences = currentReferences
+                .Union(previousManifest.generatedReferences, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(path => path, StringComparer.Ordinal)
+                .ToList();
             SaveManifest(projectRoot, normalized);
             SyncAgentsInstructions(projectRoot, normalized, syncAntigravity);
             SyncCodex(projectRoot, normalized);
@@ -290,6 +302,95 @@ namespace Funplay.Editor.MCP.Server
             SyncDsh(projectRoot, normalized);
             if (syncAntigravity)
                 SyncAntigravity(projectRoot, normalized);
+
+            var remaining = DeleteStaleGeneratedReferences(projectRoot, previousManifest.generatedReferences, currentReferences);
+            normalized.generatedReferences = currentReferences
+                .Union(remaining, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(path => path, StringComparer.Ordinal)
+                .ToList();
+            SaveManifest(projectRoot, normalized);
+        }
+
+        // Reference files a previous sync generated but this package version no longer writes (a
+        // renamed or dropped reference, a skill removed from the catalog). Only exact recorded paths
+        // are considered, and only inside a generated references folder (funplay-<id>/references/
+        // under a provider's skills root, or references/ under the Cursor rules folder) while they
+        // still carry ManagedMarker, so shared files such as CLAUDE.md, user copies and user folders
+        // are never deleted. Best effort: returns the stale entries that could not be removed yet.
+        private static List<string> DeleteStaleGeneratedReferences(string projectRoot, IEnumerable<string> previous, IEnumerable<string> current)
+        {
+            var remaining = new List<string>();
+            // Case-insensitive on purpose: on a case-insensitive file system a case-only rename
+            // would otherwise delete the file the sync just wrote.
+            var keep = new HashSet<string>(current ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+            foreach (var recorded in previous ?? Enumerable.Empty<string>())
+            {
+                if (string.IsNullOrWhiteSpace(recorded) || keep.Contains(recorded))
+                    continue;
+
+                string path, referencesFolder;
+                try
+                {
+                    path = FromManifestPath(projectRoot, recorded);
+                    referencesFolder = FindGeneratedReferencesFolder(projectRoot, path);
+                }
+                catch (Exception)
+                {
+                    continue;
+                }
+                if (referencesFolder == null || !IsManagedFile(path))
+                    continue;
+
+                try
+                {
+                    File.Delete(path);
+                    // Remove parents left empty, up to and including the references folder.
+                    for (var parent = Path.GetDirectoryName(path);
+                         parent != null && parent.Length >= referencesFolder.Length && Directory.Exists(parent) &&
+                         !Directory.EnumerateFileSystemEntries(parent).Any();
+                         parent = Path.GetDirectoryName(parent))
+                        Directory.Delete(parent);
+                }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+                {
+                    if (File.Exists(path))
+                        remaining.Add(recorded);
+                }
+            }
+            return remaining;
+        }
+
+        /// <summary>The generated references folder that strictly contains <paramref name="path"/>, or null.</summary>
+        private static string FindGeneratedReferencesFolder(string projectRoot, string path)
+        {
+            var folders = new[]
+                {
+                    GetCodexSkillsRoot(projectRoot), GetClaudeSkillsRoot(projectRoot), GetOpenCodeSkillsRoot(projectRoot),
+                    GetDshSkillsRoot(projectRoot), GetAntigravitySkillsRoot(projectRoot)
+                }
+                .Where(root => !string.IsNullOrEmpty(root) && Directory.Exists(root))
+                .SelectMany(root => Directory.GetDirectories(root, "funplay-*", SearchOption.TopDirectoryOnly))
+                .Select(directory => Path.Combine(directory, "references"))
+                .Append(Path.Combine(GetCursorRulesPath(projectRoot), "references"));
+            foreach (var folder in folders)
+            {
+                var full = Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (path.StartsWith(full + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                    return full;
+            }
+            return null;
+        }
+
+        // Relative to the project with '/' (the manifest may be committed); roots outside the project
+        // (DSH at the git root, an Antigravity workspace) use '../' rather than machine-specific paths.
+        private static string ToManifestPath(string projectRoot, string path)
+        {
+            return Path.GetRelativePath(Path.GetFullPath(projectRoot), Path.GetFullPath(path)).Replace('\\', '/');
+        }
+
+        private static string FromManifestPath(string projectRoot, string recorded)
+        {
+            return Path.GetFullPath(Path.IsPathRooted(recorded) ? recorded : Path.Combine(projectRoot, recorded));
         }
 
         internal static bool IsPlatformConfigured(string projectRoot, string platformId)
@@ -1989,6 +2090,7 @@ $@"
             manifest.platforms ??= new List<string>();
             manifest.optionalSkills ??= new List<string>();
             manifest.skillVersions ??= new List<SkillVersionEntry>();
+            manifest.generatedReferences ??= new List<string>();
 
             manifest.platforms = manifest.platforms
                 .Where(value => !string.IsNullOrWhiteSpace(value))
@@ -2046,6 +2148,8 @@ $@"
             public List<string> platforms = new List<string>();
             public List<string> optionalSkills = new List<string>();
             public List<SkillVersionEntry> skillVersions = new List<SkillVersionEntry>();
+            // Reference files the last sync generated, for removing ones a later version drops.
+            public List<string> generatedReferences = new List<string>();
         }
 
         [Serializable]

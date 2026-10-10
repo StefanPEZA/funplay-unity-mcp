@@ -982,6 +982,72 @@ namespace Funplay.Editor.Tests
         }
 
         [Test]
+        public void ApplyConfiguration_RemovesStaleManagedReferencesAndKeepsUserFiles()
+        {
+            var projectRoot = CreateTempProjectPath();
+
+            try
+            {
+                ProjectSkillsManager.ApplyConfiguration(projectRoot, new[] { "claude", "cursor" }, Array.Empty<string>());
+
+                var workflowDirectory = Path.Combine(ProjectSkillsManager.GetClaudeSkillsRoot(projectRoot), "funplay-unity-mcp-workflow");
+                var rulesRoot = ProjectSkillsManager.GetCursorRulesPath(projectRoot);
+                var recorded = ProjectSkillsManager.LoadManifest(projectRoot).generatedReferences;
+                foreach (var relative in ProjectSkillReferences.GetForSkill("unity-mcp-workflow").Keys)
+                {
+                    CollectionAssert.Contains(recorded, ".claude/skills/funplay-unity-mcp-workflow/" + relative);
+                    CollectionAssert.Contains(recorded, ".cursor/rules/" + relative);
+                }
+
+                // References an earlier package version generated and this one renamed or dropped.
+                var managed = ProjectSkillsManager.ManagedMarker + "\n\nold reference\n";
+                var staleSkillReference = Path.Combine(workflowDirectory, "references", "unity-mcp-workflow", "renamed.md");
+                var staleRetiredReference = Path.Combine(rulesRoot, "references", "retired-skill", "gone.md");
+                var userCopy = Path.Combine(workflowDirectory, "references", "unity-mcp-workflow", "my-copy.md");
+                var userEmptyFolder = Path.Combine(workflowDirectory, "references", "unity-mcp-workflow", "drafts");
+                foreach (var path in new[] { staleSkillReference, staleRetiredReference, userCopy })
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(path));
+                    File.WriteAllText(path, managed);
+                }
+                Directory.CreateDirectory(userEmptyFolder);
+                var manifest = ProjectSkillsManager.LoadManifest(projectRoot);
+                manifest.generatedReferences.Add(".claude/skills/funplay-unity-mcp-workflow/references/unity-mcp-workflow/renamed.md");
+                manifest.generatedReferences.Add(".cursor/rules/references/retired-skill/gone.md");
+                // Entries outside a generated references folder are never deleted, even if managed.
+                manifest.generatedReferences.Add("CLAUDE.md");
+                manifest.generatedReferences.Add(".claude/skills/funplay-unity-mcp-workflow/SKILL.md");
+                ProjectSkillsManager.SaveManifest(projectRoot, manifest);
+
+                ProjectSkillsManager.ApplyConfiguration(projectRoot, new[] { "claude", "cursor" }, Array.Empty<string>());
+
+                Assert.IsFalse(File.Exists(staleSkillReference));
+                Assert.IsFalse(File.Exists(staleRetiredReference));
+                Assert.IsFalse(Directory.Exists(Path.GetDirectoryName(staleRetiredReference)), "an emptied generated folder is removed");
+                Assert.IsTrue(File.Exists(userCopy), "unrecorded files are kept even when they carry the marker");
+                Assert.IsTrue(Directory.Exists(userEmptyFolder), "user folders are kept");
+                Assert.IsTrue(File.Exists(ProjectSkillsManager.GetClaudeInstructionsPath(projectRoot)), "shared instruction files are never deleted");
+                Assert.IsTrue(File.Exists(Path.Combine(workflowDirectory, "SKILL.md")));
+                foreach (var relative in ProjectSkillReferences.GetForSkill("unity-mcp-workflow").Keys)
+                {
+                    Assert.IsTrue(File.Exists(Path.Combine(workflowDirectory, relative)), relative);
+                    Assert.IsTrue(File.Exists(Path.Combine(rulesRoot, relative)), relative);
+                }
+                CollectionAssert.DoesNotContain(ProjectSkillsManager.LoadManifest(projectRoot).generatedReferences,
+                    ".cursor/rules/references/retired-skill/gone.md");
+
+                // Disabling every platform empties the record.
+                ProjectSkillsManager.ApplyConfiguration(projectRoot, Array.Empty<string>(), Array.Empty<string>());
+                Assert.IsEmpty(ProjectSkillsManager.LoadManifest(projectRoot).generatedReferences);
+                Assert.IsTrue(File.Exists(userCopy));
+            }
+            finally
+            {
+                DeleteTempProjectPath(projectRoot);
+            }
+        }
+
+        [Test]
         public void ApplyConfiguration_LeavesUnchangedCrlfFilesUntouched()
         {
             var projectRoot = CreateTempProjectPath();
