@@ -111,7 +111,7 @@ namespace Funplay.Editor.Tools.Builtins
 
             try
             {
-                var result = CompileAndExecute(fullCode, actualClassName, preferred_namespaces);
+                var result = await CompileAndExecuteAsync(fullCode, actualClassName, preferred_namespaces);
                 AppendHistory(code, IsSuccess(result), SummarizeResult(result), preferred_namespaces);
                 return WithWarning(result, staleScriptsWarning);
             }
@@ -326,9 +326,9 @@ namespace Funplay.Editor.Tools.Builtins
             return s.Substring(0, max) + "…";
         }
 
-        private static object CompileAndExecute(string code, string className, string preferredNamespaces)
+        private static async Task<object> CompileAndExecuteAsync(string code, string className, string preferredNamespaces)
         {
-            var compilation = ScriptCompilerPipeline.Compile(code);
+            var compilation = await ScriptCompilerPipeline.CompileAsync(code);
 
             if (compilation.Status == ScriptCompilationStatus.CompilationFailed)
             {
@@ -342,7 +342,7 @@ namespace Funplay.Editor.Tools.Builtins
                         var aliasBlock = BuildDisambiguationAliases(ambiguities, preferred, code);
                         if (!string.IsNullOrEmpty(aliasBlock))
                         {
-                            var retry = ScriptCompilerPipeline.Compile(BuildAliasRetryCode(aliasBlock, code));
+                            var retry = await ScriptCompilerPipeline.CompileAsync(BuildAliasRetryCode(aliasBlock, code));
                             if (retry.Status == ScriptCompilationStatus.Success && retry.Assembly != null)
                                 return ExecuteCompiledAssembly(retry.Assembly, className, retry.CompilerName, retry.Attempts);
 

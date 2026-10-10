@@ -40,7 +40,8 @@ namespace Funplay.Editor.MCP.Server
                 return JsonConvert.SerializeObject(Response.Error("EDITOR_STATUS_UNAVAILABLE", new
                 {
                     retry_after_ms = 5000,
-                    hint = "The initial read could not reach the Editor within the wait budget. Retry status with the same task ID/key; no task outcome was assumed and nothing was replayed."
+                    hint = "The initial read could not reach the Editor within the wait budget. Retry status with the same task ID/key; no task outcome was assumed and nothing was replayed.",
+                    editor_busy = EditorMainThreadMonitor.DescribeBusy()
                 }));
             }
         }
@@ -127,6 +128,8 @@ namespace Funplay.Editor.MCP.Server
                             result["data"]["task"]["wait_reason"] = "read_timeout";
                             result["data"]["task"]["waited_ms"] = (int)Math.Max(0, (now() - start) * 1000);
                             result["data"]["task"]["poll_after_ms"] = Math.Max(5000, result["data"]["task"].Value<int>("poll_after_ms"));
+                            var busy = EditorMainThreadMonitor.DescribeBusy();
+                            if (busy != null) result["data"]["task"]["editor_busy"] = JObject.FromObject(busy);
                             TaskStatusService.AlignPollingHint(result);
                             return result;
                         }

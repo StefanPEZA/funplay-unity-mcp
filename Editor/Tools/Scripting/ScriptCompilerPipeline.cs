@@ -10,6 +10,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Threading.Tasks;
 using Funplay.Editor.Settings;
 using UnityEditor;
 using UnityEngine;
@@ -96,18 +97,39 @@ namespace Funplay.Editor.Tools.Scripting
         ScriptCompilationResult Compile(string code);
     }
 
+    /// <summary>
+    /// A compiler that waits for an external process without holding Unity's main thread:
+    /// it starts and finishes on the caller's (main) thread and only yields while waiting.
+    /// </summary>
+    internal interface IAsyncScriptCompiler : IScriptCompiler
+    {
+        Task<ScriptCompilationResult> CompileAsync(string code);
+    }
+
     internal static class ScriptCompilerPipeline
     {
-        public static ScriptCompilationResult Compile(string code)
+        private static IScriptCompiler[] DefaultCompilers() => new IScriptCompiler[]
         {
-            return Compile(code, new IScriptCompiler[]
-            {
-                new RoslynCscScriptCompiler(),
-                new CodeDomScriptCompiler()
-            });
-        }
+            new RoslynCscScriptCompiler(),
+            new CodeDomScriptCompiler()
+        };
 
+        public static ScriptCompilationResult Compile(string code) => Compile(code, DefaultCompilers());
+
+        /// <summary>Like <see cref="Compile(string)"/>, but the Editor keeps updating while csc runs.</summary>
+        public static Task<ScriptCompilationResult> CompileAsync(string code) => CompileAsync(code, DefaultCompilers());
+
+        // Every compiler runs synchronously here, so the task is already complete when awaited.
         internal static ScriptCompilationResult Compile(string code, IEnumerable<IScriptCompiler> compilers)
+            => CompileCoreAsync(compilers, c => Task.FromResult(c.Compile(code))).GetAwaiter().GetResult();
+
+        internal static Task<ScriptCompilationResult> CompileAsync(string code, IEnumerable<IScriptCompiler> compilers)
+            => CompileCoreAsync(compilers, c => c is IAsyncScriptCompiler asyncCompiler
+                ? asyncCompiler.CompileAsync(code)
+                : Task.FromResult(c.Compile(code)));
+
+        private static async Task<ScriptCompilationResult> CompileCoreAsync(
+            IEnumerable<IScriptCompiler> compilers, Func<IScriptCompiler, Task<ScriptCompilationResult>> compile)
         {
             var attempts = new List<ScriptCompilerAttempt>();
             ScriptCompilationResult lastUnavailable = null;
@@ -120,7 +142,7 @@ namespace Funplay.Editor.Tools.Scripting
                 ScriptCompilationResult result;
                 try
                 {
-                    result = compiler.Compile(code);
+                    result = await compile(compiler);
                 }
                 catch (Exception ex)
                 {
@@ -155,7 +177,7 @@ namespace Funplay.Editor.Tools.Scripting
         }
     }
 
-    internal sealed class RoslynCscScriptCompiler : IScriptCompiler
+    internal sealed class RoslynCscScriptCompiler : IAsyncScriptCompiler
     {
         private const int DefaultTimeoutMilliseconds = 15000;
 
@@ -178,7 +200,12 @@ namespace Funplay.Editor.Tools.Scripting
             _timeoutMilliseconds = timeoutMilliseconds <= 0 ? DefaultTimeoutMilliseconds : timeoutMilliseconds;
         }
 
-        public ScriptCompilationResult Compile(string code)
+        // Without yielding the method never awaits, so the task is already complete.
+        public ScriptCompilationResult Compile(string code) => CompileCoreAsync(code, false).GetAwaiter().GetResult();
+
+        public Task<ScriptCompilationResult> CompileAsync(string code) => CompileCoreAsync(code, true);
+
+        private async Task<ScriptCompilationResult> CompileCoreAsync(string code, bool yieldWhileWaiting)
         {
             if (!TryResolveToolchain(out var compilerHostPath, out var cscPath, out var monoLibRoot, out var toolchainError))
                 return ScriptCompilationResult.Unavailable(Name, toolchainError);
@@ -212,18 +239,20 @@ namespace Funplay.Editor.Tools.Scripting
                     WorkingDirectory = tempRoot
                 };
 
-                using (var process = new Process { StartInfo = psi })
+                var exited = new TaskCompletionSource<bool>();
+                using (var process = new Process { StartInfo = psi, EnableRaisingEvents = yieldWhileWaiting })
                 {
                     process.OutputDataReceived += (_, args) =>
                     {
                         if (args.Data != null)
-                            stdout.AppendLine(args.Data);
+                            lock (stdout) stdout.AppendLine(args.Data);
                     };
                     process.ErrorDataReceived += (_, args) =>
                     {
                         if (args.Data != null)
-                            stderr.AppendLine(args.Data);
+                            lock (stderr) stderr.AppendLine(args.Data);
                     };
+                    process.Exited += (_, __) => exited.TrySetResult(true);
 
                     try
                     {
@@ -237,9 +266,17 @@ namespace Funplay.Editor.Tools.Scripting
                     process.BeginOutputReadLine();
                     process.BeginErrorReadLine();
 
-                    var deadline = DateTime.UtcNow.AddMilliseconds(_timeoutMilliseconds);
-                    while (!process.HasExited && DateTime.UtcNow < deadline)
-                        Thread.Sleep(25);
+                    if (yieldWhileWaiting)
+                    {
+                        // Resumes on the caller's context (Unity's main thread), so the rest may use Unity APIs.
+                        await Task.WhenAny(exited.Task, Task.Delay(_timeoutMilliseconds));
+                    }
+                    else
+                    {
+                        var deadline = DateTime.UtcNow.AddMilliseconds(_timeoutMilliseconds);
+                        while (!process.HasExited && DateTime.UtcNow < deadline)
+                            Thread.Sleep(25);
+                    }
 
                     if (!process.HasExited)
                     {
@@ -248,9 +285,12 @@ namespace Funplay.Editor.Tools.Scripting
                         return ScriptCompilationResult.Unavailable(Name, $"Roslyn csc timed out after {_timeoutMilliseconds} ms.");
                     }
 
-                    Thread.Sleep(25);
+                    // Returns once the exited process's redirected output has been drained.
+                    process.WaitForExit();
 
-                    var compilerOutput = (stdout.ToString() + stderr.ToString()).Trim();
+                    string compilerOutput;
+                    lock (stdout) lock (stderr)
+                        compilerOutput = (stdout.ToString() + stderr.ToString()).Trim();
                     if (process.ExitCode != 0)
                     {
                         var errors = ParseDiagnostics(compilerOutput);
