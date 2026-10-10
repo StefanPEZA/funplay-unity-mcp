@@ -81,7 +81,7 @@ namespace Funplay.Editor.MCP.Server
             "find_references",
             "delete_asset",
             "get_scriptable_object",
-            "set_scriptable_object_properties"
+            "set_scriptable_object_properties", "set_game_view_size"
         };
 
         internal const string UiPackUgui = "ugui";
@@ -99,7 +99,8 @@ namespace Funplay.Editor.MCP.Server
         internal static readonly IReadOnlyCollection<string> UIToolkitPackTools = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "get_ui_toolkit_info", "create_ui_toolkit_panel", "get_visual_tree", "click_ui_toolkit_element",
-            "scroll_ui_toolkit", "pick_ui_toolkit_element", "configure_ui_toolkit_panel", "create_panel_settings"
+            "scroll_ui_toolkit", "pick_ui_toolkit_element", "configure_ui_toolkit_panel", "create_panel_settings",
+            "wait_for_ui_toolkit", "capture_ui_toolkit_element", "preview_ui_toolkit"
         };
 
         /// <summary>Packs a user can add to Core (Tool Exposure window).</summary>

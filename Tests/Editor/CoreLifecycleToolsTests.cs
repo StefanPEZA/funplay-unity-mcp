@@ -62,6 +62,15 @@ namespace Funplay.Editor.Tests
             Assert.AreEqual("INVALID_SCENE_PATH", Code(SceneFunctions.CreateNewScene("Ok", "Packages/x/")));
         }
 
+        [Test]
+        public void NewSceneSavePathIsAFolderOrTheSceneFile()
+        {
+            Assert.AreEqual("Assets/Scenes/Level.unity", SceneFunctions.NewScenePath("Level", null));
+            Assert.AreEqual("Assets/Levels/Level.unity", SceneFunctions.NewScenePath("Level", "Assets\\Levels\\"));
+            Assert.AreEqual("Assets/E2E/Step4.unity", SceneFunctions.NewScenePath("Step4", "Assets/E2E/Step4.unity"),
+                "a .unity save_path is the file, not a folder named Step4.unity");
+        }
+
         private static string Code(object response)
         {
             return (string)JObject.FromObject(response)["code"];

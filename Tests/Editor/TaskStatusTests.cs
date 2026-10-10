@@ -279,12 +279,13 @@ namespace Funplay.Editor.Tests
         }
         [Test] public void FocusedCoreRetainsDailyWorkAndSafeCancellationWhileFullKeepsManagement()
         {
-            // Base (56) + uGUI pack (4) + UI Toolkit pack (8); set_game_view_size and the new UI Toolkit tools join as they ship.
-            Assert.AreEqual(56, MCPToolExportPolicy.BaseCoreToolList.Count);
-            Assert.AreEqual(68, MCPToolExportPolicy.DefaultCoreTools.Count);
+            // Base (57) + uGUI pack (4) + UI Toolkit pack (11).
+            Assert.AreEqual(57, MCPToolExportPolicy.BaseCoreToolList.Count);
+            Assert.AreEqual(72, MCPToolExportPolicy.DefaultCoreTools.Count);
             foreach (var name in new[] { "get_task", "cancel_task", "prepare_editor", "audit_ui", "record_game_view", "set_prefab_properties", "find_game_objects",
                 "open_scene", "save_scene", "run_tests", "delete_asset", "open_prefab_stage", "get_scriptable_object",
-                "get_ui_toolkit_info", "create_ui_toolkit_panel", "get_visual_tree", "click_ui_toolkit_element", "configure_ui_toolkit_panel", "pick_ui_toolkit_element" })
+                "get_ui_toolkit_info", "create_ui_toolkit_panel", "get_visual_tree", "click_ui_toolkit_element", "configure_ui_toolkit_panel", "pick_ui_toolkit_element",
+                "set_game_view_size", "wait_for_ui_toolkit", "capture_ui_toolkit_element", "preview_ui_toolkit" })
                 Assert.Contains(name, MCPToolExportPolicy.DefaultCoreTools.ToArray());
             foreach (var name in new[] { "get_editor_operation", "list_editor_operations", "get_ui_audit", "get_ui_preview_session",
                 "start_ui_preview_session", "end_ui_preview_session", "configure_ui_defaults", "mark_recording", "get_performance_snapshot",

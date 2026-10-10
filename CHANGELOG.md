@@ -2,6 +2,42 @@
 
 ## [Unreleased]
 
+## [0.8.5]
+
+### Added
+
+- Tool annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `title`) on every tool, and typed parameter defaults. Protocol version negotiation: `2025-06-18`, `2025-03-26` and `2024-11-05` are echoed; anything else gets the newest.
+- UI packs for Core: uGUI and UI Toolkit tools join Core by the project's detected framework (Tool Exposure: UI Pack auto/ugui/uitk/both, Re-detect), plus optional packs (animation, performance, lighting, packages).
+- Core lifecycle tools: scenes (`open_scene`, `save_scene`, `list_scenes`, `list_dirty_scenes`), objects, Prefab Mode, `find_assets`, `find_references`, `delete_asset`, ScriptableObjects, `run_tests`.
+- `cancel_task(task_id, kind)`: one cancel for every `get_task` kind.
+- `simulate_key_press(keys=[...])`: chords (replaces `simulate_key_combo` in Core).
+- `get_editor_state`: `editor_focused`, `seconds_since_last_frame`, `frame_count` and a hint when Play Mode frames are stuck.
+- `set_game_view_size(width, height | preset, restore)` (Core): fixed Game View resolution for any UI framework, journaled and restored with `restore=true` or at the next Editor start.
+- `wait_for_ui_toolkit` (UI Toolkit pack): waits up to 10 s for `exists`, `displayed`, `hidden`, `enabled`, `has_class:`, `lacks_class:`, `text:` or `settled` (no visual change for N frames and no observed transition running). Reports stalled Play Mode frames instead of waiting them out.
+- `capture_ui_toolkit_element` (UI Toolkit pack): crops the Game View to one element plus padding, optionally upscaled up to 4x; the `capture_id` stays valid for picks and clicks.
+- `preview_ui_toolkit` (UI Toolkit pack): Play Mode responsive preview. Per size it sets the Game View resolution, overrides the live panels' PanelSettings to ConstantPixelSize at `dp_scale`, waits for layout to settle and captures to a file; everything is restored (also on Play exit, reload and next start), PanelSettings are never marked dirty, and file hashes are reported.
+- UI Toolkit selectors: descendant (space) and child (`>`) combinators, `:nth-of-type(n)` and `:nth-child(n)`; `element_path` segments may be selectors over direct children.
+- Play Mode keeps running while the Editor is in the background: Run In Background is switched on for Play Mode and restored afterwards (crash-safe marker in `Library/FunplayMcp`). Setting: `keepPlayModeRunningInBackground`.
+
+### Changed
+
+- Full stores excluded tools instead of a frozen allow list, so new tools appear after updates; settings v2 migrates 0.8.3 lists. An unchanged 0.8.3 default Core list follows the new default.
+- `tools/list_changed` also fires for schema changes and across restarts (hash of the canonical tool list, persisted).
+- `open_scene` and `create_new_scene` never show a save dialog: `dirty_scenes` = `fail` (default), `save` or `discard`.
+- `delete_asset` moves to the OS trash, only under `Assets/`; folders need `recursive=true`.
+- `enter_play_mode(refresh_assets=true)` runs as a resumable operation, so edited USS/UXML are imported before Play.
+- Hints point to `prepare_editor` instead of `exit_play_mode`.
+- Read-only flags corrected for tools that change Editor state (captures, dialogs, key presses, selection, snapshots).
+
+### Fixed
+
+- Object reference writes stored null for sub-assets or silently built nameless objects; they now resolve the sub-asset of the field's type and fail with an error otherwise.
+- A locked operation journal disabled operations for the whole domain; it is retried on the next call. A corrupt journal is moved aside. Writes are atomic.
+- Reload-interrupted calls: the hint explains that `OPERATION_NOT_FOUND` means the request never started and repeating is safe.
+- `prepare_editor` deadlocked in Play Mode after a script change (Unity defers the recompile until Play ends, the operation waited for it before exiting Play) until its timeout; it now exits Play first.
+- `execute_code` in Play Mode with a deferred recompile waited past the 60 s transport timeout; it now runs against the loaded scripts and returns a warning. In Edit Mode the readiness wait stays below the transport timeout (`EDITOR_BUSY`), and unstarted script compilation returns `SCRIPT_CHANGES_PENDING` instead of an exception.
+- `create_new_scene` with a `.unity` `save_path` created a folder of that name; a `.unity` path is now the scene file.
+
 ## [0.8.3] - 2026-10-10
 
 ### Fixed

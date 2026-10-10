@@ -16,6 +16,7 @@ capture_game_view
 capture_multiview
 capture_scene_view
 capture_simulator_view
+capture_ui_toolkit_element
 clear_execute_code_history destructive
 click_ui_toolkit_element
 close_prefab_stage idempotent
@@ -135,6 +136,7 @@ pick_ui_toolkit_element ro idempotent
 ping_asset ro idempotent
 play_animator_state
 prepare_editor idempotent
+preview_ui_toolkit
 profiler_start
 profiler_status ro idempotent
 profiler_stop
@@ -164,6 +166,7 @@ set_camera_projection idempotent
 set_camera_settings idempotent
 set_component_properties idempotent
 set_component_property idempotent
+set_game_view_size idempotent
 set_lighting_settings idempotent
 set_material_property idempotent
 set_parent idempotent
@@ -186,4 +189,5 @@ unload_scene destructive
 unpack_prefab destructive
 validate_menu_item ro idempotent
 wait_for_compilation
+wait_for_ui_toolkit ro idempotent
 write_file destructive idempotent

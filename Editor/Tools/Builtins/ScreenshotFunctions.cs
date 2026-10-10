@@ -46,7 +46,19 @@ namespace Funplay.Editor.Tools.Builtins
         /// write-to-disk + JSON path result when the caller asked for a file (or when the
         /// payload is too large to send inline, in which case it auto-falls back to a file).
         /// </summary>
-        private static string FinishCapture(byte[] pngBytes, bool saveToFile, string outputPath, string defaultBaseName, VisualGeometry geometry = null)
+        /// <param name="extra">Extra fields merged into the response data (e.g. the captured element).</param>
+        internal static string FinishCapture(byte[] pngBytes, bool saveToFile, string outputPath, string defaultBaseName, VisualGeometry geometry = null, IDictionary<string, object> extra = null)
+        {
+            var result = FinishCaptureCore(pngBytes, saveToFile, outputPath, defaultBaseName, geometry);
+            if (extra == null || extra.Count == 0) return result;
+            var json = Newtonsoft.Json.Linq.JObject.Parse(result);
+            if (json["data"] is Newtonsoft.Json.Linq.JObject data)
+                foreach (var pair in extra)
+                    data[pair.Key] = pair.Value == null ? Newtonsoft.Json.Linq.JValue.CreateNull() : Newtonsoft.Json.Linq.JToken.FromObject(pair.Value);
+            return json.ToString(Formatting.None);
+        }
+
+        private static string FinishCaptureCore(byte[] pngBytes, bool saveToFile, string outputPath, string defaultBaseName, VisualGeometry geometry)
         {
             var pngSize = VisualCoordinates.PngSize(pngBytes);
             geometry = geometry ?? VisualCoordinates.Create(defaultBaseName.Replace('-', '_'), pngSize.x, pngSize.y, pngSize.x, pngSize.y, false);
@@ -755,6 +767,23 @@ namespace Funplay.Editor.Tools.Builtins
             }
         }
 
+        internal static void RepaintMainGameView()
+        {
+            if (GetMainPlayModeView() is EditorWindow view) view.Repaint();
+        }
+
+        /// <summary>
+        /// The live Game View framebuffer at its render size, upright (row 0 = bottom, matching render
+        /// pixel coordinates); null when the Game View has no render texture yet. Caller destroys it.
+        /// </summary>
+        internal static async Task<Texture2D> ReadGameViewFramebufferAsync()
+        {
+            var playModeView = GetMainPlayModeView();
+            await RefreshGameViewBeforeCaptureAsync(playModeView);
+            if (!TryGetPlayModeViewRenderTexture(playModeView, out var source)) return null;
+            return ReadTextureToTexture2D(source, source.width, source.height, ShouldFlipPlayModeViewRenderTexture());
+        }
+
         private static async Task RefreshGameViewBeforeCaptureAsync(object playModeView)
         {
             if (!(playModeView is EditorWindow gameViewWindow))
@@ -934,7 +963,7 @@ namespace Funplay.Editor.Tools.Builtins
             return true;
         }
 
-        private static Task WaitForEditorFramesAsync(int frameCount)
+        internal static Task WaitForEditorFramesAsync(int frameCount)
         {
             frameCount = Mathf.Max(frameCount, 1);
             var tcs = new TaskCompletionSource<bool>();

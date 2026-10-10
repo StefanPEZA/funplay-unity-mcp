@@ -45,6 +45,16 @@ namespace Funplay.Editor.Tests
             coordinator.Tick(state, 103);
             Assert.AreEqual("ready", op.status);
         }
+        [Test] public void PlayExitsEvenWhileACompileWaitsForPlayModeToEnd()
+        {
+            state.is_playing = true; state.is_compiling = true;
+            var op = coordinator.Start("edit", true, 30, null, 100);
+            Assert.AreEqual(EditorOperationAction.ExitPlay, coordinator.Tick(state, 101), "a deferred compile must not block the exit it is waiting for");
+            Assert.AreEqual(EditorOperationAction.None, coordinator.Tick(state, 102));
+            Assert.AreEqual("compiling", op.phase);
+            state.is_playing = false; state.is_compiling = false;
+            Assert.AreEqual(EditorOperationAction.Refresh, coordinator.Tick(state, 103));
+        }
         [Test] public void PlayExitsBeforeRefreshAndEntersOnlyAfterReady()
         {
             state.is_playing = true;

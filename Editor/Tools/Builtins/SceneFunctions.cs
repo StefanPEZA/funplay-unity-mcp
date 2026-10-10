@@ -105,13 +105,13 @@ namespace Funplay.Editor.Tools.Builtins
             }
         }
 
-        [Description("Create a new scene with the default camera and light, save it to save_path/name.unity and open it " +
+        [Description("Create a new scene with the default camera and light, save it to save_path/name.unity (or to save_path itself when it ends in .unity) and open it " +
                      "(replaces the loaded scenes). Never shows a dialog: dirty_scenes decides about unsaved changes in loaded " +
                      "scenes as for open_scene ('fail' by default).")]
         [SceneEditingTool]
         public static object CreateNewScene(
             [ToolParam("Name for the new scene")] string name,
-            [ToolParam("Path to save (e.g. 'Assets/Scenes/')", Required = false)] string save_path = "Assets/Scenes/",
+            [ToolParam("Folder to save in (e.g. 'Assets/Scenes/'), or the full scene path ending in .unity", Required = false)] string save_path = "Assets/Scenes/",
             [ToolParam("What to do with unsaved changes in loaded scenes: fail (default), save or discard", Required = false)] string dirty_scenes = "fail")
         {
             var blocker = GetSceneMutationBlocker();
@@ -121,10 +121,10 @@ namespace Funplay.Editor.Tools.Builtins
             if (string.IsNullOrWhiteSpace(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
                 return Response.Error("INVALID_SCENE_NAME", new { name });
 
-            var folder = (save_path ?? "Assets/Scenes/").Replace('\\', '/').TrimEnd('/');
-            var fullPath = folder + "/" + name + ".unity";
+            var fullPath = NewScenePath(name, save_path);
+            var folder = Path.GetDirectoryName(fullPath)?.Replace('\\', '/');
             if (!TryResolveSceneAssetPath(fullPath, out _, out _, requireExisting: false))
-                return Response.Error("INVALID_SCENE_PATH", new { path = fullPath, hint = "save_path must be a folder under Assets/." });
+                return Response.Error("INVALID_SCENE_PATH", new { path = fullPath, hint = "save_path must be a folder under Assets/ or a .unity path there." });
             if (File.Exists(fullPath))
                 return Response.Error("SCENE_ALREADY_EXISTS", new { path = fullPath, hint = "Pick another name or open the existing scene with open_scene." });
 
@@ -143,6 +143,13 @@ namespace Funplay.Editor.Tools.Builtins
                 saved_before_open = savedScenes,
                 discarded_changes = discarded
             });
+        }
+
+        /// <summary>The scene file for create_new_scene: save_path is a folder, or already the .unity path.</summary>
+        internal static string NewScenePath(string name, string savePath)
+        {
+            var path = (string.IsNullOrWhiteSpace(savePath) ? "Assets/Scenes/" : savePath.Trim()).Replace('\\', '/').TrimEnd('/');
+            return path.EndsWith(".unity", StringComparison.OrdinalIgnoreCase) ? path : path + "/" + name + ".unity";
         }
 
         /// <summary>

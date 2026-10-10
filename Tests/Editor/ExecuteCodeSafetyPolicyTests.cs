@@ -13,6 +13,20 @@ namespace Funplay.Editor.Tests
     public sealed class ExecuteCodeSafetyPolicyTests
     {
         [Test]
+        public void ReadinessWaitsStayBelowTheTransportTimeoutAndStaleRunsAreFlagged()
+        {
+            // A Play Mode recompile is deferred until Play ends, so waiting there must be short.
+            Assert.Less(ScriptExecutionFunctions.EditModeReadyWait.TotalSeconds + 7, 60, "refresh detection (~6.5 s) + wait must beat the 60 s transport timeout");
+            Assert.LessOrEqual(ScriptExecutionFunctions.PlayModeReadyWait.TotalSeconds, 5);
+
+            var plain = new { success = true, message = "ok" };
+            Assert.AreSame(plain, ScriptExecutionFunctions.WithWarning(plain, null));
+            var flagged = Newtonsoft.Json.Linq.JObject.FromObject(ScriptExecutionFunctions.WithWarning(plain, ScriptExecutionFunctions.PlayModeStaleScriptsWarning));
+            Assert.IsTrue((bool)flagged["success"]);
+            StringAssert.Contains("after Play Mode ends", (string)flagged["warning"]);
+        }
+
+        [Test]
         public void BaseSafety_BlocksExistingDangerousPatterns()
         {
             AssertBlocked("File.Delete(\"Assets/test.txt\");", false, "File.Delete");

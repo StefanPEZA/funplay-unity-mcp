@@ -30,7 +30,7 @@ namespace Funplay.Editor.Tools
         {
             "add_component", "add_component_to_many", "add_layer", "add_tag", "assign_animator", "assign_material",
             "cancel_editor_operation", "cancel_task", "cancel_test_run", "cancel_ui_audit", "capture_editor_window", "capture_game_view",
-            "capture_multiview", "capture_scene_view", "capture_simulator_view", "click_ui_toolkit_element",
+            "capture_multiview", "capture_scene_view", "capture_simulator_view", "capture_ui_toolkit_element", "click_ui_toolkit_element",
             "close_prefab_stage", "configure_ui_defaults", "configure_ui_toolkit_panel", "copy_asset", "copy_component",
             "create_animation_clip", "create_animator_controller", "create_button", "create_canvas", "create_game_object",
             "create_image", "create_material", "create_panel_settings", "create_prefab", "create_primitive",
@@ -39,11 +39,11 @@ namespace Funplay.Editor.Tools
             "exit_play_mode", "focus_on_object", "frame_debugger_disable", "frame_debugger_enable", "get_console_logs",
             "instantiate_prefab", "load_scene_additive", "log_message", "mark_recording", "memory_open_snapshot_in_profiler",
             "memory_take_full_snapshot", "memory_take_snapshot", "open_prefab_stage", "particle_control",
-            "paste_component_values", "play_animator_state", "prepare_editor", "profiler_start", "profiler_stop",
+            "paste_component_values", "play_animator_state", "prepare_editor", "preview_ui_toolkit", "profiler_start", "profiler_stop",
             "record_game_view", "rename_game_object", "request_recompile", "run_tests", "scroll_ui_toolkit",
             "select_object", "set_active", "set_active_tool", "set_animator_parameter", "set_camera_culling_mask",
             "set_camera_projection", "set_camera_settings", "set_component_properties", "set_component_property",
-            "set_lighting_settings", "set_material_property", "set_parent", "set_prefab_properties", "set_prefab_property",
+            "set_game_view_size", "set_lighting_settings", "set_material_property", "set_parent", "set_prefab_properties", "set_prefab_property",
             "set_scriptable_object_properties", "set_selection", "set_tag_and_layer", "set_time_scale", "set_transform",
             "show_dialog", "simulate_key_combo", "simulate_key_press", "simulate_mouse_click", "simulate_mouse_drag",
             "simulate_ui_scroll", "start_ui_preview_session", "wait_for_compilation"
@@ -58,7 +58,7 @@ namespace Funplay.Editor.Tools
             "frame_debugger_enable", "open_prefab_stage", "open_scene", "prepare_editor", "remove_tag", "save_all_scenes",
             "save_prefab_stage", "save_scene", "select_object", "set_active", "set_active_tool", "set_animator_parameter",
             "set_camera_culling_mask", "set_camera_projection", "set_camera_settings", "set_component_properties",
-            "set_component_property", "set_lighting_settings", "set_material_property", "set_parent",
+            "set_component_property", "set_game_view_size", "set_lighting_settings", "set_material_property", "set_parent",
             "set_prefab_properties", "set_prefab_property", "set_scriptable_object_properties", "set_selection",
             "set_tag_and_layer", "set_time_scale", "set_transform", "set_asset_import_settings", "write_file"
         };

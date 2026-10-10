@@ -21,7 +21,7 @@ namespace Funplay.Editor.Tools.Builtins
     /// supported through <see cref="UIToolkitPanels"/>; the uGUI Canvas tools do not apply here.
     /// </summary>
     [ToolProvider("UIToolkit")]
-    internal static class UIToolkitFunctions
+    internal static partial class UIToolkitFunctions
     {
         [Description("Read-only UI Toolkit overview: whether this Unity has PanelRenderer (6.6+, UIDocument is Legacy) and which host to create, every PanelRenderer/UIDocument in loaded scenes/Prefab Stage with PanelSettings, UXML, sorting, parent and live-root state, per-scene framework (ui_toolkit/ugui/mixed), PanelSettings/theme assets and setup issues. Use before choosing Canvas vs UI Toolkit tools.")]
         [ReadOnlyTool]

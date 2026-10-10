@@ -64,7 +64,7 @@ namespace Funplay.Editor.Tests
         public void ToolsAreDiscoverable()
         {
             foreach (var name in new[] { "get_ui_toolkit_info", "create_ui_toolkit_panel", "configure_ui_toolkit_panel", "create_panel_settings",
-                         "get_visual_tree", "pick_ui_toolkit_element", "click_ui_toolkit_element", "scroll_ui_toolkit" })
+                         "get_visual_tree", "pick_ui_toolkit_element", "click_ui_toolkit_element", "scroll_ui_toolkit", "wait_for_ui_toolkit" })
                 Assert.IsNotNull(ToolRegistry.GetMethod(name), name);
         }
 
@@ -638,6 +638,82 @@ namespace Funplay.Editor.Tests
             var onButton = InputInteractionFunctions.PerformUiToolkitClick(RenderPoint(play.worldBound.center), UnityEngine.EventSystems.PointerEventData.InputButton.Left, attempts, renderHeight);
             Assert.IsTrue(onButton.Hit, onButton.Detail);
             Assert.AreEqual(1, clicks);
+        }
+
+        [Test]
+        public void WaitStatesParseAndRejectUnknownOnes()
+        {
+            Assert.AreEqual("displayed", UIToolkitFunctions.WaitState.Parse(null).Kind);
+            var cls = UIToolkitFunctions.WaitState.Parse("has_class: pg-open ");
+            Assert.AreEqual("has_class", cls.Kind);
+            Assert.AreEqual("pg-open", cls.Argument);
+            Assert.AreEqual("Score: 10", UIToolkitFunctions.WaitState.Parse("text:Score: 10").Argument, "text keeps everything after the first ':'");
+            Assert.AreEqual("", UIToolkitFunctions.WaitState.Parse("text:").Argument, "empty text is a valid target");
+            foreach (var bad in new[] { "visible", "has_class:", "settled:3", "lacks_class" })
+                Assert.Throws<UIToolkitException>(() => UIToolkitFunctions.WaitState.Parse(bad), bad);
+            Assert.IsTrue(UIToolkitFunctions.WaitState.Parse("hidden").IsMet(null), "an absent element counts as hidden");
+            Assert.IsFalse(UIToolkitFunctions.WaitState.Parse("exists").IsMet(null));
+        }
+
+        [Test]
+        public void SignaturesCompareWithTolerance()
+        {
+            Assert.IsTrue(UIToolkitFunctions.SameSignature(new[] { 1f, float.NaN }, new[] { 1.00001f, float.NaN }));
+            Assert.IsFalse(UIToolkitFunctions.SameSignature(new[] { 1f }, new[] { 1.01f }));
+            Assert.IsFalse(UIToolkitFunctions.SameSignature(new[] { 1f }, null));
+            Assert.IsFalse(UIToolkitFunctions.SameSignature(new[] { 1f }, new[] { 1f, 2f }));
+        }
+
+        [UnityTest]
+        public IEnumerator WaitForUiToolkitWaitsForLaterChanges()
+        {
+            yield return BuildLivePanel("UitkWait");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var play = liveRoot.Q<Button>("play");
+
+            var invalid = JObject.FromObject(UIToolkitFunctions.WaitForElementAsync(id, "#play", null, null, "visible", 1f, 3).Result);
+            Assert.AreEqual("INVALID_WAIT_STATE", (string)invalid["code"], invalid.ToString());
+
+            // The class arrives a few updates after the wait starts, like schedule.ExecuteLater.
+            var wait = UIToolkitFunctions.WaitForElementAsync(id, "#play", null, null, "has_class:open", 5f, 3);
+            for (var i = 0; i < 3; i++) yield return null;
+            Assert.IsFalse(wait.IsCompleted, "the class is not there yet");
+            play.AddToClassList("open");
+            yield return Await(wait);
+            var met = JObject.FromObject(wait.Result);
+            Assert.IsTrue((bool)met["success"], met.ToString());
+            Assert.AreEqual("has_class:open", (string)met["data"]["state"]);
+
+            var gone = UIToolkitFunctions.WaitForElementAsync(id, "#quit", null, null, "hidden", 5f, 3);
+            yield return null;
+            liveRoot.Q<Button>("quit").style.display = DisplayStyle.None;
+            yield return Await(gone);
+            Assert.IsTrue((bool)JObject.FromObject(gone.Result)["success"], JObject.FromObject(gone.Result).ToString());
+
+            var timeout = UIToolkitFunctions.WaitForElementAsync(id, "#missing", null, null, "exists", 0.2f, 3);
+            yield return Await(timeout);
+            var timedOut = JObject.FromObject(timeout.Result);
+            Assert.AreEqual("WAIT_TIMEOUT", (string)timedOut["code"], timedOut.ToString());
+            Assert.IsFalse((bool)timedOut["data"]["found"]);
+            Assert.AreEqual("ELEMENT_NOT_FOUND", (string)timedOut["data"]["lookup"]);
+
+            var ambiguous = UIToolkitFunctions.WaitForElementAsync(id, "Button", null, null, "exists", 1f, 3);
+            yield return Await(ambiguous);
+            Assert.AreEqual("AMBIGUOUS_ELEMENT", (string)JObject.FromObject(ambiguous.Result)["code"]);
+
+            var settled = UIToolkitFunctions.WaitForElementAsync(id, "#play", null, null, "settled", 5f, 3);
+            yield return Await(settled);
+            var settledJson = JObject.FromObject(settled.Result);
+            Assert.IsTrue((bool)settledJson["success"], settledJson.ToString());
+            Assert.GreaterOrEqual((int)settledJson["data"]["frames"], 2, settledJson.ToString());
+        }
+
+        private static IEnumerator Await(System.Threading.Tasks.Task task)
+        {
+            // Time-based: batch-mode frames are fast, and .Result on an unfinished wait would deadlock.
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (!task.IsCompleted && clock.Elapsed.TotalSeconds < 15) yield return null;
+            Assert.IsTrue(task.IsCompleted, "wait did not complete");
         }
 
         private VisualElement liveRoot;

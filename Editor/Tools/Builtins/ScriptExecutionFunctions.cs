@@ -36,6 +36,7 @@ namespace Funplay.Editor.Tools.Builtins
                      "Before compiling, the editor's AssetDatabase is refreshed and pending compilation is awaited, " +
                      "so external file edits are picked up automatically without a separate request_recompile " +
                      "(pass skip_refresh=true to bypass this for read-only snippets or a live Play Mode session you must not disturb). " +
+                     "In Play Mode, script changes that Unity recompiles only after Play ends don't block the call: it runs against the loaded scripts and the response carries a warning. " +
                      "When a full-class snippet implements IFunplayCommand, the required Funplay.Editor.Tools.Scripting using is added automatically if omitted. " +
                      "The snippet is compiled into a SEPARATE assembly, so funplay package internal types (e.g. ToolRegistry) cannot be referenced directly from the snippet -- reach them via reflection. " +
                      "safety_checks blocks a small set of obviously dangerous patterns " +
@@ -72,17 +73,32 @@ namespace Funplay.Editor.Tools.Builtins
                 }
             }
 
+            string staleScriptsWarning = null;
             if (!skip_refresh)
             {
+                // In Play Mode Unity normally defers a script recompile until Play Mode ends, so waiting for
+                // it can never succeed: run against the loaded scripts and say so. In Edit Mode the wait stays
+                // below the MCP transport timeout so the caller gets EDITOR_BUSY, not a dropped request.
+                var playing = EditorApplication.isPlaying;
                 try
                 {
-                    await EditorReadyHelper.RefreshAndWaitForReady();
+                    await EditorRefreshHelper.RefreshAndWaitForReadyAsync(playing ? PlayModeReadyWait : EditModeReadyWait);
+                }
+                catch (Exception ex) when (playing && (ex is TimeoutException || ex is EditorRefreshDidNotStartCompilationException))
+                {
+                    staleScriptsWarning = PlayModeStaleScriptsWarning;
                 }
                 catch (TimeoutException)
                 {
                     AppendHistory(code, false, "EDITOR_BUSY", preferred_namespaces);
                     return Response.Error("EDITOR_BUSY",
                         new { hint = "Unity is still compiling/importing. Retry in a moment, or pass skip_refresh=true if you know the editor is up to date." });
+                }
+                catch (EditorRefreshDidNotStartCompilationException)
+                {
+                    AppendHistory(code, false, "SCRIPT_CHANGES_PENDING", preferred_namespaces);
+                    return Response.Error("SCRIPT_CHANGES_PENDING",
+                        new { hint = "Script files changed but Unity did not start compiling them. Call prepare_editor(refresh_assets=true), then retry; or pass skip_refresh=true to run against the loaded scripts." });
                 }
             }
 
@@ -97,7 +113,7 @@ namespace Funplay.Editor.Tools.Builtins
             {
                 var result = CompileAndExecute(fullCode, actualClassName, preferred_namespaces);
                 AppendHistory(code, IsSuccess(result), SummarizeResult(result), preferred_namespaces);
-                return result;
+                return WithWarning(result, staleScriptsWarning);
             }
             catch (Exception ex)
             {
@@ -268,6 +284,21 @@ namespace Funplay.Editor.Tools.Builtins
                 // Swallow — history is best-effort, must never break real execution.
                 Debug.LogWarning($"[Funplay] Failed to append execute_code history: {ex.Message}");
             }
+        }
+
+        // The MCP transport drops a call after 60 s; stay below it so the caller gets EDITOR_BUSY.
+        internal static readonly TimeSpan EditModeReadyWait = TimeSpan.FromSeconds(45);
+        internal static readonly TimeSpan PlayModeReadyWait = TimeSpan.FromSeconds(5);
+        internal const string PlayModeStaleScriptsWarning =
+            "Script changes are pending: Unity recompiles them after Play Mode ends, so this ran against the scripts loaded when Play started.";
+
+        /// <summary>Adds a top-level "warning" to a response object; unchanged when there is none.</summary>
+        internal static object WithWarning(object result, string warning)
+        {
+            if (warning == null || result == null) return result;
+            var json = Newtonsoft.Json.Linq.JObject.FromObject(result);
+            json["warning"] = warning;
+            return json;
         }
 
         private static bool IsSuccess(object result)
