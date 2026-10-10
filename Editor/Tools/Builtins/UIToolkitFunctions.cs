@@ -21,7 +21,7 @@ namespace Funplay.Editor.Tools.Builtins
     /// supported through <see cref="UIToolkitPanels"/>; the uGUI Canvas tools do not apply here.
     /// </summary>
     [ToolProvider("UIToolkit")]
-    internal static class UIToolkitFunctions
+    internal static partial class UIToolkitFunctions
     {
         [Description("Read-only UI Toolkit overview: whether this Unity has PanelRenderer (6.6+, UIDocument is Legacy) and which host to create, every PanelRenderer/UIDocument in loaded scenes/Prefab Stage with PanelSettings, UXML, sorting, parent and live-root state, per-scene framework (ui_toolkit/ugui/mixed), PanelSettings/theme assets and setup issues. Use before choosing Canvas vs UI Toolkit tools.")]
         [ReadOnlyTool]
@@ -261,18 +261,19 @@ namespace Funplay.Editor.Tools.Builtins
             catch (Exception ex) { return Response.Error("PANEL_SETTINGS_NOT_CREATED", new { detail = ex.Message, created_assets = createdAssets }); }
         }
 
-        [Description("Read the live VisualElement tree of PanelRenderer/UIDocument hosts (Edit or Play Mode): type, name, classes, text/value, displayed/enabled/picking state, visible_fraction/clipped_by (ScrollView viewport or overflow clipping), panel bounds and Game View screen bounds (render bottom-left + image top-left, same contract as clicks/screenshots), optional resolved styles. Filter with selector (Type#name.class) and/or exact text; a text match inside a Button reports the Button's click_receiver_path. Includes findings such as zero-size or picking-ignored controls, elements outside the panel and duplicate names, limited to the matched elements' subtrees unless all_findings. Element paths feed click_ui_toolkit_element; they are child indices that shift when the tree changes, so re-read after UI changes.")]
+        [Description("Read the live VisualElement tree of PanelRenderer/UIDocument hosts (Edit or Play Mode): type, name, classes, text/value, displayed/enabled/picking state, visible_fraction/clipped_by (ScrollView viewport or overflow clipping), panel bounds and Game View screen bounds (render bottom-left + image top-left, same contract as clicks/screenshots), optional resolved styles. Filter with selector (Type#name.class) and/or exact text; a text match inside a Button reports the Button's click_receiver_path. Includes findings such as zero-size or picking-ignored controls, elements outside the panel and duplicate names, limited to the matched elements' subtrees unless all_findings. In Play Mode a host reports scheduler.stalled when a scheduled item on its panel keeps throwing (its later scheduled work no longer runs). Element paths feed click_ui_toolkit_element; they are child indices that shift when the tree changes, so re-read after UI changes. snapshot=true returns a snapshot_id for diff_visual_tree.")]
         [ReadOnlyTool]
         public static object GetVisualTree(
             [ToolParam("Panel host GameObject name/path/ID; omitted reads every host", Required = false)] string target = null,
-            [ToolParam("Compound selector Type#name.class; omitted returns the tree", Required = false)] string selector = null,
+            [ToolParam("Selector: Type#name.class compounds, descendant (space) or child (>) combinators, :nth-of-type(n)/:nth-child(n); omitted returns the tree", Required = false)] string selector = null,
             [ToolParam("Exact element text, case-insensitive", Required = false)] string text = null,
             [ToolParam("Maximum depth below each root, 0..64", Required = false)] int max_depth = 24,
             [ToolParam("Maximum elements returned across hosts, 1..2000", Required = false)] int max_elements = 300,
             [ToolParam("Include resolved styles per element", Required = false)] bool include_styles = false,
             [ToolParam("Report findings for the whole tree, uncapped, instead of the matched subtrees (at most 50 per host)", Required = false)] bool all_findings = false,
             [ToolParam("Omit null/empty fields, duplicate bounds and most host details", Required = false)] bool compact = false,
-            [ToolParam("Skip hidden elements (e.g. closed dialogs)", Required = false)] bool displayed_only = false)
+            [ToolParam("Skip hidden elements (e.g. closed dialogs)", Required = false)] bool displayed_only = false,
+            [ToolParam("Also store the hosts' whole trees (regardless of selector/max_depth) and return snapshot_id for diff_visual_tree", Required = false)] bool snapshot = false)
         {
             try
             {
@@ -329,14 +330,16 @@ namespace Funplay.Editor.Tools.Builtins
                         elements,
                         findings = findingsOmitted > 0 ? findings.Take(MaxFindingsPerHost).ToList() : findings,
                         findings_omitted = findingsOmitted > 0 ? (int?)findingsOmitted : null,
-                        findings_scope = scope != null ? "matched_subtrees" : "tree"
+                        findings_scope = scope != null ? "matched_subtrees" : "tree",
+                        scheduler = SchedulerStallMonitor.Report(root)
                     });
                 }
 
+                var snapshotId = snapshot ? VisualTreeSnapshots.Take(target, hosts).Id : null;
                 return Response.Success(filter.IsEmpty
                         ? $"Visual tree for {hosts.Count} host(s)."
                         : $"{matched} element(s) matched.",
-                    new { hosts = results, truncated = matched > max_elements, render_height = renderHeight > 0 ? (int?)renderHeight : null, geometry_error = geometryError });
+                    new { hosts = results, truncated = matched > max_elements, render_height = renderHeight > 0 ? (int?)renderHeight : null, geometry_error = geometryError, snapshot_id = snapshotId });
             }
             catch (UIToolkitException ex) { return Response.Error(ex.Code, new { detail = ex.Message, details = ex.Details }); }
             catch (Exception ex) { return Response.Error("VISUAL_TREE_UNAVAILABLE", new { detail = ex.Message }); }
@@ -368,9 +371,9 @@ namespace Funplay.Editor.Tools.Builtins
         [Description("Click a UI Toolkit element in Play Mode by selector (Type#name.class), exact text and/or element_path from get_visual_tree, optionally scoped to one host. A text match on a Button's inner Label clicks the Button. Requires a unique, displayed, enabled match; clicks the visible part of an element partly clipped by a ScrollView/overflow, refuses ELEMENT_CLIPPED when fully clipped (scroll_into_view scrolls it in first) and ELEMENT_COVERED when another element receives the pointer, unless allow_covered. Dispatches pointer move/down/up through the panel like real mouse input (Clickable, :hover/:active, ClickEvent). Reports clicked, handler_invoked and click_event_received. Works without an EventSystem.")]
         public static object ClickUiToolkitElement(
             [ToolParam("Panel host GameObject name/path/ID", Required = false)] string target = null,
-            [ToolParam("Compound selector Type#name.class", Required = false)] string selector = null,
+            [ToolParam("Selector: Type#name.class compounds joined by space (descendant) or > (child), optional :nth-of-type(n)/:nth-child(n), e.g. '#settings .row > Button'", Required = false)] string selector = null,
             [ToolParam("Exact element text, case-insensitive", Required = false)] string text = null,
-            [ToolParam("Element path from get_visual_tree (requires a single host; shifts when the tree changes)", Required = false)] string element_path = null,
+            [ToolParam("Element path relative to one host: child indices from get_visual_tree (shift when the tree changes) or '/'-separated selectors over direct children, e.g. '#menu/Button:nth-of-type(2)'", Required = false)] string element_path = null,
             [ToolParam("left, right or middle", Required = false)] string button = "left",
             [ToolParam("Click even when another element covers the center", Required = false)] bool allow_covered = false,
             [ToolParam("Scroll enclosing ScrollViews so a clipped element is in view before clicking", Required = false)] bool scroll_into_view = false)
@@ -383,9 +386,9 @@ namespace Funplay.Editor.Tools.Builtins
         [Description("Scroll a UI Toolkit ScrollView (Edit or Play Mode; scroll state is not saved). Without deltas, scrolls every ScrollView around the matched element until it is in view (ScrollView.ScrollTo): the fix for ELEMENT_CLIPPED from click_ui_toolkit_element. With delta_x/delta_y (panel pixels; positive scrolls right/down), offsets the matched ScrollView, or the nearest one around the matched element; the ScrollView clamps the offset. Match by selector (Type#name.class), exact text and/or element_path as for clicks. Reports offsets and the element's visible_fraction afterwards.")]
         public static object ScrollUiToolkit(
             [ToolParam("Panel host GameObject name/path/ID", Required = false)] string target = null,
-            [ToolParam("Compound selector Type#name.class", Required = false)] string selector = null,
+            [ToolParam("Selector: Type#name.class compounds joined by space (descendant) or > (child), optional :nth-of-type(n)/:nth-child(n), e.g. '#settings .row > Button'", Required = false)] string selector = null,
             [ToolParam("Exact element text, case-insensitive", Required = false)] string text = null,
-            [ToolParam("Element path from get_visual_tree (requires a single host; shifts when the tree changes)", Required = false)] string element_path = null,
+            [ToolParam("Element path relative to one host: child indices from get_visual_tree (shift when the tree changes) or '/'-separated selectors over direct children, e.g. '#menu/Button:nth-of-type(2)'", Required = false)] string element_path = null,
             [ToolParam("Horizontal scroll in panel pixels; 0 with delta_y 0 scrolls the element into view", Required = false)] float delta_x = 0,
             [ToolParam("Vertical scroll in panel pixels, positive scrolls down", Required = false)] float delta_y = 0)
         {
@@ -513,6 +516,7 @@ namespace Funplay.Editor.Tools.Builtins
                 }
                 var receiver = UIToolkitPanels.FindClickReceiver(dispatchTarget);
                 var result = UIToolkitPanels.DispatchClick(panel, dispatchTarget, point, (int)inputButton);
+                var scheduler = result.Activated ? null : SchedulerStallMonitor.Report(UIToolkitPanels.GetRoot(matchHost));
                 var who = receiver is Button ? "the button" : "the receiver";
                 var message = !result.Activated ? $"Pointer sequence sent to {Label(matched)}, but no ClickEvent or click handler reached it."
                     : result.ReceiverDetached ? $"Clicked {Label(matched)}; {who} was removed from its panel."
@@ -531,7 +535,8 @@ namespace Funplay.Editor.Tools.Builtins
                     receiver_detached = result.ReceiverDetached,
                     visible_fraction = (float)Math.Round(visibility.Fraction, 3),
                     scrolled_into_view = scrolled,
-                    covered
+                    covered,
+                    scheduler
                 });
             }
             catch (UIToolkitException ex) { return Response.Error(ex.Code, new { detail = ex.Message, details = ex.Details }); }
@@ -551,7 +556,10 @@ namespace Funplay.Editor.Tools.Builtins
             {
                 if (hosts.Count != 1) throw new UIToolkitException("TARGET_REQUIRED", "element_path is relative to one host; pass target.");
                 var root = UIToolkitPanels.GetRoot(hosts[0]) ?? throw new UIToolkitException("ROOT_NOT_READY", "The panel host has not built its visual tree.");
-                var element = UIToolkitPanels.ResolvePath(root, elementPath) ?? throw new UIToolkitException("ELEMENT_NOT_FOUND", "element_path does not resolve in the current tree.");
+                var element = UIToolkitPanels.ResolvePath(root, elementPath) ?? throw new UIToolkitException("ELEMENT_NOT_FOUND",
+                    UIToolkitPanels.IsIndexPath(elementPath)
+                        ? "element_path no longer resolves (paths are child indices and shift when a panel brings an element to the front); re-read get_visual_tree or use a selector."
+                        : "element_path does not resolve in the current tree (each '/' segment is a child index or a selector over direct children).");
                 var resolved = filter.IsEmpty ? element : filter.ClickTarget(element);
                 if (resolved == null) throw new UIToolkitException("ELEMENT_NOT_FOUND", "The element at element_path does not match selector/text.");
                 matches.Add((hosts[0], ReferenceEquals(resolved, element) ? elementPath : UIToolkitPanels.PathOf(root, resolved) ?? elementPath, resolved));
@@ -701,7 +709,9 @@ namespace Funplay.Editor.Tools.Builtins
                 var control = UIToolkitPanels.IsControl(element);
                 if (control && (bound.width < 1f || bound.height < 1f))
                     findings.Add(new { code = "ZERO_SIZE_CONTROL", element_path = entry.Key, element = Label(element), detail = "Displayed control has no clickable area." });
-                if (control && element.pickingMode == PickingMode.Ignore)
+                // Built-in Sliders are picking-ignored themselves and take the pointer on their drag
+                // container, so only a control with nothing pickable in it lets the pointer through.
+                if (control && element.pickingMode == PickingMode.Ignore && !HasPickableDescendant(element))
                     findings.Add(new { code = "CONTROL_PICKING_IGNORED", element_path = entry.Key, element = Label(element), detail = "picking-mode Ignore: pointer input passes through this control." });
                 // Content scrolled out of a ScrollView is normal (see visible_fraction); report only the
                 // topmost element of a subtree that lies outside the panel itself.
@@ -724,9 +734,21 @@ namespace Funplay.Editor.Tools.Builtins
                 }
             }
 
-            foreach (var group in walked.Select(e => e.Value).Where(e => !string.IsNullOrEmpty(e.name)).GroupBy(e => e.name).Where(g => g.Count() > 1 && g.Any(InScope)))
+            // unity-* names are the parts of built-in controls (every Slider has a #unity-dragger); they repeat by design.
+            foreach (var group in walked.Select(e => e.Value).Where(e => !string.IsNullOrEmpty(e.name) && !e.name.StartsWith("unity-", StringComparison.Ordinal))
+                         .GroupBy(e => e.name).Where(g => g.Count() > 1 && g.Any(InScope)))
                 findings.Add(new { code = "DUPLICATE_NAME", element = "#" + group.Key, detail = $"{group.Count()} elements share this name; #name selectors are ambiguous." });
             return findings;
+        }
+
+        internal static bool HasPickableDescendant(VisualElement element)
+        {
+            for (var i = 0; i < element.hierarchy.childCount; i++)
+            {
+                var child = element.hierarchy[i];
+                if (child.pickingMode == PickingMode.Position || HasPickableDescendant(child)) return true;
+            }
+            return false;
         }
 
         private static string ResolveKind(string component)

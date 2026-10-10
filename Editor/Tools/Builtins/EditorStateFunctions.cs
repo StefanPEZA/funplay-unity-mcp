@@ -19,12 +19,19 @@ namespace Funplay.Editor.Tools.Builtins
     [ToolProvider("EditorState")]
     internal static class EditorStateFunctions
     {
-        [Description("Get high-level editor runtime state: play mode, paused, compiling, updating, time-since-startup.")]
+        [Description("Get high-level editor runtime state: play mode, paused, compiling, updating, time-since-startup, whether the Editor has focus and, in Play Mode, seconds since the game last rendered a frame (stuck frames stall game code, UI Toolkit schedulers and transitions).")]
         [ReadOnlyTool]
         public static object GetEditorState()
         {
+            var sinceLastFrame = Funplay.Editor.State.PlayModeFrameMonitor.SecondsSinceLastFrame;
             return Response.Success("Editor state", new
             {
+                editor_focused = Funplay.Editor.State.PlayModeFrameMonitor.EditorFocused,
+                seconds_since_last_frame = sinceLastFrame.HasValue ? Math.Round(sinceLastFrame.Value, 3) : (double?)null,
+                frame_count = EditorApplication.isPlaying ? Time.frameCount : (int?)null,
+                hint = Funplay.Editor.State.PlayModeFrameMonitor.FramesStuck
+                    ? "Play Mode frames are not advancing (Editor in the background or blocked). Game code, UI Toolkit schedulers and transitions are stalled until frames resume."
+                    : null,
                 isPlaying = EditorApplication.isPlaying,
                 isPaused = EditorApplication.isPaused,
                 isCompiling = EditorApplication.isCompiling,

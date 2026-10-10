@@ -2,9 +2,14 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Text;
 using Funplay.Editor.Settings;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
+using UnityEngine;
 
 namespace Funplay.Editor.MCP.Server
 {
@@ -34,9 +39,11 @@ namespace Funplay.Editor.MCP.Server
         private static bool _updateHooked;
 
         /// <summary>
-        /// Compare the currently exposed tool names against the last observed set.
-        /// Called on the main thread when the server (re)starts with a freshly built
-        /// exporter. The first observation in an editor session only records the baseline.
+        /// Compare the currently exposed tool list (names, descriptions, input schemas and
+        /// annotations) against the last observed one. Called on the main thread when the
+        /// server (re)starts with a freshly built exporter. The last hash is also kept in
+        /// Library/FunplayMcp/tools-hash.txt, so a package update across an Editor restart
+        /// notifies too; only the very first observation in a project records a baseline.
         /// </summary>
         public static void CheckForChanges(MCPToolExporter toolExporter)
         {
@@ -44,15 +51,19 @@ namespace Funplay.Editor.MCP.Server
             {
                 var hash = ComputeToolListHash(toolExporter);
                 var previous = SessionState.GetString(HashKey, null);
+                if (string.IsNullOrEmpty(previous))
+                    previous = ReadPersistedHash();
                 var pending = SessionState.GetBool(PendingKey, false);
 
                 if (string.IsNullOrEmpty(previous))
                 {
                     SessionState.SetString(HashKey, hash);
+                    WritePersistedHash(hash);
                 }
                 else if (!string.Equals(previous, hash, StringComparison.Ordinal))
                 {
                     SessionState.SetString(HashKey, hash);
+                    WritePersistedHash(hash);
                     SessionState.SetBool(PendingKey, true);
                     pending = true;
                     PluginDebugLogger.Log(
@@ -91,6 +102,16 @@ namespace Funplay.Editor.MCP.Server
             return true;
         }
 
+        /// <summary>
+        /// Flag a change that happened outside a server restart (a tool enabled/disabled at runtime,
+        /// a manual registration after startup). Thread-safe.
+        /// </summary>
+        public static void MarkChanged()
+        {
+            _pending = true;
+            _persistedFlagDirty = true;
+        }
+
         /// <summary>Re-arm the pending flag when a piggybacked send failed before reaching the client. Thread-safe.</summary>
         public static void RestorePending()
         {
@@ -118,21 +139,78 @@ namespace Funplay.Editor.MCP.Server
             SessionState.SetBool(PendingKey, _pending);
         }
 
-        private static string ComputeToolListHash(MCPToolExporter toolExporter)
+        internal static string ComputeToolListHash(MCPToolExporter toolExporter)
         {
-            var tools = toolExporter.ExportTools();
-            var names = new List<string>(tools.Count);
-            foreach (var tool in tools)
-            {
-                if (tool.TryGetValue("name", out var name) && name is string s)
-                    names.Add(s);
-            }
-            names.Sort(StringComparer.Ordinal);
+            return ComputeToolListHash(toolExporter.ExportTools());
+        }
+
+        /// <summary>SHA1 of the canonical JSON (tools sorted by name, object keys sorted) of the exported list.</summary>
+        internal static string ComputeToolListHash(IEnumerable<Dictionary<string, object>> tools)
+        {
+            var array = new JArray();
+            foreach (var tool in tools.OrderBy(t => t.TryGetValue("name", out var n) ? n as string : null, StringComparer.Ordinal))
+                array.Add(Canonicalize(JToken.FromObject(tool)));
 
             using (var sha = System.Security.Cryptography.SHA1.Create())
             {
-                var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(string.Join("\n", names)));
+                var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(array.ToString(Formatting.None)));
                 return Convert.ToBase64String(bytes);
+            }
+        }
+
+        private static JToken Canonicalize(JToken token)
+        {
+            if (token is JObject obj)
+            {
+                var sorted = new JObject();
+                foreach (var property in obj.Properties().OrderBy(p => p.Name, StringComparer.Ordinal))
+                    sorted[property.Name] = Canonicalize(property.Value);
+                return sorted;
+            }
+
+            if (token is JArray arr)
+            {
+                var copy = new JArray();
+                foreach (var item in arr)
+                    copy.Add(Canonicalize(item));
+                return copy;
+            }
+
+            return token;
+        }
+
+        private static string HashFilePath =>
+            Path.Combine(Path.GetDirectoryName(Application.dataPath) ?? ".", "Library", "FunplayMcp", "tools-hash.txt");
+
+        private static string ReadPersistedHash()
+        {
+            try
+            {
+                var path = HashFilePath;
+                return File.Exists(path) ? File.ReadAllText(path).Trim() : null;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        private static void WritePersistedHash(string hash)
+        {
+            try
+            {
+                var path = HashFilePath;
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                var temp = path + ".tmp";
+                File.WriteAllText(temp, hash);
+                if (File.Exists(path))
+                    File.Replace(temp, path, null);
+                else
+                    File.Move(temp, path);
+            }
+            catch (Exception ex)
+            {
+                PluginDebugLogger.Log("[Funplay MCP Server] Could not persist the tool list hash: " + ex.Message);
             }
         }
     }

@@ -3,6 +3,7 @@
 #if ENABLE_INPUT_SYSTEM
 using System;
 using System.ComponentModel;
+using System.Threading.Tasks;
 using Funplay.Editor.Tools.Helpers;
 using UnityEditor;
 using UnityEngine;
@@ -15,97 +16,55 @@ namespace Funplay.Editor.Tools.Builtins
     [ToolProvider("InputSimulation")]
     internal static class InputSimulationFunctions
     {
-        [Description("Simulate keyboard input in Play Mode. Queues key events that the Unity Input System will process. Supports key names like W, A, S, D, Space, LeftShift, E, Q, and number keys.")]
-        [ReadOnlyTool]
-        public static string SimulateKeyPress(
-            [ToolParam("Key name, for example W, Space, LeftShift, E, or 1")] string key,
-            [ToolParam("Duration in seconds to hold the key. Use 0 for a tap.", Required = false)] float duration = 0f,
-            [ToolParam("Action type: press, release, or tap", Required = false)] string action = "tap")
+        [Description("Simulate keyboard input in Play Mode that game code sees, also while the Editor or Game View is unfocused. Events go through the player loop's input update, so Keyboard.current.<key>.wasPressedThisFrame is true in the game's Update() (delivery is confirmed: delivered, delivered_frame, edge_seen). tap: down, then up one player frame after delivery (or after a 0.5 s cap, or on Play exit, so stuck frames never leave a key down); returns after the release. duration > 0 holds the key (max 5 s) and returns once the press is delivered. press/release: hold down or let go. For a chord (e.g. Ctrl+Z) pass keys instead of key: all keys go down together and are released together. For Play Mode the Input System's focus settings (backgroundBehavior, editorInputBehaviorInPlayMode) are switched so input reaches the game, and restored when Play Mode ends.")]
+        public static Task<object> SimulateKeyPress(
+            [ToolParam("Key name, for example W, Space, LeftShift, E, or 1", Required = false)] string key = null,
+            [ToolParam("Duration in seconds to hold the key, max 5. Use 0 for a tap.", Required = false)] float duration = 0f,
+            [ToolParam("Action type: press, release, or tap", Required = false)] string action = "tap",
+            [ToolParam("Chord: JSON array or comma-separated key names held together, e.g. [\"LeftCtrl\",\"Z\"]. Replaces key.", Required = false)] string keys = null)
         {
             if (!EditorApplication.isPlaying)
-                return ToolResultFormatter.ErrorMessage("PLAY_MODE_REQUIRED", "SimulateKeyPress only works in Play Mode.");
+                return Done(ToolResultFormatter.ErrorMessage("PLAY_MODE_REQUIRED", "SimulateKeyPress only works in Play Mode."));
 
             try
             {
                 var keyboard = EnsureKeyboard();
                 if (keyboard == null)
-                    return ToolResultFormatter.ErrorMessage("INPUT_DEVICE_NOT_FOUND", "No keyboard device found in Input System");
+                    return Done(ToolResultFormatter.ErrorMessage("INPUT_DEVICE_NOT_FOUND", "No keyboard device found in Input System"));
 
-                var keyControl = FindKey(keyboard, key);
-                if (keyControl == null)
-                    return ToolResultFormatter.ErrorMessage("KEY_NOT_RECOGNIZED", $"Key '{key}' not recognized. Examples: W, A, S, D, Space, LeftShift, E, Escape, 1, 2");
-
-                switch ((action ?? "tap").Trim().ToLowerInvariant())
+                var names = !string.IsNullOrWhiteSpace(keys) ? ParseKeyList(keys) : string.IsNullOrWhiteSpace(key) ? null : new[] { key.Trim() };
+                if (names == null)
+                    return Done(ToolResultFormatter.ErrorMessage("KEY_REQUIRED", "Pass key, or keys for a chord."));
+                if (names.Length == 0)
+                    return Done(ToolResultFormatter.ErrorMessage("KEY_REQUIRED", "keys is empty."));
+                var codes = new Key[names.Length];
+                for (var i = 0; i < names.Length; i++)
                 {
-                    case "press":
-                        QueueKeyState(keyboard, keyControl, true);
-                        return $"Key '{key}' pressed (held down)";
-                    case "release":
-                        QueueKeyState(keyboard, keyControl, false);
-                        return $"Key '{key}' released";
-                    default:
-                        return TapKey(keyboard, keyControl, key, duration);
+                    var control = FindKey(keyboard, names[i]);
+                    if (control == null)
+                        return Done(ToolResultFormatter.ErrorMessage("KEY_NOT_RECOGNIZED", $"Key '{names[i]}' not recognized. Examples: W, A, S, D, Space, LeftShift, LeftCtrl, Z, Escape, 1, 2"));
+                    codes[i] = control.keyCode;
                 }
+
+                var mode = (action ?? "tap").Trim().ToLowerInvariant();
+                if (mode != "press" && mode != "release") mode = duration > 0f ? "hold" : "tap";
+                return KeyInjector.Run(keyboard, codes, string.Join("+", names), mode, duration);
             }
             catch (Exception ex)
             {
-                return ToolResultFormatter.Exception(ex);
+                return Done(ToolResultFormatter.Exception(ex));
             }
         }
 
-        [Description("Simulate multiple keys held simultaneously in Play Mode, for example W plus LeftShift.")]
-        [ReadOnlyTool]
-        public static string SimulateKeyCombo(
+        [Description("Simulate multiple keys held simultaneously in Play Mode, for example W plus LeftShift. Same delivery as simulate_key_press(keys=[...], duration).")]
+        public static Task<object> SimulateKeyCombo(
             [ToolParam("Comma-separated key names, for example 'W,LeftShift' or 'A,Space'")] string keys,
             [ToolParam("Duration in seconds to hold the combo", Required = false)] float duration = 0.5f)
         {
-            if (!EditorApplication.isPlaying)
-                return ToolResultFormatter.ErrorMessage("PLAY_MODE_REQUIRED", "SimulateKeyCombo only works in Play Mode.");
-
-            try
-            {
-                var keyboard = EnsureKeyboard();
-                if (keyboard == null)
-                    return ToolResultFormatter.ErrorMessage("INPUT_DEVICE_NOT_FOUND", "No keyboard device found");
-
-                duration = Mathf.Clamp(duration, 0.05f, 5f);
-                var keyNames = (keys ?? string.Empty).Split(',');
-
-                for (int i = 0; i < keyNames.Length; i++)
-                {
-                    var keyControl = FindKey(keyboard, keyNames[i].Trim());
-                    if (keyControl != null)
-                        QueueKeyState(keyboard, keyControl, true);
-                }
-
-                double releaseTime = EditorApplication.timeSinceStartup + duration;
-                EditorApplication.CallbackFunction releaseAll = null;
-                releaseAll = () =>
-                {
-                    if (EditorApplication.timeSinceStartup < releaseTime)
-                        return;
-
-                    EditorApplication.update -= releaseAll;
-                    var kb = Keyboard.current;
-                    if (kb == null)
-                        return;
-
-                    for (int i = 0; i < keyNames.Length; i++)
-                    {
-                        var keyControl = FindKey(kb, keyNames[i].Trim());
-                        if (keyControl != null)
-                            QueueKeyState(kb, keyControl, false);
-                    }
-                };
-                EditorApplication.update += releaseAll;
-
-                return $"Keys [{keys}] held for {duration:F2}s";
-            }
-            catch (Exception ex)
-            {
-                return ToolResultFormatter.Exception(ex);
-            }
+            return SimulateKeyPress(null, Mathf.Clamp(duration, 0.05f, 5f), "tap", keys);
         }
+
+        private static Task<object> Done(object result) => Task.FromResult(result);
 
         [Description("Simulate a mouse drag from one screen position to another in Play Mode using the Unity Input System.")]
         public static string SimulateMouseDrag(
@@ -133,6 +92,8 @@ namespace Funplay.Editor.Tools.Builtins
                     return ToolResultFormatter.ErrorMessage("INPUT_DEVICE_NOT_FOUND", "No mouse device found in Input System");
 
                 duration = Mathf.Clamp(duration, 0.1f, 3f);
+                // The mouse must reach the game while the Editor is unfocused, like simulated keys.
+                Funplay.Editor.State.InputFocusOverride.Apply();
                 var pressButton = GetMouseButton(mouse, button);
                 VideoRecordingFunctions.RecordMarker("drag", "Mouse drag events queued", startPoint, endPoint, geometry);
 
@@ -172,53 +133,16 @@ namespace Funplay.Editor.Tools.Builtins
             }
         }
 
-        private static string TapKey(Keyboard keyboard, KeyControl keyControl, string key, float duration)
+        /// <summary>Key names from a JSON array (["LeftCtrl","Z"]) or a comma/plus-separated list ("LeftCtrl,Z").</summary>
+        internal static string[] ParseKeyList(string keys)
         {
-            if (duration <= 0f)
+            var text = (keys ?? string.Empty).Trim();
+            if (text.StartsWith("[", StringComparison.Ordinal))
             {
-                QueueKeyState(keyboard, keyControl, true);
-                EditorApplication.CallbackFunction releaseCallback = null;
-                int frameToRelease = Time.frameCount + 2;
-                releaseCallback = () =>
-                {
-                    if (Time.frameCount < frameToRelease)
-                        return;
-
-                    EditorApplication.update -= releaseCallback;
-                    if (Keyboard.current != null)
-                        QueueKeyState(Keyboard.current, FindKey(Keyboard.current, key), false);
-                };
-                EditorApplication.update += releaseCallback;
-                return $"Key '{key}' tapped (1 frame)";
+                var parsed = Newtonsoft.Json.JsonConvert.DeserializeObject<string[]>(text) ?? Array.Empty<string>();
+                return Array.FindAll(Array.ConvertAll(parsed, k => (k ?? string.Empty).Trim()), k => k.Length > 0);
             }
-
-            duration = Mathf.Clamp(duration, 0.01f, 5f);
-            QueueKeyState(keyboard, keyControl, true);
-
-            double releaseTime = EditorApplication.timeSinceStartup + duration;
-            EditorApplication.CallbackFunction releaseAfterDuration = null;
-            releaseAfterDuration = () =>
-            {
-                if (EditorApplication.timeSinceStartup < releaseTime)
-                    return;
-
-                EditorApplication.update -= releaseAfterDuration;
-                if (Keyboard.current != null)
-                    QueueKeyState(Keyboard.current, FindKey(Keyboard.current, key), false);
-            };
-            EditorApplication.update += releaseAfterDuration;
-            return $"Key '{key}' held for {duration:F2}s";
-        }
-
-        private static void QueueKeyState(Keyboard keyboard, KeyControl keyControl, bool pressed)
-        {
-            if (keyboard == null || keyControl == null)
-                return;
-
-            QueueStateEvent(keyboard, eventPtr =>
-            {
-                keyControl.WriteValueIntoEvent(pressed ? 1f : 0f, eventPtr);
-            });
+            return Array.FindAll(Array.ConvertAll(text.Split(',', '+'), k => k.Trim()), k => k.Length > 0);
         }
 
         private static void QueueStateEvent(InputDevice device, Action<InputEventPtr> writeState)
@@ -232,9 +156,11 @@ namespace Funplay.Editor.Tools.Builtins
                 InputSystem.QueueEvent(eventPtr);
             }
 
-            // Editor-driven simulation needs an explicit update so queued events
-            // are applied immediately and InputActions observe the state change.
-            InputSystem.Update();
+            // Mouse drags keep the immediate update: without it every step would merge into one
+            // player update. Keyboard input goes through KeyInjector instead; while simulated keys wait
+            // for the game's input update, an extra update would consume their wasPressedThisFrame edge.
+            if (!KeyInjector.HasPending)
+                KeyInjector.RunManualUpdate();
         }
 
         private static Keyboard EnsureKeyboard()

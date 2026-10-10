@@ -272,6 +272,7 @@ namespace Funplay.Editor.MCP.Server
                 var projectIdentity = FunplayProjectIdentity.FromProjectPath(_applicationPaths.ProjectPath);
                 transport = CreateTransport(startupPort, serverName, projectIdentity);
                 var toolExporter = new MCPToolExporter(_settings);
+                MCPUiFrameworkDetector.EnsureDetected(_settings);
                 MCPToolListChangeNotifier.CheckForChanges(toolExporter);
                 var executionBridge = new MCPExecutionBridge(_threadHelper, _settings, _stateController, _invoker, InteractionLog);
                 resourceProvider = new MCPResourceProvider(_contextBuilder, _applicationPaths, InteractionLog);
@@ -582,7 +583,7 @@ namespace Funplay.Editor.MCP.Server
             {
                 data["kind"] = kind;
                 data["request_key"] = requestKey;
-                data["hint"] = $"The operation keeps running across the reload. Once the server is back, call get_task(kind=\"{kind}\", request_key=\"{requestKey}\"); repeating the call with the same request_key returns the same operation.";
+                data["hint"] = $"The request may or may not have started before the reload. Once the server is back, call get_task(kind=\"{kind}\", request_key=\"{requestKey}\"): it returns the operation if it started (it keeps running across the reload); OPERATION_NOT_FOUND means this request never started, and repeating it with the same request_key is safe either way.";
             }
             else
             {
@@ -685,7 +686,9 @@ namespace Funplay.Editor.MCP.Server
                 _settings.MCPCoreToolsConfigured ? "core=custom" : "core=default",
                 string.Join(",", _settings.MCPCoreTools ?? Array.Empty<string>()),
                 _settings.MCPFullToolsConfigured ? "full=custom" : "full=default",
-                string.Join(",", _settings.MCPFullTools ?? Array.Empty<string>()));
+                string.Join(",", _settings.MCPFullToolsExcluded ?? Array.Empty<string>()),
+                "ui=" + MCPToolExportPolicy.GetEffectiveUiPack(_settings),
+                "packs=" + string.Join(",", _settings.MCPOptionalCorePacks ?? Array.Empty<string>()));
         }
 
         private string BuildTransportSetting()

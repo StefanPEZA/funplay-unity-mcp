@@ -165,7 +165,7 @@ namespace Funplay.Editor.Tests
             foreach (var file in Current(platform).Files)
             {
                 File.WriteAllText(file.Path, File.ReadAllText(file.Path)
-                    .Replace("unity-mcp-workflow@1.0.6", "unity-mcp-workflow@1.0.5")
+                    .Replace("unity-mcp-workflow@1.0.7", "unity-mcp-workflow@1.0.6")
                     .Replace("unity-ui-composition@1.0.8", "unity-ui-composition@1.0.7"));
                 foreach (var relative in ProjectSkillReferences.GetForSkill(file.SkillId).Keys)
                     File.Delete(Path.Combine(Path.GetDirectoryName(file.Path), relative));

@@ -44,9 +44,7 @@ namespace Funplay.Editor.State
         private static bool Allowed(string tool)
         {
             var settings = RootScopeServices.Services?.GetService(typeof(ISettingsController)) as ISettingsController;
-            return ToolRegistry.IsEnabled(tool) && MCPToolExportPolicy.IsToolAllowed(tool,
-                MCPToolExportPolicy.Parse(settings?.MCPToolExportProfile), settings?.MCPCoreToolsConfigured ?? false,
-                settings?.MCPCoreTools, settings?.MCPFullToolsConfigured ?? false, settings?.MCPFullTools);
+            return ToolRegistry.IsEnabled(tool) && MCPToolExportPolicy.IsToolAllowed(tool, settings);
         }
 
         internal static JObject Query(string taskId, string kind, string key, string afterRevision, int offset, int limit)
@@ -71,6 +69,34 @@ namespace Funplay.Editor.State
                 default: return JObject.FromObject(Response.Error("INVALID_TASK_KIND"));
             }
             return Observe(kind, receipt, afterRevision);
+        }
+
+        /// <summary>
+        /// One cancel for every task kind get_task reads. Same exposure rule as Query: the kind's own
+        /// tools must be exposed. Preview sessions are ended (and restored) with end_ui_preview_session.
+        /// </summary>
+        internal static object Cancel(string taskId, string kind)
+        {
+            var problem = Resolve(ref taskId, ref kind, null);
+            if (problem != null) return problem;
+            if (!CanRead(kind, Allowed)) return Response.Error("TASK_KIND_NOT_EXPOSED", new
+            { kind, hint = "Enable the relevant task tools deliberately; cancel_task does not bypass disabled tools or custom exposure." });
+
+            switch (kind)
+            {
+                case "editor": return EditorOperationService.Cancel(taskId);
+                case "ui_audit": return UIAuditService.Cancel(taskId);
+                case "recording": return VideoRecordingFunctions.RecordGameView("stop", recording_id: taskId);
+                case "recording_frames": return RecordingEvidenceService.Control(taskId, "cancel");
+                case "tests": return TestRunnerFunctions.CancelTestRun(taskId);
+                case "ui_preview":
+                    return Response.Error("TASK_NOT_CANCELLABLE", new
+                    {
+                        kind,
+                        hint = "A preview session is ended with end_ui_preview_session, which also restores the scene state."
+                    });
+                default: return Response.Error("INVALID_TASK_KIND");
+            }
         }
 
         // Never guess a latest job: namespaced IDs prevent querying/replacing a different task.

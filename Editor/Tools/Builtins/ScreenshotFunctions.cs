@@ -46,7 +46,19 @@ namespace Funplay.Editor.Tools.Builtins
         /// write-to-disk + JSON path result when the caller asked for a file (or when the
         /// payload is too large to send inline, in which case it auto-falls back to a file).
         /// </summary>
-        private static string FinishCapture(byte[] pngBytes, bool saveToFile, string outputPath, string defaultBaseName, VisualGeometry geometry = null)
+        /// <param name="extra">Extra fields merged into the response data (e.g. the captured element).</param>
+        internal static string FinishCapture(byte[] pngBytes, bool saveToFile, string outputPath, string defaultBaseName, VisualGeometry geometry = null, IDictionary<string, object> extra = null)
+        {
+            var result = FinishCaptureCore(pngBytes, saveToFile, outputPath, defaultBaseName, geometry);
+            if (extra == null || extra.Count == 0) return result;
+            var json = Newtonsoft.Json.Linq.JObject.Parse(result);
+            if (json["data"] is Newtonsoft.Json.Linq.JObject data)
+                foreach (var pair in extra)
+                    data[pair.Key] = pair.Value == null ? Newtonsoft.Json.Linq.JValue.CreateNull() : Newtonsoft.Json.Linq.JToken.FromObject(pair.Value);
+            return json.ToString(Formatting.None);
+        }
+
+        private static string FinishCaptureCore(byte[] pngBytes, bool saveToFile, string outputPath, string defaultBaseName, VisualGeometry geometry)
         {
             var pngSize = VisualCoordinates.PngSize(pngBytes);
             geometry = geometry ?? VisualCoordinates.Create(defaultBaseName.Replace('-', '_'), pngSize.x, pngSize.y, pngSize.x, pngSize.y, false);
@@ -168,7 +180,6 @@ namespace Funplay.Editor.Tools.Builtins
 
         [Description("Capture a fresh screenshot of the Game View (what the main camera sees). Requests a Game View repaint and waits for Editor frames before readback. " +
                      "Returns a base64-encoded PNG image, or a saved file path when save_to_file=true.")]
-        [ReadOnlyTool]
         public static async Task<string> CaptureGameView(
             [ToolParam("Width of the screenshot in pixels", Required = false)] int width = 0,
             [ToolParam("Height of the screenshot in pixels", Required = false)] int height = 0,
@@ -216,8 +227,8 @@ namespace Funplay.Editor.Tools.Builtins
         }
 
         [Description("Capture the Unity Device Simulator screen. Optionally selects a Simulator device and draws a Safe Area outline over the captured image. " +
-                     "If the Simulator view has to be opened or the device changes, retry once after Unity renders the next editor frame.")]
-        [ReadOnlyTool]
+                     "After opening the view or changing the device it waits for a fresh frame (a player frame in Play Mode) before capturing. " +
+                     "Reports the active device, screen size, orientation (Play Mode) and safe area. For responsive UI Toolkit checks across sizes, preview_ui_toolkit is the supported route.")]
         public static async Task<string> CaptureSimulatorView(
             [ToolParam("Width of the screenshot in pixels. Default uses the simulator screen texture size. If only width is provided, height preserves source aspect.", Required = false)] int width = 0,
             [ToolParam("Height of the screenshot in pixels. Default uses the simulator screen texture size. If only height is provided, width preserves source aspect.", Required = false)] int height = 0,
@@ -227,6 +238,8 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam(SaveToFileParamDescription, Required = false)] bool save_to_file = false,
             [ToolParam(OutputPathParamDescription, Required = false)] string output_path = null)
         {
+            var simulatorWindowType = ResolveType("UnityEditor.DeviceSimulation.SimulatorWindow", "UnityEditor.DeviceSimulatorModule");
+            var wasOpen = simulatorWindowType != null && GetExistingSimulatorWindow(simulatorWindowType) != null;
             if (!TryGetSimulatorWindow(open_if_needed, out var simulatorWindow, out var simulatorError))
                 return ToolResultFormatter.Error("SIMULATOR_VIEW_NOT_AVAILABLE", simulatorError);
 
@@ -240,8 +253,14 @@ namespace Funplay.Editor.Tools.Builtins
             if (!TrySelectSimulatorDevice(simulatorWindow, device_name, out var deviceChanged, out var deviceSelectionError))
                 return ToolResultFormatter.Error("SIMULATOR_DEVICE_NOT_FOUND", deviceSelectionError);
 
-            if (deviceChanged)
+            // A fresh frame after any change: the preview texture still holds the previous device/size until it renders.
+            var waitedForFrame = deviceChanged || !wasOpen;
+            if (waitedForFrame)
+            {
                 await WaitForEditorFramesAsync(2);
+                if (EditorApplication.isPlaying && !EditorApplication.isPaused)
+                    await Funplay.Editor.State.PlayModeFrameMonitor.WaitForPlayerFramesAsync(1, 2.0);
+            }
 
             var deviceView = GetSimulatorDeviceView(simulatorWindow);
             if (deviceView == null)
@@ -270,20 +289,23 @@ namespace Funplay.Editor.Tools.Builtins
                 });
             }
 
-            Rect? safeArea = null;
-            if (safe_area_overlay)
+            var safeArea = ResolveSimulatorSafeArea(deviceView, sourceTexture.width, sourceTexture.height);
+            var extra = new Dictionary<string, object>
             {
-                safeArea = ResolveSimulatorSafeArea(deviceView, sourceTexture.width, sourceTexture.height);
-            }
+                ["device"] = CurrentSimulatorDeviceName(simulatorWindow),
+                ["screen"] = new { width = sourceTexture.width, height = sourceTexture.height },
+                ["orientation"] = EditorApplication.isPlaying ? ToolRegistry.ToSnakeCase(Screen.orientation.ToString()) : null,
+                ["safe_area"] = safeArea.HasValue ? new { x = safeArea.Value.x, y = safeArea.Value.y, width = safeArea.Value.width, height = safeArea.Value.height } : null,
+                ["waited_for_fresh_frame"] = waitedForFrame
+            };
 
-            return CaptureTexture(sourceTexture, width, height, safeArea, flipVertically: true,
-                saveToFile: save_to_file, outputPath: output_path, defaultBaseName: "simulator-view");
+            return CaptureTexture(sourceTexture, width, height, safe_area_overlay ? safeArea : null, flipVertically: true,
+                saveToFile: save_to_file, outputPath: output_path, defaultBaseName: "simulator-view", extra: extra);
         }
 
         [Description("Capture a screenshot of the Scene View (the editor's scene camera perspective). By default, active Screen Space Overlay canvases " +
                      "from the current Stage are composited into the image; set include_ui=false for the previous camera-only behavior. " +
                      "Returns a base64-encoded PNG image, or a saved file path when save_to_file=true.")]
-        [ReadOnlyTool]
         public static string CaptureSceneView(
             [ToolParam("Width of the screenshot in pixels", Required = false)] int width = 0,
             [ToolParam("Height of the screenshot in pixels", Required = false)] int height = 0,
@@ -329,7 +351,6 @@ namespace Funplay.Editor.Tools.Builtins
                      "Target defaults to the active scene's bounds center; pass target_name to focus on a specific GameObject. " +
                      "Each capture is rendered with a temporary camera (current scene cameras are not modified). " +
                      "Returns base64 PNG images in data.captures[] together with the angle metadata of each.")]
-        [ReadOnlyTool]
         public static object CaptureMultiview(
             [ToolParam("GameObject name, hierarchy path, or instance ID to focus on (finds inactive objects too). Empty/null uses the active scene's bounds center.", Required = false)] string target_name = null,
             [ToolParam("Capture mode: surround (6 axis views, default) or orbit (azimuth × elevations grid).", Required = false)] string mode = "surround",
@@ -471,7 +492,6 @@ namespace Funplay.Editor.Tools.Builtins
                      "identified by its title or type name. Captures directly from the window's render surface via the editor's " +
                      "internal GUIView, so the window does not need to be unoccluded on screen (it does need to be open). " +
                      "Returns a base64-encoded PNG image, or a saved file path when save_to_file=true.")]
-        [ReadOnlyTool]
         public static string CaptureEditorWindow(
             [ToolParam("Window title (e.g. 'Inspector', 'MCP Server') or window type name (e.g. 'ConsoleWindow'). " +
                        "Case-insensitive. Exact title match wins, then title contains, then type name.")] string window,
@@ -760,6 +780,23 @@ namespace Funplay.Editor.Tools.Builtins
             }
         }
 
+        internal static void RepaintMainGameView()
+        {
+            if (GetMainPlayModeView() is EditorWindow view) view.Repaint();
+        }
+
+        /// <summary>
+        /// The live Game View framebuffer at its render size, upright (row 0 = bottom, matching render
+        /// pixel coordinates); null when the Game View has no render texture yet. Caller destroys it.
+        /// </summary>
+        internal static async Task<Texture2D> ReadGameViewFramebufferAsync()
+        {
+            var playModeView = GetMainPlayModeView();
+            await RefreshGameViewBeforeCaptureAsync(playModeView);
+            if (!TryGetPlayModeViewRenderTexture(playModeView, out var source)) return null;
+            return ReadTextureToTexture2D(source, source.width, source.height, ShouldFlipPlayModeViewRenderTexture());
+        }
+
         private static async Task RefreshGameViewBeforeCaptureAsync(object playModeView)
         {
             if (!(playModeView is EditorWindow gameViewWindow))
@@ -939,7 +976,7 @@ namespace Funplay.Editor.Tools.Builtins
             return true;
         }
 
-        private static Task WaitForEditorFramesAsync(int frameCount)
+        internal static Task WaitForEditorFramesAsync(int frameCount)
         {
             frameCount = Mathf.Max(frameCount, 1);
             var tcs = new TaskCompletionSource<bool>();
@@ -1047,6 +1084,16 @@ namespace Funplay.Editor.Tools.Builtins
                                           ?? GetPropertyOrField<object>(main, "userInterfaceController");
             return GetPropertyOrField<object>(userInterfaceController, "DeviceView")
                    ?? GetPropertyOrField<object>(userInterfaceController, "m_DeviceView");
+        }
+
+        /// <summary>The selected Simulator device's name, or null when the internals can't be read.</summary>
+        private static string CurrentSimulatorDeviceName(object simulatorWindow)
+        {
+            var main = GetSimulatorMain(simulatorWindow);
+            var devices = GetPropertyOrField<Array>(main, "devices") ?? GetPropertyOrField<Array>(main, "m_Devices");
+            var index = GetPropertyOrField<int?>(main, "deviceIndex") ?? GetPropertyOrField<int?>(main, "m_DeviceIndex");
+            return devices != null && index.HasValue && index.Value >= 0 && index.Value < devices.Length
+                ? GetSimulatorDeviceName(devices.GetValue(index.Value)) : null;
         }
 
         private static object GetSimulatorMain(object simulatorWindow)
@@ -1202,7 +1249,8 @@ namespace Funplay.Editor.Tools.Builtins
         }
 
         private static string CaptureTexture(Texture sourceTexture, int width, int height, Rect? safeAreaOverlay,
-            bool flipVertically = false, bool saveToFile = false, string outputPath = null, string defaultBaseName = "capture")
+            bool flipVertically = false, bool saveToFile = false, string outputPath = null, string defaultBaseName = "capture",
+            IDictionary<string, object> extra = null)
         {
             Texture2D screenshot = null;
 
@@ -1217,7 +1265,7 @@ namespace Funplay.Editor.Tools.Builtins
                 if (safeAreaOverlay.HasValue)
                     DrawSafeAreaOverlay(screenshot, safeAreaOverlay.Value, sourceWidth, sourceHeight);
 
-                return FinishCapture(screenshot.EncodeToPNG(), saveToFile, outputPath, defaultBaseName);
+                return FinishCapture(screenshot.EncodeToPNG(), saveToFile, outputPath, defaultBaseName, extra: extra);
             }
             catch (Exception ex)
             {

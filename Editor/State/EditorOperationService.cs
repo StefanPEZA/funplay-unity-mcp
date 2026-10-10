@@ -19,8 +19,11 @@ namespace Funplay.Editor.State
         private const string SessionKey = "Funplay.EditorOperation.Session";
         private const int JournalIoAttempts = 5;
         internal static readonly string JournalPath = Path.Combine(Path.GetDirectoryName(Application.dataPath), "Library/FunplayMcp/Operations/editor-operations.json");
-        private static readonly List<EditorOperation> Operations;
-        private static readonly EditorOperationCoordinator Coordinator;
+        private static readonly List<EditorOperation> Operations = new List<EditorOperation>();
+        private static EditorOperationCoordinator Coordinator;
+        private static string session;
+        // True while the journal could not be read (e.g. locked); every entry point retries the read.
+        private static bool journalReadPending;
         private static Task<EditorRefreshResult> refreshTask;
         private static string refreshError;
         private static bool recoveredRefresh;
@@ -34,29 +37,83 @@ namespace Funplay.Editor.State
 
         static EditorOperationService()
         {
-            var session = SessionState.GetString(SessionKey, "");
+            session = SessionState.GetString(SessionKey, "");
             if (string.IsNullOrEmpty(session)) { session = Guid.NewGuid().ToString("N"); SessionState.SetString(SessionKey, session); }
-            Operations = new List<EditorOperation>();
-            try
-            {
-                if (File.Exists(JournalPath))
-                    Operations = JsonConvert.DeserializeObject<List<EditorOperation>>(RetryJournalIo(_ => File.ReadAllText(JournalPath))) ?? Operations;
-                if (!EditorOperationCoordinator.ValidJournal(Operations)) throw new InvalidDataException("Invalid operation journal; no actions will be replayed.");
-            }
-            catch (Exception ex) { Operations = new List<EditorOperation>(); JournalError = "Cannot read operation journal: " + ex.Message; }
-            try { Coordinator = new EditorOperationCoordinator(Operations, session, Save, Now); }
-            catch (Exception ex)
-            {
-                // Keep diagnostics callable even when a restarted operation cannot be persisted.
-                Operations = new List<EditorOperation>(); JournalError = "Cannot recover operation journal: " + ex.Message;
-                Coordinator = new EditorOperationCoordinator(Operations, session, Save, Now);
-            }
-            recoveredRefresh = Coordinator.Active?.step == 2 && Coordinator.Active.refresh_assets;
+            LoadJournal();
             EditorApplication.update += Tick;
             AssemblyReloadEvents.beforeAssemblyReload += () => Coordinator.Reload(Now);
             CompilationPipeline.assemblyCompilationFinished += (_, messages) =>
                 Coordinator.CompilerErrors(messages.Where(x => x.type == CompilerMessageType.Error)
                     .Select(x => $"{x.file}({x.line},{x.column}): {x.message}"), Now);
+        }
+
+        /// <summary>
+        /// Reads the journal into <see cref="Operations"/> and rebuilds the coordinator (which resumes an
+        /// active operation). A locked file leaves the read pending, retried lazily by the next call,
+        /// instead of disabling operations for the whole domain; a corrupt journal is moved aside.
+        /// </summary>
+        private static void LoadJournal()
+        {
+            List<EditorOperation> loaded = null;
+            journalReadPending = false;
+            try
+            {
+                if (File.Exists(JournalPath))
+                {
+                    var json = RetryJournalIo(_ => File.ReadAllText(JournalPath));
+                    loaded = ParseJournal(json, out var corruption);
+                    if (corruption != null)
+                    {
+                        var aside = MoveCorruptJournalAside(JournalPath);
+                        Debug.LogWarning($"[Funplay] The editor operation journal was unreadable ({corruption}) and was moved to '{aside}'. Earlier operation IDs are no longer available; nothing is replayed.");
+                        loaded = null;
+                    }
+                }
+                JournalError = null;
+                journalErrorFromSave = false;
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                journalReadPending = true;
+                JournalError = "Cannot read operation journal yet (it will be retried on the next call): " + ex.Message;
+            }
+
+            Operations.Clear();
+            if (loaded != null) Operations.AddRange(loaded);
+            try { Coordinator = new EditorOperationCoordinator(Operations, session, Save, Now); }
+            catch (Exception ex)
+            {
+                // Keep diagnostics callable even when a restarted operation cannot be persisted.
+                Operations.Clear(); JournalError = "Cannot recover operation journal: " + ex.Message;
+                Coordinator = new EditorOperationCoordinator(Operations, session, Save, Now);
+            }
+            recoveredRefresh = Coordinator.Active?.step == 2 && Coordinator.Active.refresh_assets;
+        }
+
+        /// <summary>Parses journal JSON; <paramref name="corruption"/> describes why it is unusable, or is null.</summary>
+        internal static List<EditorOperation> ParseJournal(string json, out string corruption)
+        {
+            corruption = null;
+            try
+            {
+                var operations = JsonConvert.DeserializeObject<List<EditorOperation>>(json ?? string.Empty) ?? new List<EditorOperation>();
+                if (!EditorOperationCoordinator.ValidJournal(operations)) { corruption = "invalid operation journal"; return null; }
+                return operations;
+            }
+            catch (JsonException ex) { corruption = ex.Message; return null; }
+        }
+
+        internal static string MoveCorruptJournalAside(string path)
+        {
+            var aside = Path.Combine(Path.GetDirectoryName(path) ?? ".", Path.GetFileNameWithoutExtension(path) + ".corrupt-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss") + ".json");
+            try { RetryJournalIo(_ => { File.Move(path, aside); return true; }); }
+            catch (Exception) { return path; }
+            return aside;
+        }
+
+        private static void EnsureJournalLoaded()
+        {
+            if (journalReadPending && Coordinator.Active == null) LoadJournal();
         }
 
         internal static object CurrentEditor() => Snapshot();
@@ -72,8 +129,10 @@ namespace Funplay.Editor.State
         };
         internal static object Start(string target, bool refresh, int timeout, string key)
         {
-            // A failed read disables operations for the session; a failed write is retried by the next save.
-            if (JournalError != null && !journalErrorFromSave) return Response.Error("OPERATION_JOURNAL_UNAVAILABLE", new { detail = JournalError, journal_path = JournalPath });
+            // An unread journal is retried on every call; a failed write is retried by the next save and
+            // reported as journal_error on the receipt (the operation itself runs from memory).
+            EnsureJournalLoaded();
+            if (journalReadPending) return Response.Error("OPERATION_JOURNAL_UNAVAILABLE", new { detail = JournalError, journal_path = JournalPath, retryable = true });
             try
             {
                 // Idempotent lookup must work even while the original operation imports assets.
@@ -91,13 +150,20 @@ namespace Funplay.Editor.State
         internal static object Get(string id, string key)
         {
             if (string.IsNullOrWhiteSpace(id) && string.IsNullOrWhiteSpace(key)) return Response.Error("OPERATION_ID_OR_REQUEST_KEY_REQUIRED");
+            EnsureJournalLoaded();
+            if (journalReadPending) return Response.Error("OPERATION_JOURNAL_UNAVAILABLE", new { detail = JournalError, journal_path = JournalPath, retryable = true });
             var op = Operations.LastOrDefault(x => (string.IsNullOrEmpty(id) || x.operation_id == id) && (string.IsNullOrEmpty(key) || x.request_key == key));
-            return op == null ? Response.Error("OPERATION_NOT_FOUND", new { retained = 32 }) : Receipt(op);
+            if (op != null) return Receipt(op);
+            return Response.Error("OPERATION_NOT_FOUND", string.IsNullOrEmpty(id)
+                ? (object)new { retained = 32, request_key = key, hint = "No operation was started with this request_key: the request never started (e.g. it was still queued when a reload began). Repeating prepare_editor with the same request_key is safe." }
+                : new { retained = 32 });
         }
-        internal static object List() => Response.Success("Recent editor operations (newest first).", new
+        internal static object List() { EnsureJournalLoaded(); return ListCore(); }
+        private static object ListCore() => Response.Success("Recent editor operations (newest first).", new
         { operations = Operations.AsEnumerable().Reverse().ToArray(), current_editor = CurrentEditor(), journal_path = JournalPath, journal_error = JournalError });
         internal static object Cancel(string id)
         {
+            EnsureJournalLoaded();
             var op = Operations.LastOrDefault(x => x.operation_id == id);
             if (op == null) return Response.Error("OPERATION_NOT_FOUND");
             Coordinator.Cancel(op, Now);
@@ -155,14 +221,14 @@ namespace Funplay.Editor.State
                 Directory.CreateDirectory(Path.GetDirectoryName(JournalPath));
                 var temp = JournalPath + ".tmp";
                 var json = JsonConvert.SerializeObject(Operations, Formatting.Indented);
+                // Always temp + replace: an in-place overwrite can leave a truncated journal behind
+                // that the next domain then fails to parse. A reader holding the file open blocks
+                // File.Replace ("Unable to remove the file to be replaced"); that is retried.
                 RetryJournalIo(attempt =>
                 {
                     File.WriteAllText(temp, json);
                     if (!File.Exists(JournalPath)) File.Move(temp, JournalPath);
-                    // File.Replace must delete the destination, which a reader holding it open blocks
-                    // ("Unable to remove the file to be replaced"); the last attempt overwrites in place.
-                    else if (attempt < JournalIoAttempts) File.Replace(temp, JournalPath, null);
-                    else { File.Copy(temp, JournalPath, true); File.Delete(temp); }
+                    else File.Replace(temp, JournalPath, null);
                     return true;
                 });
                 // A transient write failure must not disable operations for the rest of the session.
@@ -170,9 +236,9 @@ namespace Funplay.Editor.State
             }
             catch (Exception ex)
             {
-                // A read failure stays sticky: a later save failure must not downgrade it to retryable.
-                if (JournalError == null || journalErrorFromSave) { JournalError = ex.Message; journalErrorFromSave = true; }
-                throw;
+                // The operation keeps running from memory; the receipt carries journal_error and the
+                // next save retries. Only a reload before that would lose it.
+                if (JournalError == null || journalErrorFromSave) { JournalError = "Cannot write operation journal: " + ex.Message; journalErrorFromSave = true; }
             }
         }
 

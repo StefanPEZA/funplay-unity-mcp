@@ -174,6 +174,7 @@ namespace Funplay.Editor.Tools
                 };
             }
 
+            MCP.Server.MCPToolListChangeNotifier.MarkChanged();
             PluginDebugLogger.Log($"[Funplay] Registered manual tool: {name}");
         }
 
@@ -182,10 +183,14 @@ namespace Funplay.Editor.Tools
         /// </summary>
         public static void Unregister(string name)
         {
+            bool removed;
             lock (_lock)
             {
-                _manualTools.Remove(name);
+                removed = _manualTools.Remove(name);
             }
+
+            if (removed)
+                MCP.Server.MCPToolListChangeNotifier.MarkChanged();
         }
 
         /// <summary>
@@ -194,13 +199,14 @@ namespace Funplay.Editor.Tools
         /// </summary>
         public static void SetEnabled(string name, bool enabled)
         {
+            bool changed;
             lock (_lock)
             {
-                if (enabled)
-                    _disabledTools.Remove(name);
-                else
-                    _disabledTools.Add(name);
+                changed = enabled ? _disabledTools.Remove(name) : _disabledTools.Add(name);
             }
+
+            if (changed)
+                MCP.Server.MCPToolListChangeNotifier.MarkChanged();
         }
 
         /// <summary>

@@ -30,13 +30,13 @@ namespace Funplay.Editor.Tests
                 Assert.IsTrue(File.Exists(agentsPath));
                 Assert.IsTrue(File.Exists(skillPath));
                 var agentsContent = File.ReadAllText(agentsPath);
-                StringAssert.Contains("unity-mcp-workflow@1.0.6", agentsContent);
+                StringAssert.Contains("unity-mcp-workflow@1.0.7", agentsContent);
                 StringAssert.Contains("unity-ui-composition@1.0.8", agentsContent);
                 StringAssert.Contains(ProjectSkillsManager.ManagedEndMarker, File.ReadAllText(agentsPath));
                 StringAssert.Contains(ProjectSkillsManager.ManagedEndMarker, File.ReadAllText(claudePath));
                 var skillContent = File.ReadAllText(skillPath);
-                StringAssert.Contains("- Skill version: `1.0.6`", skillContent);
-                StringAssert.Contains("<!-- Funplay Unity MCP skill version: unity-mcp-workflow@1.0.6 -->", skillContent);
+                StringAssert.Contains("- Skill version: `1.0.7`", skillContent);
+                StringAssert.Contains("<!-- Funplay Unity MCP skill version: unity-mcp-workflow@1.0.7 -->", skillContent);
                 StringAssert.Contains(
                     "PORT=24312 # replace with the port shown in the Funplay MCP Server window",
                     skillContent);
@@ -45,7 +45,7 @@ namespace Funplay.Editor.Tests
                 var manifestJson = File.ReadAllText(ProjectSkillsManager.GetManifestPath(projectRoot));
                 StringAssert.Contains("\"skillVersions\"", manifestJson);
                 StringAssert.Contains("\"id\": \"unity-mcp-workflow\"", manifestJson);
-                StringAssert.Contains("\"version\": \"1.0.6\"", manifestJson);
+                StringAssert.Contains("\"version\": \"1.0.7\"", manifestJson);
                 StringAssert.Contains("\"id\": \"unity-ui-composition\"", manifestJson);
                 Assert.IsTrue(manifest.skillVersions.Any(entry =>
                     entry.id == "unity-ui-composition" && entry.version == "1.0.8"));
@@ -371,7 +371,7 @@ namespace Funplay.Editor.Tests
                 ProjectSkillsManager.ApplyConfiguration(projectRoot, new[] { "codex" }, Array.Empty<string>());
                 var skillPath = GetCodexWorkflowSkillPath(projectRoot);
                 RemoveLinesContaining(skillPath, "Funplay Unity MCP skill version:");
-                RemoveLinesContaining(skillPath, "version: 1.0.6");
+                RemoveLinesContaining(skillPath, "version: 1.0.7");
 
                 var manifest = ProjectSkillsManager.LoadManifest(projectRoot);
                 var status = ProjectSkillsManager.GetUpgradeStatus(projectRoot, manifest, "codex");
@@ -380,7 +380,7 @@ namespace Funplay.Editor.Tests
                 Assert.IsTrue(status.HasUpdates);
                 Assert.IsTrue(skillStatus.RequiresUpgrade);
                 Assert.AreEqual("unknown", skillStatus.InstalledVersion);
-                Assert.AreEqual("1.0.6", skillStatus.ExpectedVersion);
+                Assert.AreEqual("1.0.7", skillStatus.ExpectedVersion);
             }
             finally
             {
@@ -406,7 +406,7 @@ namespace Funplay.Editor.Tests
                 Assert.IsTrue(status.HasUpdates);
                 Assert.IsTrue(skillStatus.Missing);
                 Assert.AreEqual("missing", skillStatus.InstalledVersion);
-                Assert.AreEqual("1.0.6", skillStatus.ExpectedVersion);
+                Assert.AreEqual("1.0.7", skillStatus.ExpectedVersion);
             }
             finally
             {
@@ -439,7 +439,7 @@ namespace Funplay.Editor.Tests
                 foreach (var file in current.Files)
                 {
                     File.WriteAllText(file.Path, File.ReadAllText(file.Path)
-                        .Replace("unity-mcp-workflow@1.0.6", "unity-mcp-workflow@1.0.3")
+                        .Replace("unity-mcp-workflow@1.0.7", "unity-mcp-workflow@1.0.3")
                         .Replace("unity-ui-composition@1.0.8", "unity-ui-composition@1.0.3"));
                 }
 
@@ -453,7 +453,7 @@ namespace Funplay.Editor.Tests
                 {
                     Assert.AreEqual("1.0.3", skill.InstalledVersion);
                     Assert.AreEqual(
-                        skill.SkillId == "unity-ui-composition" ? "1.0.8" : "1.0.6",
+                        skill.SkillId == "unity-ui-composition" ? "1.0.8" : "1.0.7",
                         skill.ExpectedVersion);
                     Assert.IsTrue(skill.RequiresUpgrade);
                     Assert.IsFalse(skill.Missing);
@@ -508,13 +508,13 @@ namespace Funplay.Editor.Tests
                 // include shared project receipts while keeping workflow files untouched.
                 foreach (var file in current.Files.Where(file => file.SkillId != "unity-mcp-workflow"))
                     File.WriteAllText(file.Path, File.ReadAllText(file.Path)
-                        .Replace("unity-ui-composition@1.0.8", "unity-ui-composition@1.0.6"));
+                        .Replace("unity-ui-composition@1.0.8", "unity-ui-composition@1.0.7"));
 
                 var previous = ProjectSkillsManager.GetUpgradeStatus(projectRoot, manifest, platformId);
                 Assert.IsTrue(previous.HasUpdates);
                 Assert.IsFalse(previous.Files.Single(file => file.SkillId == "unity-mcp-workflow").RequiresUpgrade);
                 var ui = previous.Files.Single(file => file.SkillId == "unity-ui-composition");
-                Assert.AreEqual("1.0.6", ui.InstalledVersion);
+                Assert.AreEqual("1.0.7", ui.InstalledVersion);
                 Assert.AreEqual("1.0.8", ui.ExpectedVersion);
                 Assert.IsTrue(ui.RequiresUpgrade);
 

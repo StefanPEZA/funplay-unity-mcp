@@ -1,4 +1,5 @@
 // Copyright (C) Funplay. Licensed under MIT.
+using System;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using System.IO;
 using Funplay.Editor.Tools.Helpers;
@@ -115,16 +116,48 @@ namespace Funplay.Editor.Tools.Builtins
             return sb.ToString();
         }
 
-        [Description("Delete an asset")]
+        [Description("Move an asset under Assets/ to the OS trash (recoverable; not a permanent delete). " +
+                     "Folders require recursive=true. Paths outside Assets/ (Packages, ProjectSettings) are refused.")]
         [SceneEditingTool]
-        public static string DeleteAsset(
-            [ToolParam("Path to the asset")] string path)
+        public static object DeleteAsset(
+            [ToolParam("Project-relative path under Assets/ (e.g. 'Assets/Old/Icon.png')")] string path,
+            [ToolParam("Allow moving a folder and everything in it to the trash", Required = false)] bool recursive = false)
         {
-            if (!File.Exists(path) && !Directory.Exists(path))
-                return ToolResultFormatter.Error("ASSET_NOT_FOUND", new { path });
+            if (!TryNormalizeAssetsPath(path, out var normalized))
+                return Response.Error("INVALID_ASSET_PATH", new { path, expected = "A project-relative path under Assets/ (not Assets itself)" });
 
-            bool deleted = AssetDatabase.DeleteAsset(path);
-            return deleted ? $"Deleted asset: {path}" : ToolResultFormatter.Error("ASSET_DELETE_FAILED", new { path });
+            var isFolder = AssetDatabase.IsValidFolder(normalized);
+            if (!isFolder && !File.Exists(normalized))
+                return Response.Error("ASSET_NOT_FOUND", new { path = normalized });
+            if (isFolder && !recursive)
+                return Response.Error("FOLDER_REQUIRES_RECURSIVE", new
+                {
+                    path = normalized,
+                    asset_count = AssetDatabase.FindAssets(string.Empty, new[] { normalized }).Length,
+                    hint = "Pass recursive=true to move the folder and its contents to the trash."
+                });
+
+            if (!AssetDatabase.MoveAssetToTrash(normalized))
+                return Response.Error("ASSET_DELETE_FAILED", new { path = normalized });
+
+            return Response.Success($"Moved to trash: {normalized}", new { path = normalized, folder = isFolder, recoverable = true });
+        }
+
+        internal static bool TryNormalizeAssetsPath(string path, out string normalized)
+        {
+            normalized = null;
+            if (string.IsNullOrWhiteSpace(path))
+                return false;
+
+            var candidate = path.Trim().Replace('\\', '/').TrimEnd('/');
+            if (Path.IsPathRooted(candidate) || !candidate.StartsWith("Assets/", StringComparison.Ordinal))
+                return false;
+            foreach (var segment in candidate.Split('/'))
+                if (segment == ".." || segment == "." || segment.Length == 0)
+                    return false;
+
+            normalized = candidate;
+            return true;
         }
 
         [Description("Rename an asset")]

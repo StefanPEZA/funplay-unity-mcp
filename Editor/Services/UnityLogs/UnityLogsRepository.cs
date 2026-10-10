@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using Funplay.Editor.Tools.Helpers;
 using UnityEngine;
 
 namespace Funplay.Editor.Services.UnityLogs
@@ -12,6 +13,7 @@ namespace Funplay.Editor.Services.UnityLogs
         private const int MaxLogs = 200;
 
         private readonly List<LogEntry> _logs = new List<LogEntry>();
+        private readonly HashSet<string> _schedulerMessages = new HashSet<string>();
         private readonly object _lock = new object();
         private bool _isListening;
 
@@ -84,7 +86,21 @@ namespace Funplay.Editor.Services.UnityLogs
             var groupSuffix = groupDuplicates && uniqueCount < lines.Count
                 ? $", {uniqueCount} unique"
                 : string.Empty;
-            return $"Console logs ({lines.Count} entries{groupSuffix}, filter: {filter}, source: cache{timeSuffix}{textSuffix}):\n{sb}";
+            return $"Console logs ({lines.Count} entries{groupSuffix}, filter: {filter}, source: cache{timeSuffix}{textSuffix}):\n{sb}{SchedulerSummary(filter)}";
+        }
+
+        /// <summary>Collapsed UI Toolkit scheduler exceptions (counted, not cached one by one).</summary>
+        internal static string SchedulerSummary(string filter)
+        {
+            if (filter != "all" && filter != "error")
+                return string.Empty;
+            var entries = SchedulerStallMonitor.SchedulerExceptions;
+            if (entries.Count == 0)
+                return string.Empty;
+            var sb = new StringBuilder("UI Toolkit scheduler exceptions (repeats collapsed; a throwing scheduled item stalls its panel's later scheduled work):\n");
+            foreach (var entry in entries)
+                sb.Append($"  {TruncateLine(entry.Message)} (x{entry.Count}, frames {entry.FirstFrame}..{entry.LastFrame})\n");
+            return sb.ToString();
         }
 
         internal static bool MatchesTextFilter(string line, string filterText)
@@ -171,6 +187,7 @@ namespace Funplay.Editor.Services.UnityLogs
             lock (_lock)
             {
                 _logs.Clear();
+                _schedulerMessages.Clear();
             }
         }
 
@@ -189,6 +206,11 @@ namespace Funplay.Editor.Services.UnityLogs
 
             lock (_lock)
             {
+                // A scheduled item that throws is rethrown every tick; keep its first occurrence and count
+                // the rest (SchedulerStallMonitor) so the flood doesn't evict every other log.
+                if (SchedulerStallMonitor.IsSchedulerException(type, stackTrace) && !_schedulerMessages.Add(FirstLine(message)))
+                    return;
+
                 _logs.Add(new LogEntry
                 {
                     Message = message,

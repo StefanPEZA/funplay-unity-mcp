@@ -132,6 +132,59 @@ namespace Funplay.Editor.Tools.Helpers
             else if (ownedIndex >= 0) warnings.Add("Preview size preset is still selected by a Game View; retained it.");
             view?.Repaint();
         }
+        private static IEnumerable<EditorWindow> GameViews()
+        {
+            foreach (var window in Resources.FindObjectsOfTypeAll<EditorWindow>())
+                if (window.GetType().FullName == "UnityEditor.GameView") yield return window;
+        }
+
+        private static string SelectedLabel(object group, EditorWindow view)
+        {
+            try { return (string)Get(Invoke(group, "GetGameViewSize", (int)Get(view, "selectedSizeIndex")), "baseText"); }
+            catch (Exception) { return null; }
+        }
+
+        /// <summary>
+        /// After an Editor restart the journaled window IDs are stale (or name another window); point the states at the Game View
+        /// that still shows <paramref name="label"/> so <see cref="Restore"/> can select the original size.
+        /// </summary>
+        internal static void Rebind(PreviewViewState original, PreviewViewState applied, string label, bool idsFromAnotherSession)
+        {
+            if (original == null) return;
+            if (!idsFromAnotherSession && ObjectIdHelper.ToObject(original.window_id) is EditorWindow known &&
+                known.GetType().FullName == "UnityEditor.GameView") return;
+            var sizes = Sizes(); if (sizes == null) return;
+            var group = Group(sizes, original.group);
+            foreach (var view in GameViews())
+                if (SelectedLabel(group, view) == label)
+                {
+                    original.window_id = ObjectIdHelper.GetSerializableId(view);
+                    if (applied != null) applied.window_id = original.window_id;
+                    return;
+                }
+        }
+
+        /// <summary>Removes custom sizes named <paramref name="prefix"/>* that no Game View shows and that are not in <paramref name="keep"/>.</summary>
+        internal static int RemoveUnusedOwnedSizes(string prefix, ICollection<string> keep)
+        {
+            var sizes = Sizes(); if (sizes == null) return 0;
+            var group = Group(sizes, Get(sizes, "currentGroupType").ToString());
+            if (group.GetType().GetMethod("RemoveCustomSize", Flags) == null) return 0;
+            var removed = 0;
+            for (var i = (int)Invoke(group, "GetTotalCount") - 1; i >= 0; i--)
+            {
+                var label = (string)Get(Invoke(group, "GetGameViewSize", i), "baseText");
+                if (label == null || !label.StartsWith(prefix, StringComparison.Ordinal) || keep.Contains(label)) continue;
+                var views = new List<EditorWindow>(GameViews());
+                if (views.Exists(v => (int)Get(v, "selectedSizeIndex") == i)) continue;
+                foreach (var view in views)
+                    if ((int)Get(view, "selectedSizeIndex") > i) Set(view, "selectedSizeIndex", (int)Get(view, "selectedSizeIndex") - 1);
+                Invoke(group, "RemoveCustomSize", i);
+                removed++;
+            }
+            return removed;
+        }
+
         internal static bool Matches(PreviewViewState expected, PreviewViewState actual) => expected != null && actual != null &&
             expected.window_id == actual.window_id && expected.group == actual.group && expected.size_signature == actual.size_signature &&
             expected.target_display == actual.target_display && expected.low_resolution == actual.low_resolution &&

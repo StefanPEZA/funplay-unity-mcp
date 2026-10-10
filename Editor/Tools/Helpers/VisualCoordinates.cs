@@ -41,6 +41,22 @@ namespace Funplay.Editor.Tools.Helpers
                 is_playing = EditorApplication.isPlaying, scene_signature = SceneSignature(), camera_signature = CameraSignature()
             };
         }
+        /// <summary>
+        /// Geometry of a crop of the Game View framebuffer (render pixels, bottom-left origin), upscaled by
+        /// <paramref name="scale"/>. The crop is a viewport offset: the full render maps to an image-space
+        /// rect starting at -crop*scale, so image pixels of the crop still convert to render pixels and the
+        /// capture_id works for picks and clicks.
+        /// </summary>
+        internal static VisualGeometry CreateCrop(int renderWidth, int renderHeight, RectInt crop, int scale)
+        {
+            if (scale < 1 || crop.width < 1 || crop.height < 1 || crop.xMin < 0 || crop.yMin < 0 || crop.xMax > renderWidth || crop.yMax > renderHeight)
+                throw new ArgumentException("Invalid crop.");
+            var geometry = Create("game_view", renderWidth, renderHeight, crop.width * scale, crop.height * scale, true);
+            geometry.viewport = new VisualRect { x = -crop.xMin * scale, y = -crop.yMin * scale, width = renderWidth * scale, height = renderHeight * scale };
+            geometry.output_to_render_x = geometry.output_to_render_y = 1f / scale;
+            return geometry;
+        }
+
         internal static VisualGeometry Current()
         {
             var view = ScreenshotFunctions.GetMainPlayModeView();

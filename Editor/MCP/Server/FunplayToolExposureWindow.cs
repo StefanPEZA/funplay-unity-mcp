@@ -25,6 +25,8 @@ namespace Funplay.Editor.MCP.Server
         private PopupField<string> _editProfileField;
         private Label _statusLabel;
         private Label _descriptionLabel;
+        private VisualElement _newToolsRow;
+        private Label _newToolsLabel;
         private ScrollView _toolScrollView;
         private List<string> _allToolNames = new List<string>();
         private readonly Dictionary<string, string> _toolCategories = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -145,10 +147,27 @@ namespace Funplay.Editor.MCP.Server
 
             rootVisualElement.Add(buttonRow);
 
+            rootVisualElement.Add(BuildOptionalPacksRow());
+
             _statusLabel = new Label();
             _statusLabel.style.fontSize = 11;
             _statusLabel.style.marginBottom = 6;
             rootVisualElement.Add(_statusLabel);
+
+            _newToolsRow = new VisualElement();
+            _newToolsRow.style.flexDirection = FlexDirection.Row;
+            _newToolsRow.style.alignItems = Align.Center;
+            _newToolsRow.style.marginBottom = 6;
+            _newToolsLabel = new Label();
+            _newToolsLabel.style.fontSize = 11;
+            _newToolsLabel.style.color = new Color(0.95f, 0.8f, 0.4f);
+            _newToolsLabel.style.flexShrink = 1;
+            _newToolsLabel.style.whiteSpace = WhiteSpace.Normal;
+            _newToolsRow.Add(_newToolsLabel);
+            var addNewToolsButton = CreateActionButton("Add", AddMissingDefaultCoreTools, 52, new Color(0.24f, 0.42f, 0.58f));
+            addNewToolsButton.style.marginLeft = 6;
+            _newToolsRow.Add(addNewToolsButton);
+            rootVisualElement.Add(_newToolsRow);
 
             _descriptionLabel = new Label();
             _descriptionLabel.style.fontSize = 11;
@@ -172,6 +191,42 @@ namespace Funplay.Editor.MCP.Server
             LoadEditingTools();
             RebuildToolList();
             RefreshStatus();
+        }
+
+        /// <summary>Toggles for the optional packs added to the default Core list.</summary>
+        private VisualElement BuildOptionalPacksRow()
+        {
+            var row = new VisualElement();
+            row.style.flexDirection = FlexDirection.Row;
+            row.style.flexWrap = Wrap.Wrap;
+            row.style.alignItems = Align.Center;
+            row.style.marginBottom = 8;
+
+            var label = new Label("Core packs:");
+            label.style.fontSize = 11;
+            label.style.marginRight = 6;
+            label.tooltip = "Optional tool groups added to the default Core list. The UI framework pack is chosen in the MCP Server window.";
+            row.Add(label);
+
+            foreach (var pack in MCPToolExportPolicy.OptionalPacks.Keys.OrderBy(name => name, StringComparer.Ordinal))
+            {
+                var toggle = new Toggle(char.ToUpperInvariant(pack[0]) + pack.Substring(1));
+                toggle.tooltip = string.Join(", ", MCPToolExportPolicy.OptionalPacks[pack].OrderBy(name => name, StringComparer.Ordinal));
+                toggle.SetValueWithoutNotify(_settingsController.MCPOptionalCorePacks.Contains(pack, StringComparer.OrdinalIgnoreCase));
+                toggle.style.marginRight = 10;
+                toggle.RegisterValueChangedCallback(evt =>
+                {
+                    var packs = new HashSet<string>(_settingsController.MCPOptionalCorePacks, StringComparer.OrdinalIgnoreCase);
+                    if (evt.newValue) packs.Add(pack); else packs.Remove(pack);
+                    _settingsController.MCPOptionalCorePacks = packs.ToArray();
+                    LoadEditingTools();
+                    RebuildToolList();
+                    RefreshStatus();
+                });
+                row.Add(toggle);
+            }
+
+            return row;
         }
 
         private Button CreateActionButton(string text, Action action, int width, Color color)
@@ -209,14 +264,13 @@ namespace Funplay.Editor.MCP.Server
         {
             if (string.Equals(profile, "full", StringComparison.OrdinalIgnoreCase))
             {
-                return _settingsController.MCPFullToolsConfigured
-                    ? _settingsController.MCPFullTools
-                    : _allToolNames;
+                var excluded = new HashSet<string>(_settingsController.MCPFullToolsExcluded, StringComparer.OrdinalIgnoreCase);
+                return _allToolNames.Where(tool => !excluded.Contains(tool));
             }
 
             return _settingsController.MCPCoreToolsConfigured
                 ? _settingsController.MCPCoreTools
-                : MCPToolExportPolicy.DefaultCoreTools.Where(tool => _allToolNames.Contains(tool, StringComparer.OrdinalIgnoreCase));
+                : MCPToolExportPolicy.GetDefaultCoreTools(_settingsController).Where(tool => _allToolNames.Contains(tool, StringComparer.OrdinalIgnoreCase));
         }
 
         private bool IsEditingProfileConfigured()
@@ -354,7 +408,7 @@ namespace Funplay.Editor.MCP.Server
         private void UseDefaultTools()
         {
             if (string.Equals(_editingProfile, "full", StringComparison.OrdinalIgnoreCase))
-                _settingsController.MCPFullTools = null;
+                _settingsController.MCPFullToolsExcluded = null;
             else
                 _settingsController.MCPCoreTools = null;
 
@@ -370,11 +424,44 @@ namespace Funplay.Editor.MCP.Server
                 .OrderBy(tool => tool, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
+            // Full is stored as the tools switched off, so tools added by later versions stay exposed.
+            // Core is stored as "default" when the selection equals the built-in list, so it follows
+            // future changes to that list instead of freezing it.
             if (string.Equals(_editingProfile, "full", StringComparison.OrdinalIgnoreCase))
-                _settingsController.MCPFullTools = selected;
+                _settingsController.MCPFullToolsExcluded = _allToolNames
+                    .Where(tool => !_editingTools.Contains(tool))
+                    .ToArray();
             else
-                _settingsController.MCPCoreTools = selected;
+                _settingsController.MCPCoreTools = MCPToolExportPolicy.IsDefaultCoreSelection(selected, MCPToolExportPolicy.GetDefaultCoreTools(_settingsController)) ? null : selected;
 
+            RefreshStatus();
+        }
+
+        /// <summary>Default Core tools the saved custom Core list doesn't have (typically tools added by a newer version).</summary>
+        private List<string> GetMissingDefaultCoreTools()
+        {
+            if (_settingsController == null || !_settingsController.MCPCoreToolsConfigured)
+                return new List<string>();
+
+            var saved = new HashSet<string>(_settingsController.MCPCoreTools, StringComparer.OrdinalIgnoreCase);
+            return MCPToolExportPolicy.GetDefaultCoreTools(_settingsController)
+                .Where(tool => !saved.Contains(tool) && _allToolNames.Contains(tool, StringComparer.OrdinalIgnoreCase))
+                .OrderBy(tool => tool, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private void AddMissingDefaultCoreTools()
+        {
+            var missing = GetMissingDefaultCoreTools();
+            if (missing.Count == 0)
+                return;
+
+            _settingsController.MCPCoreTools = _settingsController.MCPCoreTools.Concat(missing).ToArray();
+            if (!string.Equals(_editingProfile, "full", StringComparison.OrdinalIgnoreCase))
+            {
+                LoadEditingTools();
+                RebuildToolList();
+            }
             RefreshStatus();
         }
 
@@ -382,6 +469,13 @@ namespace Funplay.Editor.MCP.Server
         {
             if (_settingsController == null)
                 return;
+
+            if (_newToolsRow != null)
+            {
+                var missing = GetMissingDefaultCoreTools();
+                _newToolsRow.style.display = missing.Count > 0 ? DisplayStyle.Flex : DisplayStyle.None;
+                _newToolsLabel.text = $"{missing.Count} default Core tool(s) are not in your custom Core list: {string.Join(", ", missing)}";
+            }
 
             var activeProfile = GetActiveProfile();
             if (_editProfileField != null)

@@ -99,6 +99,14 @@ namespace Funplay.Editor.State
                 return EditorOperationAction.None;
             }
             if (now - op.created_seconds < .25) return EditorOperationAction.None; // Let the receipt leave the server.
+            // Leave Play Mode before waiting on compilation: with "Recompile After Finished Playing" Unity
+            // keeps a script change pending (is_compiling) until Play Mode ends, so waiting first deadlocks.
+            if (op.step == 0 && s.is_playing && !s.is_changing_play_mode && (op.refresh_assets || op.target == "edit"))
+            {
+                op.step = 1;
+                Change(op, "exiting_play", "Exit requested; waiting for Edit Mode readback.", now);
+                return EditorOperationAction.ExitPlay;
+            }
             if (s.is_compiling || s.is_updating || s.is_changing_play_mode)
             {
                 op.settle_since = 0;

@@ -279,20 +279,72 @@ namespace Funplay.Editor.Tests
         }
         [Test] public void FocusedCoreRetainsDailyWorkAndSafeCancellationWhileFullKeepsManagement()
         {
-            Assert.AreEqual(45, MCPToolExportPolicy.DefaultCoreTools.Count);
-            foreach (var name in new[] { "get_task", "prepare_editor", "audit_ui", "cancel_ui_audit", "cancel_editor_operation", "record_game_view", "set_prefab_properties", "find_game_objects",
-                "get_ui_toolkit_info", "create_ui_toolkit_panel", "get_visual_tree", "click_ui_toolkit_element" })
+            // Base (57) + uGUI pack (4) + UI Toolkit pack (18).
+            Assert.AreEqual(57, MCPToolExportPolicy.BaseCoreToolList.Count);
+            Assert.AreEqual(79, MCPToolExportPolicy.DefaultCoreTools.Count);
+            foreach (var name in new[] { "get_task", "cancel_task", "prepare_editor", "audit_ui", "record_game_view", "set_prefab_properties", "find_game_objects",
+                "open_scene", "save_scene", "run_tests", "delete_asset", "open_prefab_stage", "get_scriptable_object",
+                "get_ui_toolkit_info", "create_ui_toolkit_panel", "get_visual_tree", "click_ui_toolkit_element", "configure_ui_toolkit_panel", "pick_ui_toolkit_element",
+                "set_game_view_size", "wait_for_ui_toolkit", "capture_ui_toolkit_element", "preview_ui_toolkit", "explain_style", "audit_ui_toolkit" })
                 Assert.Contains(name, MCPToolExportPolicy.DefaultCoreTools.ToArray());
             foreach (var name in new[] { "get_editor_operation", "list_editor_operations", "get_ui_audit", "get_ui_preview_session",
                 "start_ui_preview_session", "end_ui_preview_session", "configure_ui_defaults", "mark_recording", "get_performance_snapshot",
                 "capture_simulator_view", "capture_editor_window", "request_recompile", "wait_for_compilation", "enter_play_mode", "exit_play_mode",
-                "configure_ui_toolkit_panel", "pick_ui_toolkit_element", "create_panel_settings" })
+                "cancel_editor_operation", "cancel_ui_audit", "simulate_key_combo", "get_test_job", "write_file", "read_file" })
             {
                 Assert.IsNotNull(ToolRegistry.GetMethod(name), name + " must remain implemented");
                 Assert.IsFalse(MCPToolExportPolicy.DefaultCoreTools.Contains(name), name);
-                Assert.IsTrue(MCPToolExportPolicy.IsToolAllowed(name, MCPToolExportProfile.Full, false, null, false, null));
-                Assert.IsTrue(MCPToolExportPolicy.IsToolAllowed(name, MCPToolExportProfile.Core, true, new[] { name }, false, null), "Custom lists must stay authoritative");
+                Assert.IsTrue(MCPToolExportPolicy.IsToolAllowed(name, MCPToolExportProfile.Full, false, null, null));
+                Assert.IsTrue(MCPToolExportPolicy.IsToolAllowed(name, MCPToolExportProfile.Core, true, new[] { name }, null), "Custom lists must stay authoritative");
             }
+        }
+        [Test] public void EveryCoreAndPackToolIsRegistered()
+        {
+            var names = MCPToolExportPolicy.DefaultCoreTools
+                .Concat(MCPToolExportPolicy.OptionalPacks.Values.SelectMany(pack => pack));
+            foreach (var name in names)
+                Assert.IsNotNull(ToolRegistry.GetMethod(name), name);
+        }
+        [Test] public void UiPackSelectsFrameworkTools()
+        {
+            var ugui = MCPToolExportPolicy.BuildDefaultCore("ugui", null);
+            var uitk = MCPToolExportPolicy.BuildDefaultCore("uitk", null);
+            Assert.IsTrue(ugui.Contains("audit_ui") && !ugui.Contains("get_visual_tree"));
+            Assert.IsTrue(uitk.Contains("get_visual_tree") && !uitk.Contains("audit_ui"));
+            Assert.IsTrue(MCPToolExportPolicy.BuildDefaultCore("", null).IsSupersetOf(ugui.Union(uitk)), "undetected exposes both");
+            Assert.IsTrue(MCPToolExportPolicy.BuildDefaultCore("uitk", new[] { "lighting" }).Contains("bake_lightmaps"));
+
+            var settings = TempSettingsScope.Create("core");
+            settings.MCPDetectedUiPack = "uitk";
+            Assert.AreEqual("uitk", MCPToolExportPolicy.GetEffectiveUiPack(settings));
+            Assert.IsTrue(MCPToolExportPolicy.IsToolAllowed("get_visual_tree", settings));
+            Assert.IsFalse(MCPToolExportPolicy.IsToolAllowed("audit_ui", settings));
+            settings.MCPUiPack = "both";
+            Assert.IsTrue(MCPToolExportPolicy.IsToolAllowed("audit_ui", settings));
+            settings.MCPOptionalCorePacks = new[] { "packages" };
+            Assert.IsTrue(MCPToolExportPolicy.IsToolAllowed("list_packages", settings));
+        }
+        [Test] public void UiFrameworkClassification()
+        {
+            Assert.AreEqual("both", MCPUiFrameworkDetector.Classify(true, true));
+            Assert.AreEqual("both", MCPUiFrameworkDetector.Classify(false, false));
+            Assert.AreEqual("ugui", MCPUiFrameworkDetector.Classify(true, false));
+            Assert.AreEqual("uitk", MCPUiFrameworkDetector.Classify(false, true));
+            var file = System.IO.Path.GetTempFileName();
+            try
+            {
+                System.IO.File.WriteAllText(file, "%YAML 1.1\n--- !u!1 &1\nGameObject:\n--- !u!223 &2\nCanvas:\n");
+                Assert.IsTrue(MCPUiFrameworkDetector.FileContainsCanvas(file));
+                System.IO.File.WriteAllText(file, "%YAML 1.1\n--- !u!1 &1\nGameObject:\n");
+                Assert.IsFalse(MCPUiFrameworkDetector.FileContainsCanvas(file));
+            }
+            finally { System.IO.File.Delete(file); }
+        }
+        [Test] public void CancelTaskValidatesLikeGetTask()
+        {
+            Assert.AreEqual("INVALID_TASK_KIND", (string)JObject.FromObject(TaskStatusFunctions.CancelTask("x", "nope"))["code"]);
+            Assert.AreEqual("INVALID_TASK_ID", (string)JObject.FromObject(TaskStatusFunctions.CancelTask("editor:not-a-guid"))["code"]);
+            Assert.AreEqual("TASK_KIND_MISMATCH", (string)JObject.FromObject(TaskStatusFunctions.CancelTask("editor:" + Guid.NewGuid(), "tests"))["code"]);
         }
     }
 }

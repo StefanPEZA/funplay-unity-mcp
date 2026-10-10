@@ -53,7 +53,8 @@ namespace Funplay.Editor.Tools
                     name = functionName,
                     description = description,
                     parameters = parameters
-                }
+                },
+                annotations = ToolAnnotations.ForMethod(functionName, method)
             };
         }
 
@@ -93,6 +94,9 @@ namespace Funplay.Editor.Tools
                     propDef.@enum = new List<string>(Enum.GetNames(param.ParameterType));
                 }
 
+                if (param.HasDefaultValue)
+                    propDef.defaultValue = ToJsonDefault(param.DefaultValue, propDef.type);
+
                 var snakeName = ToolRegistry.ToSnakeCase(param.Name);
                 schema.properties[snakeName] = propDef;
 
@@ -105,6 +109,27 @@ namespace Funplay.Editor.Tools
             }
 
             return schema;
+        }
+
+        /// <summary>Default value as the JSON type the schema declares, or null when there is no meaningful default.</summary>
+        private static object ToJsonDefault(object value, string schemaType)
+        {
+            if (value == null || value is DBNull)
+                return null;
+
+            switch (schemaType)
+            {
+                case "boolean":
+                    return value is bool ? value : null;
+                case "integer":
+                    return Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
+                case "number":
+                    return Convert.ToDouble(value, System.Globalization.CultureInfo.InvariantCulture);
+                case "string":
+                    return value is Enum ? value.ToString() : value as string;
+                default:
+                    return null;
+            }
         }
 
         private static string GetJsonSchemaType(Type type)

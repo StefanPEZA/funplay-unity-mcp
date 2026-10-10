@@ -249,7 +249,7 @@ namespace Funplay.Editor
                 // project keeps its old port instead (see LegacySettings_KeepTheirPortPinned...).
                 Assert.IsFalse(controller.MCPServerPortConfigured);
                 StringAssert.Contains("\"portConfigured\": false", ReadSettingsJson(projectPath));
-                StringAssert.Contains("\"settingsVersion\": 1", ReadSettingsJson(projectPath));
+                StringAssert.Contains("\"settingsVersion\": 2", ReadSettingsJson(projectPath));
             }
             finally
             {

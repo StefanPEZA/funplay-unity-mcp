@@ -45,6 +45,16 @@ namespace Funplay.Editor.Tests
             coordinator.Tick(state, 103);
             Assert.AreEqual("ready", op.status);
         }
+        [Test] public void PlayExitsEvenWhileACompileWaitsForPlayModeToEnd()
+        {
+            state.is_playing = true; state.is_compiling = true;
+            var op = coordinator.Start("edit", true, 30, null, 100);
+            Assert.AreEqual(EditorOperationAction.ExitPlay, coordinator.Tick(state, 101), "a deferred compile must not block the exit it is waiting for");
+            Assert.AreEqual(EditorOperationAction.None, coordinator.Tick(state, 102));
+            Assert.AreEqual("compiling", op.phase);
+            state.is_playing = false; state.is_compiling = false;
+            Assert.AreEqual(EditorOperationAction.Refresh, coordinator.Tick(state, 103));
+        }
         [Test] public void PlayExitsBeforeRefreshAndEntersOnlyAfterReady()
         {
             state.is_playing = true;
@@ -174,6 +184,46 @@ namespace Funplay.Editor.Tests
             calls = 0;
             Assert.Throws<InvalidOperationException>(() => EditorOperationService.RetryJournalIo<int>(_ => { calls++; throw new InvalidOperationException(); }, 3, 1));
             Assert.AreEqual(1, calls);
+        }
+        [Test] public void CorruptJournalIsDetectedAndMovedAside()
+        {
+            Assert.IsNull(EditorOperationService.ParseJournal("[{\"operation_id\":", out var corruption));
+            Assert.IsNotNull(corruption, "truncated JSON is corrupt");
+            Assert.IsEmpty(EditorOperationService.ParseJournal("[]", out corruption));
+            Assert.IsNull(corruption);
+
+            var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "FunplayJournal_" + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(dir);
+            try
+            {
+                var path = System.IO.Path.Combine(dir, "editor-operations.json");
+                System.IO.File.WriteAllText(path, "{truncated");
+                var aside = EditorOperationService.MoveCorruptJournalAside(path);
+                Assert.IsFalse(System.IO.File.Exists(path));
+                Assert.IsTrue(System.IO.File.Exists(aside));
+                StringAssert.Contains(".corrupt-", aside);
+            }
+            finally { System.IO.Directory.Delete(dir, true); }
+        }
+        [Test] public void UnknownRequestKeyExplainsTheRequestNeverStarted()
+        {
+            var response = Newtonsoft.Json.Linq.JObject.FromObject(EditorOperationService.Get(null, "never-started-" + Guid.NewGuid().ToString("N")));
+            Assert.AreEqual("OPERATION_NOT_FOUND", (string)response["code"]);
+            StringAssert.Contains("never started", (string)response["data"]["hint"]);
+        }
+        [Test] public void BackToBackStartsWithNewKeysAreAllFound()
+        {
+            for (var i = 0; i < 50; i++)
+            {
+                var key = "b2b-" + i + "-" + Guid.NewGuid().ToString("N");
+                var started = Newtonsoft.Json.Linq.JObject.FromObject(EditorOperationService.Start("edit", false, 30, key));
+                Assert.IsTrue((bool)started["success"], started.ToString());
+                var id = (string)started["data"]["operation"]["operation_id"];
+                var found = Newtonsoft.Json.Linq.JObject.FromObject(EditorOperationService.Get(null, key));
+                Assert.IsTrue((bool)found["success"], found.ToString());
+                Assert.AreEqual(id, (string)found["data"]["operation"]["operation_id"]);
+                EditorOperationService.Cancel(id);
+            }
         }
     }
 }

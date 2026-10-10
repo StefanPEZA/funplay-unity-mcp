@@ -118,7 +118,7 @@ namespace Funplay.Editor.Tools.Builtins
                 tools = names.Select(name => new
                 {
                     name, implemented = true, enabled = ToolRegistry.IsEnabled(name),
-                    exposed = ToolRegistry.IsEnabled(name) && MCPToolExportPolicy.IsToolAllowed(name, profile, settings?.MCPCoreToolsConfigured ?? false, settings?.MCPCoreTools, settings?.MCPFullToolsConfigured ?? false, settings?.MCPFullTools),
+                    exposed = ToolRegistry.IsEnabled(name) && MCPToolExportPolicy.IsToolAllowed(name, settings),
                     read_only = ToolRegistry.GetMethod(name) != null && ToolRegistry.IsReadOnly(ToolRegistry.GetMethod(name)),
                     role = name == "execute_code" ? "fallback" : "structured"
                 }).ToArray(),

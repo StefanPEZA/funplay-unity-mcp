@@ -18,5 +18,11 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("UI audit finding offset", Required = false)] int offset = 0,
             [ToolParam("UI audit finding page size, 1..500", Required = false)] int limit = 100)
             => TaskStatusService.ValidateWait(wait_seconds) ?? TaskStatusService.Query(task_id, kind, request_key, after_revision, offset, limit);
+
+        [Description("Cancel an async task by the task_id get_task uses (editor preparation, UI audit, recording, recording frame extraction, tests). Repeating is safe. Already-started native work (imports, compilation, Play transitions) is not rolled back. UI preview sessions are ended with end_ui_preview_session instead.")]
+        public static object CancelTask(
+            [ToolParam("Namespaced task ID from data.task.task_id, e.g. 'editor:<id>'")] string task_id,
+            [ToolParam("Task kind when task_id is a bare ID: editor, ui_audit, recording, recording_frames or tests", Required = false)] string kind = null)
+            => TaskStatusService.Cancel(task_id, kind);
     }
 }

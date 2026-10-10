@@ -75,11 +75,77 @@ namespace Funplay.Editor.MCP.Server
             row.Add(settingsButton);
             parent.Add(row);
 
-            var hint = new Label("core reduces tool-list noise for AI clients. full exposes every tool.");
+            parent.Add(BuildUiPackRow());
+
+            var hint = new Label("core reduces tool-list noise for AI clients. full exposes every tool. The UI pack picks which UI framework's tools Core includes.");
+            hint.style.whiteSpace = WhiteSpace.Normal;
             hint.style.fontSize = 10;
             hint.style.color = new Color(0.65f, 0.65f, 0.65f);
             hint.style.marginBottom = 10;
             parent.Add(hint);
+        }
+
+        private VisualElement BuildUiPackRow()
+        {
+            var choices = new List<string> { "auto", "ugui", "uitk", "both" };
+            var current = string.IsNullOrEmpty(_settings.MCPUiPack) ? "auto" : _settings.MCPUiPack;
+            var field = new PopupField<string>("UI Pack", choices, Mathf.Max(0, choices.IndexOf(current)), FormatChoice, FormatChoice);
+            field.RegisterValueChangedCallback(evt =>
+            {
+                _settings.MCPUiPack = evt.newValue;
+                _refreshStatus?.Invoke();
+            });
+            field.style.flexGrow = 1;
+            field.style.flexShrink = 1;
+            field.style.minWidth = 0;
+            field.style.marginBottom = 0;
+
+            var redetect = new Button(() =>
+            {
+                MCPUiFrameworkDetector.Detect(_settings);
+                _refreshStatus?.Invoke();
+            })
+            {
+                text = "Re-detect",
+                tooltip = "Scan Assets/ again for UI Toolkit (PanelSettings, UXML, USS) and uGUI (Canvas in scenes/prefabs)."
+            };
+            redetect.style.marginLeft = 4;
+            redetect.style.height = 20;
+
+            // Keep the "auto (detected: …)" label current when detection finishes.
+            Action relabel = () => field.SetValueWithoutNotify(field.value);
+            field.RegisterCallback<AttachToPanelEvent>(_ => _settings.OnSettingsChanged += relabel);
+            field.RegisterCallback<DetachFromPanelEvent>(_ => _settings.OnSettingsChanged -= relabel);
+
+            var row = new VisualElement();
+            row.style.flexDirection = FlexDirection.Row;
+            row.style.alignItems = Align.Center;
+            row.style.marginBottom = 4;
+            row.Add(field);
+            row.Add(redetect);
+            return row;
+        }
+
+        private string FormatChoice(string choice)
+        {
+            switch (choice)
+            {
+                case "auto":
+                    var detected = _settings.MCPDetectedUiPack;
+                    return "auto (detected: " + (string.IsNullOrEmpty(detected) ? "pending" : Describe(detected)) + ")";
+                default:
+                    return Describe(choice);
+            }
+        }
+
+        private static string Describe(string pack)
+        {
+            switch (pack)
+            {
+                case "ugui": return "uGUI";
+                case "uitk": return "UI Toolkit";
+                default: return "uGUI + UI Toolkit";
+            }
         }
     }
 }

@@ -406,38 +406,116 @@ namespace Funplay.Editor.Tools.Helpers
         // ---- Element queries ---------------------------------------------------------------
 
         /// <summary>
-        /// Simple selector: <c>Type#name.class1.class2</c>, any part optional. The type matches
-        /// the element's own short (unqualified) type name or any base type's, so TextElement matches
-        /// Label. '.' always starts a class, so a namespace-qualified type such as the full names
-        /// get_visual_tree reports for custom elements must be given by its short name.
+        /// Selector: compound selectors <c>Type#name.class1.class2</c> joined by descendant (space) or
+        /// child (<c>&gt;</c>) combinators, e.g. <c>#pg-settings Button</c> or <c>.pg-setting &gt; Button</c>.
+        /// A compound may end with <c>:nth-of-type(n)</c> or <c>:nth-child(n)</c> (1-based, among the
+        /// parent's hierarchy children). The type matches the element's own short (unqualified) type name
+        /// or any base type's, so TextElement matches Label. '.' always starts a class, so a
+        /// namespace-qualified type such as the full names get_visual_tree reports for custom elements
+        /// must be given by its short name. The fields describe the rightmost (subject) compound.
         /// </summary>
         internal sealed class Selector
         {
             public string Type, Name;
             public List<string> Classes = new List<string>();
             public string Text;
+            public int NthOfType, NthChild;
+
+            /// <summary>Compound to the left of this one, and whether it must be the direct parent.</summary>
+            private Selector _ancestor;
+            private bool _ancestorIsParent;
+
+            private const string SupportedSyntax =
+                "Supported: Type#name.class compounds joined by spaces (descendant) or '>' (child), each optionally ending in :nth-of-type(n) or :nth-child(n).";
 
             public static Selector Parse(string selector, string text)
             {
                 var parsed = new Selector { Text = string.IsNullOrEmpty(text) ? null : text };
                 if (string.IsNullOrWhiteSpace(selector)) return parsed;
                 selector = selector.Trim();
-                if (selector.IndexOfAny(new[] { ' ', '>', ',', ':', '[' }) >= 0)
-                    throw new UIToolkitException("UNSUPPORTED_SELECTOR", "selector supports one compound selector: Type#name.class (no combinators, pseudo-classes or attributes).");
+                if (selector.IndexOfAny(new[] { ',', '[' }) >= 0)
+                    throw new UIToolkitException("UNSUPPORTED_SELECTOR", "Selector lists (',') and attribute selectors ('[') are not supported. " + SupportedSyntax);
 
+                // Split into compounds and combinators: whitespace = descendant, '>' = child.
+                var compounds = new List<string>();
+                var parentLinks = new List<bool>();
+                var current = new System.Text.StringBuilder();
+                var pendingChild = false;
+                var parenDepth = 0;
+                void Flush()
+                {
+                    if (current.Length == 0) return;
+                    if (compounds.Count > 0) parentLinks.Add(pendingChild);
+                    else if (pendingChild) throw new UIToolkitException("UNSUPPORTED_SELECTOR", "Selector cannot start with '>'. " + SupportedSyntax);
+                    compounds.Add(current.ToString());
+                    current.Clear();
+                    pendingChild = false;
+                }
+                foreach (var c in selector)
+                {
+                    if (c == '(') parenDepth++;
+                    if (c == ')') parenDepth--;
+                    if (parenDepth == 0 && (char.IsWhiteSpace(c) || c == '>'))
+                    {
+                        Flush();
+                        if (c == '>')
+                        {
+                            if (pendingChild) throw new UIToolkitException("UNSUPPORTED_SELECTOR", "Repeated '>' combinator. " + SupportedSyntax);
+                            pendingChild = true;
+                        }
+                        continue;
+                    }
+                    current.Append(c);
+                }
+                if (pendingChild && current.Length == 0)
+                    throw new UIToolkitException("UNSUPPORTED_SELECTOR", "Selector cannot end with '>'. " + SupportedSyntax);
+                Flush();
+
+                Selector previous = null;
+                for (var index = 0; index < compounds.Count; index++)
+                {
+                    var compound = index == compounds.Count - 1 ? parsed : new Selector();
+                    ParseCompound(compounds[index], compound);
+                    if (previous != null)
+                    {
+                        compound._ancestor = previous;
+                        compound._ancestorIsParent = parentLinks[index - 1];
+                    }
+                    previous = compound;
+                }
+                return parsed;
+            }
+
+            /// <summary>Parses one compound (<c>Type#name.class:nth-of-type(n)</c>, no combinators); used for name-path segments.</summary>
+            internal static Selector ParseCompound(string compound)
+            {
+                if (string.IsNullOrWhiteSpace(compound) || compound.Trim().IndexOfAny(new[] { ' ', '>', ',', '[' }) >= 0)
+                    throw new UIToolkitException("UNSUPPORTED_SELECTOR", $"'{compound}' is not a single compound selector (Type#name.class:nth-of-type(n)).");
+                var parsed = new Selector();
+                ParseCompound(compound.Trim(), parsed);
+                return parsed;
+            }
+
+            private static void ParseCompound(string compound, Selector parsed)
+            {
                 var i = 0;
                 string ReadToken()
                 {
                     var start = i;
-                    while (i < selector.Length && selector[i] != '#' && selector[i] != '.') i++;
-                    return selector.Substring(start, i - start);
+                    while (i < compound.Length && compound[i] != '#' && compound[i] != '.' && compound[i] != ':') i++;
+                    return compound.Substring(start, i - start);
                 }
 
                 parsed.Type = ReadToken();
                 if (parsed.Type.Length == 0) parsed.Type = null;
-                while (i < selector.Length)
+                while (i < compound.Length)
                 {
-                    var marker = selector[i++];
+                    var marker = compound[i++];
+                    if (marker == ':')
+                    {
+                        ParsePseudo(compound.Substring(i), parsed);
+                        return;
+                    }
                     var token = ReadToken();
                     if (token.Length == 0) throw new UIToolkitException("UNSUPPORTED_SELECTOR", "Empty name or class in selector.");
                     if (marker == '#')
@@ -447,10 +525,18 @@ namespace Funplay.Editor.Tools.Helpers
                     }
                     else parsed.Classes.Add(token);
                 }
-                return parsed;
             }
 
-            public bool IsEmpty => Type == null && Name == null && Classes.Count == 0 && Text == null;
+            private static void ParsePseudo(string pseudo, Selector parsed)
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(pseudo, @"^(nth-of-type|nth-child)\(\s*(\d+)\s*\)$");
+                if (!match.Success || !int.TryParse(match.Groups[2].Value, out var n) || n < 1)
+                    throw new UIToolkitException("UNSUPPORTED_SELECTOR", $"Unsupported pseudo-class ':{pseudo}'. " + SupportedSyntax);
+                if (match.Groups[1].Value == "nth-of-type") parsed.NthOfType = n;
+                else parsed.NthChild = n;
+            }
+
+            public bool IsEmpty => Type == null && Name == null && Classes.Count == 0 && Text == null && NthOfType == 0 && NthChild == 0 && _ancestor == null;
 
             public bool Matches(VisualElement element) =>
                 MatchesExceptText(element) && (Text == null || string.Equals(GetText(element), Text, StringComparison.OrdinalIgnoreCase));
@@ -470,7 +556,23 @@ namespace Funplay.Editor.Tools.Helpers
                 return Matches(element) ? element : null;
             }
 
-            private bool MatchesExceptText(VisualElement element)
+            private bool MatchesExceptText(VisualElement element) => MatchesCompound(element) && MatchesAncestors(element);
+
+            private bool MatchesAncestors(VisualElement element)
+            {
+                if (_ancestor == null) return true;
+                if (_ancestorIsParent)
+                {
+                    var parent = element.hierarchy.parent;
+                    return parent != null && _ancestor.MatchesCompound(parent) && _ancestor.MatchesAncestors(parent);
+                }
+                for (var parent = element.hierarchy.parent; parent != null; parent = parent.hierarchy.parent)
+                    if (_ancestor.MatchesCompound(parent) && _ancestor.MatchesAncestors(parent)) return true;
+                return false;
+            }
+
+            /// <summary>This compound alone (type, name, classes, position), ignoring text and ancestors.</summary>
+            internal bool MatchesCompound(VisualElement element)
             {
                 if (Name != null && element.name != Name) return false;
                 foreach (var cls in Classes)
@@ -481,6 +583,21 @@ namespace Funplay.Editor.Tools.Helpers
                     for (var t = element.GetType(); t != null && t != typeof(object); t = t.BaseType)
                         if (t.Name == Type) { matched = true; break; }
                     if (!matched) return false;
+                }
+                if (NthChild > 0 || NthOfType > 0)
+                {
+                    var parent = element.hierarchy.parent;
+                    if (parent == null) return false;
+                    int childIndex = 0, typeIndex = 0;
+                    for (var i = 0; i < parent.hierarchy.childCount; i++)
+                    {
+                        var sibling = parent.hierarchy[i];
+                        childIndex++;
+                        if (sibling.GetType() == element.GetType()) typeIndex++;
+                        if (ReferenceEquals(sibling, element)) break;
+                    }
+                    if (NthChild > 0 && childIndex != NthChild) return false;
+                    if (NthOfType > 0 && typeIndex != NthOfType) return false;
                 }
                 return true;
             }
@@ -535,17 +652,45 @@ namespace Funplay.Editor.Tools.Helpers
         internal static HashSet<VisualElement> HostRoots(IEnumerable<Component> hosts) =>
             new HashSet<VisualElement>(hosts.Select(GetRoot).Where(r => r != null));
 
+        /// <summary>
+        /// Resolves an element path relative to <paramref name="root"/>. Each '/' segment is either a
+        /// child index (as get_visual_tree reports) or a compound selector matched against the direct
+        /// hierarchy children (e.g. <c>#pg-settings/Button:nth-of-type(2)</c>), which survives sibling
+        /// reordering. Returns null when a segment matches nothing; throws AMBIGUOUS_ELEMENT when a
+        /// selector segment matches several children.
+        /// </summary>
         internal static VisualElement ResolvePath(VisualElement root, string path)
         {
             if (string.IsNullOrEmpty(path)) return root;
             var current = root;
             foreach (var part in path.Split('/'))
             {
-                if (!int.TryParse(part, out var index) || index < 0 || index >= current.hierarchy.childCount) return null;
-                current = current.hierarchy[index];
+                if (int.TryParse(part, out var index))
+                {
+                    if (index < 0 || index >= current.hierarchy.childCount) return null;
+                    current = current.hierarchy[index];
+                    continue;
+                }
+
+                var segment = Selector.ParseCompound(part);
+                VisualElement match = null;
+                for (var i = 0; i < current.hierarchy.childCount; i++)
+                {
+                    var child = current.hierarchy[i];
+                    if (!segment.MatchesCompound(child)) continue;
+                    if (match != null)
+                        throw new UIToolkitException("AMBIGUOUS_ELEMENT", $"Path segment '{part}' matches more than one child; add a class, #name or :nth-of-type(n).");
+                    match = child;
+                }
+                if (match == null) return null;
+                current = match;
             }
             return current;
         }
+
+        /// <summary>True when every segment is a child index (the form get_visual_tree reports, which shifts when siblings move).</summary>
+        internal static bool IsIndexPath(string path) =>
+            !string.IsNullOrEmpty(path) && path.Split('/').All(part => int.TryParse(part, out _));
 
         internal static string PathOf(VisualElement root, VisualElement element)
         {
@@ -904,9 +1049,17 @@ namespace Funplay.Editor.Tools.Helpers
             return result;
         }
 
-        private static void Send(IPanel panel, VisualElement target, EventType type, Vector2 position, int button)
+        private static void Send(IPanel panel, VisualElement target, EventType type, Vector2 position, int button) =>
+            SendPointer(panel, target, type, position, button, UnityEngine.PointerType.Mouse);
+
+        /// <summary>
+        /// One pointer event through the panel dispatcher, built from an IMGUI event like real input
+        /// (MouseDrag for moves while a button is held, as IMGUI reports them).
+        /// Returns the event's pointerId (touch input maps to a touch pointer ID, mouse to PointerId.mousePointerId).
+        /// </summary>
+        internal static int SendPointer(IPanel panel, VisualElement target, EventType type, Vector2 position, int button, UnityEngine.PointerType pointerType, Vector2 delta = default)
         {
-            var system = new Event { type = type, mousePosition = position, button = Mathf.Max(0, button), clickCount = type == EventType.MouseMove ? 0 : 1, pointerType = UnityEngine.PointerType.Mouse };
+            var system = new Event { type = type, mousePosition = position, delta = delta, button = Mathf.Max(0, button), clickCount = type == EventType.MouseMove || type == EventType.MouseDrag ? 0 : 1, pointerType = pointerType };
             EventBase evt = type == EventType.MouseDown ? PointerDownEvent.GetPooled(system)
                 : type == EventType.MouseUp ? (EventBase)PointerUpEvent.GetPooled(system)
                 : PointerMoveEvent.GetPooled(system);
@@ -918,11 +1071,24 @@ namespace Funplay.Editor.Tools.Helpers
                 var recompute = evt.GetType().BaseType != null ? CachedProperty(evt.GetType().BaseType, "recomputeTopElementUnderPointer", InstanceMembers) : null;
                 if (recompute != null && recompute.CanWrite) recompute.SetValue(evt, true, null);
                 panel.visualTree.SendEvent(evt);
+                return ((IPointerEvent)evt).pointerId;
             }
             finally
             {
                 evt.Dispose();
             }
+        }
+
+        // Internal; the :hover/:active/:focus/:checked state the style system matches against.
+        private static readonly PropertyInfo PseudoStatesProperty = typeof(VisualElement).GetProperty("pseudoStates", InstanceMembers);
+
+        /// <summary>The element's current pseudo-states in lower case (hover, active, focus, checked, disabled…), or null when unreadable.</summary>
+        internal static string[] PseudoStates(VisualElement element)
+        {
+            var value = PseudoStatesProperty?.GetValue(element, null);
+            if (value == null) return null;
+            return value.ToString().Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries)
+                .Where(s => s != "None" && s != "0").Select(s => s.ToLowerInvariant()).ToArray();
         }
 
         // ---- Shared ------------------------------------------------------------------------

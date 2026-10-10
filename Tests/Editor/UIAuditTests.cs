@@ -187,10 +187,13 @@ namespace Funplay.Editor.Tests
         public void AssetTraversalIsRejected(string path) => Assert.Throws<ArgumentException>(() => UIAuditService.ValidateAssetPath(path));
         [UnityTest] public IEnumerator SceneJobIsBoundedAndCancelable()
         {
+            // Start refuses with EDITOR_BUSY while an import/compile is still settling (e.g. right after
+            // the test run opens the project); wait for it instead of failing.
+            for (int wait = 0; wait < 600 && (EditorApplication.isCompiling || EditorApplication.isUpdating); wait++) yield return null;
             var root = Make("Root", typeof(RectTransform));
             for (int i = 0; i < 5; i++) Make("Child" + i, typeof(RectTransform)).transform.SetParent(root.transform);
             var response = JObject.FromObject(UIAuditService.Start("scene", null, "[\"" + ObjectIdHelper.GetSerializableId(root) + "\"]", "{}", true, 2, 100, 10));
-            Assert.IsTrue((bool)response["success"]); var id = (string)response["data"]["job_id"];
+            Assert.IsTrue((bool)response["success"], response.ToString()); var id = (string)response["data"]["job_id"];
             for (int i = 0; i < 100; i++)
             {
                 yield return null;
@@ -205,6 +208,9 @@ namespace Funplay.Editor.Tests
         }
         [UnityTest] public IEnumerator SavedPrefabAndSceneAuditPreservesSourcesAndDirtyLiveScene()
         {
+            // Start refuses with EDITOR_BUSY while an import/compile is still settling (e.g. right after
+            // the test run opens the project); wait for it instead of failing.
+            for (int wait = 0; wait < 600 && (EditorApplication.isCompiling || EditorApplication.isUpdating); wait++) yield return null;
             var suffix = "FunplayAuditTests_" + Guid.NewGuid().ToString("N"); AssetDatabase.CreateFolder("Assets", suffix); folder = "Assets/" + suffix;
             var go = Make("Prefab", typeof(RectTransform), typeof(Image));
             string prefab = folder + "/Panel.prefab", savedScene = folder + "/Audit.unity";
@@ -212,6 +218,7 @@ namespace Funplay.Editor.Tests
             go.name = "UnsavedUserEdit"; EditorSceneManager.MarkSceneDirty(scene);
             var beforePrefab = System.IO.File.ReadAllBytes(prefab); var beforeScene = System.IO.File.ReadAllBytes(savedScene);
             var response = JObject.FromObject(UIAuditService.Start("assets", "[\"" + folder + "\"]", null, "{}", true, 1000, 1000, 20));
+            Assert.IsTrue((bool)response["success"], response.ToString());
             var id = (string)response["data"]["job_id"]; bool finished = false;
             for (int i = 0; i < 200; i++)
             {

@@ -2,6 +2,42 @@
 
 ## [Unreleased]
 
+## [0.8.5]
+
+### Added
+
+- Tool annotations on every tool, typed parameter defaults, protocol version negotiation.
+- UI packs for Core (uGUI, UI Toolkit; detected per project) and optional packs.
+- Core lifecycle tools: scenes, objects, Prefab Mode, assets, ScriptableObjects, `run_tests`, `cancel_task`.
+- `simulate_key_press(keys=[...])` for chords.
+- `get_editor_state`: focus, frame liveness and a hint when Play Mode frames are stuck.
+- `set_game_view_size` (Core): journaled, restorable Game View resolution.
+- UI Toolkit pack: `wait_for_ui_toolkit`, `capture_ui_toolkit_element`, `preview_ui_toolkit` (responsive sizes, fully restored), `explain_style`, `audit_ui_toolkit` (touch targets, overflow, contrast, missing glyphs), `diff_visual_tree` (with `get_visual_tree(snapshot=true)`), `set_ui_toolkit_value`, `navigate_ui_toolkit`, `pointer_ui_toolkit`, `style_ui_toolkit` (incl. USS reload in Play Mode).
+- UI Toolkit selectors: descendant/child combinators, `:nth-of-type`, `:nth-child`, selector path segments.
+- `list_changed_assets` (Full): real content changes against git.
+- Stalled UI Toolkit scheduler detection; repeated scheduler exceptions are collapsed in the log.
+- `capture_simulator_view` waits for a fresh frame and reports device, orientation and safe area.
+- Play Mode keeps running while the Editor is in the background (restored afterwards).
+
+### Changed
+
+- Full stores excluded tools, so new tools appear after updates (settings migrated).
+- `tools/list_changed` also fires for schema changes and across restarts.
+- `open_scene`/`create_new_scene` never show a save dialog (`dirty_scenes`: fail, save, discard).
+- `delete_asset` moves to the OS trash, only under `Assets/`.
+- `enter_play_mode(refresh_assets=true)` imports edited USS/UXML before Play.
+- Hints point to `prepare_editor` instead of `exit_play_mode`; read-only flags corrected.
+
+### Fixed
+
+- `simulate_key_press`: game code now sees `wasPressedThisFrame`, delivery is confirmed, keys never stay held, and input reaches the game while the Editor is unfocused.
+- Object reference writes stored null or nameless objects.
+- Operation journal: lock and corruption errors, unclear interrupted-request hints.
+- `prepare_editor` deadlock in Play Mode after a script change.
+- `execute_code` exceeding the transport timeout in Play Mode.
+- `create_new_scene` treated a `.unity` `save_path` as a folder.
+- UI Toolkit findings: no false positives for built-in Sliders and Unity's internal `unity-*` names.
+
 ## [0.8.3] - 2026-10-10
 
 ### Fixed

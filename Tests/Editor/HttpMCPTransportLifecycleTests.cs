@@ -264,6 +264,7 @@ namespace Funplay.Editor
             Assert.AreEqual("editor", data["kind"]);
             Assert.AreEqual("prep-1", data["request_key"]);
             StringAssert.Contains("get_task(kind=\"editor\", request_key=\"prep-1\")", (string)data["hint"]);
+            StringAssert.Contains("never started", (string)data["hint"]);
 
             var unkeyed = MCPServerService.CreateInterruptedByReloadResponse(new MCPRequest
             {

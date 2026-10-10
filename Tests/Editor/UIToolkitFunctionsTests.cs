@@ -64,24 +64,67 @@ namespace Funplay.Editor.Tests
         public void ToolsAreDiscoverable()
         {
             foreach (var name in new[] { "get_ui_toolkit_info", "create_ui_toolkit_panel", "configure_ui_toolkit_panel", "create_panel_settings",
-                         "get_visual_tree", "pick_ui_toolkit_element", "click_ui_toolkit_element", "scroll_ui_toolkit" })
+                         "get_visual_tree", "pick_ui_toolkit_element", "click_ui_toolkit_element", "scroll_ui_toolkit", "wait_for_ui_toolkit", "explain_style", "audit_ui_toolkit" })
                 Assert.IsNotNull(ToolRegistry.GetMethod(name), name);
         }
 
         [Test]
-        public void SelectorParsesTypeNameAndClassesAndRejectsCombinators()
+        public void SelectorParsesTypeNameAndClassesAndRejectsListsAndAttributes()
         {
             var selector = UIToolkitPanels.Selector.Parse("Button#play.primary.big", null);
             Assert.AreEqual("Button", selector.Type);
             Assert.AreEqual("play", selector.Name);
             CollectionAssert.AreEqual(new[] { "primary", "big" }, selector.Classes);
-            Assert.AreEqual("UNSUPPORTED_SELECTOR", Assert.Throws<UIToolkitException>(() => UIToolkitPanels.Selector.Parse("VisualElement > Button", null)).Code);
+            foreach (var bad in new[] { "Button, Label", "Button[name=x]", "Button:hover", "> Button", "A > > B", "A >" })
+                Assert.AreEqual("UNSUPPORTED_SELECTOR", Assert.Throws<UIToolkitException>(() => UIToolkitPanels.Selector.Parse(bad, null)).Code, bad);
 
             var button = new Button { name = "play", text = "Play" };
             button.AddToClassList("primary");
             Assert.IsTrue(UIToolkitPanels.Selector.Parse("TextElement.primary", null).Matches(button), "base types match");
             Assert.IsTrue(UIToolkitPanels.Selector.Parse(null, "play").Matches(button), "text matches case-insensitively");
             Assert.IsFalse(UIToolkitPanels.Selector.Parse("#quit", null).Matches(button));
+        }
+
+        [Test]
+        public void SelectorCombinatorsAndNthOfTypeResolveRepeatedButtons()
+        {
+            // Two setting rows, each with "On"/"Off" buttons: the PolyGames "Show par" case.
+            var root = new VisualElement { name = "pg-settings" };
+            VisualElement Row(string name)
+            {
+                var row = new VisualElement { name = name };
+                row.AddToClassList("pg-setting");
+                row.Add(new Label(name));
+                row.Add(new Button { text = "On" });
+                row.Add(new Button { text = "Off" });
+                root.Add(row);
+                return row;
+            }
+            var sound = Row("sound");
+            var par = Row("show-par");
+
+            var descendant = UIToolkitPanels.Selector.Parse("#pg-settings Button", null);
+            Assert.IsTrue(descendant.Matches(sound[1]));
+            Assert.IsFalse(descendant.Matches(root));
+
+            var child = UIToolkitPanels.Selector.Parse(".pg-setting > Button", null);
+            Assert.IsTrue(child.Matches(par[2]));
+            Assert.IsFalse(UIToolkitPanels.Selector.Parse("#pg-settings > Button", null).Matches(par[1]), "> requires the direct parent");
+
+            var parOn = UIToolkitPanels.Selector.Parse("#show-par > Button:nth-of-type(1)", "On");
+            Assert.IsTrue(parOn.Matches(par[1]));
+            Assert.IsFalse(parOn.Matches(sound[1]));
+            Assert.IsTrue(UIToolkitPanels.Selector.Parse("#show-par > :nth-child(3)", null).Matches(par[2]));
+
+            // Name paths survive a sibling being brought to the front, index paths don't.
+            Assert.AreSame(par[1], UIToolkitPanels.ResolvePath(root, "#show-par/Button:nth-of-type(1)"));
+            sound.BringToFront();
+            Assert.AreNotSame(par[1], UIToolkitPanels.ResolvePath(root, "1/1"), "index path shifted");
+            Assert.AreSame(par[1], UIToolkitPanels.ResolvePath(root, "#show-par/Button:nth-of-type(1)"));
+            Assert.IsTrue(UIToolkitPanels.IsIndexPath("1/2"));
+            Assert.IsFalse(UIToolkitPanels.IsIndexPath("#show-par/1"));
+            Assert.AreEqual("AMBIGUOUS_ELEMENT", Assert.Throws<UIToolkitException>(() => UIToolkitPanels.ResolvePath(root, ".pg-setting")).Code);
+            Assert.IsNull(UIToolkitPanels.ResolvePath(root, "#missing"));
         }
 
         [Test]
@@ -595,6 +638,550 @@ namespace Funplay.Editor.Tests
             var onButton = InputInteractionFunctions.PerformUiToolkitClick(RenderPoint(play.worldBound.center), UnityEngine.EventSystems.PointerEventData.InputButton.Left, attempts, renderHeight);
             Assert.IsTrue(onButton.Hit, onButton.Detail);
             Assert.AreEqual(1, clicks);
+        }
+
+        [Test]
+        public void WaitStatesParseAndRejectUnknownOnes()
+        {
+            Assert.AreEqual("displayed", UIToolkitFunctions.WaitState.Parse(null).Kind);
+            var cls = UIToolkitFunctions.WaitState.Parse("has_class: pg-open ");
+            Assert.AreEqual("has_class", cls.Kind);
+            Assert.AreEqual("pg-open", cls.Argument);
+            Assert.AreEqual("Score: 10", UIToolkitFunctions.WaitState.Parse("text:Score: 10").Argument, "text keeps everything after the first ':'");
+            Assert.AreEqual("", UIToolkitFunctions.WaitState.Parse("text:").Argument, "empty text is a valid target");
+            foreach (var bad in new[] { "visible", "has_class:", "settled:3", "lacks_class" })
+                Assert.Throws<UIToolkitException>(() => UIToolkitFunctions.WaitState.Parse(bad), bad);
+            Assert.IsTrue(UIToolkitFunctions.WaitState.Parse("hidden").IsMet(null), "an absent element counts as hidden");
+            Assert.IsFalse(UIToolkitFunctions.WaitState.Parse("exists").IsMet(null));
+        }
+
+        [Test]
+        public void SignaturesCompareWithTolerance()
+        {
+            Assert.IsTrue(UIToolkitFunctions.SameSignature(new[] { 1f, float.NaN }, new[] { 1.00001f, float.NaN }));
+            Assert.IsFalse(UIToolkitFunctions.SameSignature(new[] { 1f }, new[] { 1.01f }));
+            Assert.IsFalse(UIToolkitFunctions.SameSignature(new[] { 1f }, null));
+            Assert.IsFalse(UIToolkitFunctions.SameSignature(new[] { 1f }, new[] { 1f, 2f }));
+        }
+
+        [UnityTest]
+        public IEnumerator WaitForUiToolkitWaitsForLaterChanges()
+        {
+            yield return BuildLivePanel("UitkWait");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var play = liveRoot.Q<Button>("play");
+
+            var invalid = JObject.FromObject(UIToolkitFunctions.WaitForElementAsync(id, "#play", null, null, "visible", 1f, 3).Result);
+            Assert.AreEqual("INVALID_WAIT_STATE", (string)invalid["code"], invalid.ToString());
+
+            // The class arrives a few updates after the wait starts, like schedule.ExecuteLater.
+            var wait = UIToolkitFunctions.WaitForElementAsync(id, "#play", null, null, "has_class:open", 5f, 3);
+            for (var i = 0; i < 3; i++) yield return null;
+            Assert.IsFalse(wait.IsCompleted, "the class is not there yet");
+            play.AddToClassList("open");
+            yield return Await(wait);
+            var met = JObject.FromObject(wait.Result);
+            Assert.IsTrue((bool)met["success"], met.ToString());
+            Assert.AreEqual("has_class:open", (string)met["data"]["state"]);
+
+            var gone = UIToolkitFunctions.WaitForElementAsync(id, "#quit", null, null, "hidden", 5f, 3);
+            yield return null;
+            liveRoot.Q<Button>("quit").style.display = DisplayStyle.None;
+            yield return Await(gone);
+            Assert.IsTrue((bool)JObject.FromObject(gone.Result)["success"], JObject.FromObject(gone.Result).ToString());
+
+            var timeout = UIToolkitFunctions.WaitForElementAsync(id, "#missing", null, null, "exists", 0.2f, 3);
+            yield return Await(timeout);
+            var timedOut = JObject.FromObject(timeout.Result);
+            Assert.AreEqual("WAIT_TIMEOUT", (string)timedOut["code"], timedOut.ToString());
+            Assert.IsFalse((bool)timedOut["data"]["found"]);
+            Assert.AreEqual("ELEMENT_NOT_FOUND", (string)timedOut["data"]["lookup"]);
+
+            var ambiguous = UIToolkitFunctions.WaitForElementAsync(id, "Button", null, null, "exists", 1f, 3);
+            yield return Await(ambiguous);
+            Assert.AreEqual("AMBIGUOUS_ELEMENT", (string)JObject.FromObject(ambiguous.Result)["code"]);
+
+            var settled = UIToolkitFunctions.WaitForElementAsync(id, "#play", null, null, "settled", 5f, 3);
+            yield return Await(settled);
+            var settledJson = JObject.FromObject(settled.Result);
+            Assert.IsTrue((bool)settledJson["success"], settledJson.ToString());
+            Assert.GreaterOrEqual((int)settledJson["data"]["frames"], 2, settledJson.ToString());
+        }
+
+        private static IEnumerator Await(System.Threading.Tasks.Task task)
+        {
+            // Time-based: batch-mode frames are fast, and .Result on an unfinished wait would deadlock.
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (!task.IsCompleted && clock.Elapsed.TotalSeconds < 15) yield return null;
+            Assert.IsTrue(task.IsCompleted, "wait did not complete");
+        }
+
+        [UnityTest]
+        public IEnumerator ExplainStyleNamesTheWinningRuleAndTheOnesItBeat()
+        {
+            yield return BuildLivePanel("UitkExplain");
+            var ussPath = folder + "/Explain.uss";
+            File.WriteAllText(ussPath,
+                "/* test sheet */\n" +
+                ".primary {\n    background-color: rgb(255, 0, 0);\n}\n" +
+                "#play.primary { color: rgb(0, 255, 0); }\n" +
+                "#play { margin: var(--a) var(--b); }\n" +
+                ".primary:hover {\n    background-color: rgb(0, 0, 255);\n}\n");
+            AssetDatabase.ImportAsset(ussPath, ImportAssetOptions.ForceSynchronousImport);
+            liveRoot.styleSheets.Add(AssetDatabase.LoadAssetAtPath<StyleSheet>(ussPath));
+            var play = liveRoot.Q<Button>("play");
+            UIToolkitPanels.ValidateLayout(play.panel);
+            yield return null;
+
+            var explained = JObject.FromObject(UIToolkitFunctions.ExplainElement(play, "0/1", "background-color,color,width,margin-left,margin", new System.Collections.Generic.List<string> { "hover" }));
+            Assert.AreEqual("unity", (string)explained["matcher"], explained.ToString());
+            var properties = (JArray)explained["properties"];
+            var background = properties.First(p => (string)p["property"] == "background-color");
+            Assert.AreEqual(JTokenType.Object, background["winner"].Type, explained.ToString());
+            Assert.AreEqual(".primary", (string)background["winner"]["selector"], background.ToString());
+            Assert.AreEqual(ussPath, (string)background["winner"]["sheet"]);
+            Assert.AreEqual(3, (int)background["winner"]["line"], "the declaration's line in the USS file");
+            Assert.AreEqual("#FF0000FF", (string)background["resolved"]);
+            Assert.IsTrue(((JArray)background["overridden"]).Any(o => ((string)o["selector"]).Contains("unity-button")), "the theme's button rule lost: " + background);
+            Assert.AreEqual(".primary:hover", (string)background["in_pseudo_states"][0]["selector"], background.ToString());
+            Assert.AreEqual(8, (int)background["in_pseudo_states"][0]["line"], "the declaration's line, like the winner's");
+
+            var color = properties.First(p => (string)p["property"] == "color");
+            Assert.AreEqual("#play.primary", (string)color["winner"]["selector"]);
+            Assert.AreEqual("1,1,0", (string)color["winner"]["specificity"]);
+
+            var marginLeft = properties.First(p => (string)p["property"] == "margin-left");
+            Assert.AreEqual("#play", (string)marginLeft["winner"]["selector"], "the margin shorthand beats the theme's longhand: " + marginLeft);
+            Assert.AreEqual("margin", (string)marginLeft["winner"]["declared"]);
+            Assert.AreEqual("var(--a) var(--b)", (string)marginLeft["winner"]["value"], "each function closes after its own arguments");
+            var margin = properties.First(p => (string)p["property"] == "margin");
+            Assert.AreEqual(4, ((JArray)margin["longhands"]).Count);
+            Assert.AreEqual(4, ((string)margin["resolved"]).Split(' ').Length, "a shorthand resolves through its longhands: " + margin);
+
+            var width = properties.First(p => (string)p["property"] == "width");
+            Assert.AreEqual("inline", (string)width["source"], "UXML style=\"width: 200px\" is inline: " + width);
+            Assert.IsTrue((bool)explained["pseudo_states"]["heuristic"]);
+            Assert.AreEqual(Color.red, play.resolvedStyle.backgroundColor, "explaining :hover never changes the element");
+        }
+
+        [Test]
+        public void UssSourceParsingKeepsLinesAndSplitsSelectorLists()
+        {
+            var rules = StyleIntrospection.ParseUss("@import url(\"x.uss\");\n/* a\nb */\n.a, #b > Label {\n  color: red;\n  width: 10px\n}\n.c:hover { opacity: 0.5; }");
+            Assert.AreEqual(3, rules.Count);
+            Assert.AreEqual(".a", rules[0].Selector);
+            Assert.AreEqual("#b > Label", rules[1].Selector);
+            Assert.AreEqual(4, rules[0].Line, "comments keep their lines");
+            Assert.AreEqual(5, rules[0].Declarations[0].Line);
+            Assert.AreEqual("width", rules[0].Declarations[1].Name);
+            Assert.AreEqual(6, rules[0].Declarations[1].Line);
+            Assert.AreEqual(8, rules[2].Line);
+            Assert.AreEqual((1, 0, 1), StyleIntrospection.SpecificityOf("#b > Label"));
+            Assert.AreEqual((0, 2, 0), StyleIntrospection.SpecificityOf(".c:hover"));
+            Assert.AreEqual("unityFontDefinition", StyleIntrospection.CamelName("-unity-font-definition"));
+            Assert.AreEqual("backgroundColor", StyleIntrospection.CamelName("background-color"));
+
+            var quoted = StyleIntrospection.ParseUss(".d {\n  background-image: url(\"a;b{c}.png\");\n  color: red;\n}");
+            Assert.AreEqual(1, quoted.Count);
+            Assert.AreEqual(2, quoted[0].Declarations.Count, "';' and braces inside a string don't split");
+            Assert.AreEqual("url(\"a;b{c}.png\")", quoted[0].Declarations[0].Value);
+            Assert.AreEqual(3, quoted[0].Declarations[1].Line);
+        }
+
+        [Test]
+        public void StatePseudoClassesApplyToTheSubjectOnly()
+        {
+            var button = new Button();
+            var hover = new System.Collections.Generic.List<string> { "hover" };
+            Assert.AreEqual(".menu Button", StyleIntrospection.SubjectSelector(".menu :hover", button, hover, true), "the hovered element is the subject, not .menu");
+            Assert.AreEqual("Button", StyleIntrospection.SubjectSelector(":hover", button, hover, true), "a bare :hover matches any hovered element");
+            Assert.AreEqual("Button", StyleIntrospection.SubjectSelector("*:hover", button, hover, true));
+            Assert.AreEqual(".row > .primary", StyleIntrospection.SubjectSelector(".row > .primary:hover", button, hover, true));
+            Assert.IsNull(StyleIntrospection.SubjectSelector(".tabs:hover > .x", button, hover, true), "a pseudo-class on an ancestor can't be attributed");
+            Assert.IsNull(StyleIntrospection.SubjectSelector(".primary:active", button, hover, true), "another state");
+            Assert.IsNull(StyleIntrospection.SubjectSelector(".primary", button, hover, true), "no state pseudo-class at all");
+            Assert.IsTrue(StyleIntrospection.Sets("margin", "margin-left"));
+            Assert.IsTrue(StyleIntrospection.Sets("margin-left", "margin"));
+            Assert.IsFalse(StyleIntrospection.Sets("margin", "padding-left"));
+        }
+
+        [Test]
+        public void GlyphScanNeverThrowsAndSkipsInvisibleCharacters()
+        {
+            CollectionAssert.AreEqual(new uint[] { 'a', 0xD800, 'b' }, UIToolkitFunctions.CodePoints("a\uD800b"), "an unpaired surrogate is kept, not thrown on");
+            CollectionAssert.AreEqual(new uint[] { 0x1F600 }, UIToolkitFunctions.CodePoints("\uD83D\uDE00"));
+            foreach (var c in new uint[] { 0x200D, 0x200C, 0x200E, 0x2060, 0xFE0F, 0xFEFF, ' ' })
+                Assert.IsTrue(UIToolkitFunctions.IsInvisible(c), $"U+{c:X4}");
+            Assert.IsFalse(UIToolkitFunctions.IsInvisible('A'));
+            Assert.IsFalse(UIToolkitFunctions.IsInvisible(0xD800), "unpaired surrogates are reported");
+
+            var scroll = new ScrollView();
+            var inner = new Button();
+            scroll.Add(inner);
+            var root = new VisualElement();
+            root.Add(scroll);
+            var outer = new Button();
+            root.Add(outer);
+            Assert.IsTrue(UIToolkitFunctions.IsInnerPart(inner, root));
+            Assert.IsFalse(UIToolkitFunctions.IsInnerPart(outer, root));
+        }
+
+        [Test]
+        public void ContrastUsesWcagLuminance()
+        {
+            Assert.AreEqual(21f, UIToolkitFunctions.ContrastRatio(Color.white, Color.black), 0.01f);
+            Assert.AreEqual(1f, UIToolkitFunctions.ContrastRatio(Color.gray.linear, Color.gray.linear), 0.001f);
+            Assert.IsNull(UIToolkitFunctions.ParseRect(null, "x"));
+            Assert.AreEqual(new Rect(1, 2, 3, 4), UIToolkitFunctions.ParseRect("1,2,3,4", "x"));
+            Assert.Throws<ArgumentException>(() => UIToolkitFunctions.ParseRect("1,2,0,4", "x"));
+            Assert.AreEqual("Hi there", UIToolkitFunctions.StripRichText("<b>Hi</b> <color=#fff>there</color>"));
+        }
+
+        [UnityTest]
+        public IEnumerator AuditFlagsSmallCoveredAndLowContrastControls()
+        {
+            yield return BuildLivePanel("UitkAudit");
+            var menu = liveRoot.Q("menu");
+            var tiny = new Button { name = "tiny", text = "x", style = { width = 20, height = 20 } };
+            var faint = new Label("Faint") { name = "faint", style = { color = new Color(0.45f, 0.45f, 0.45f), backgroundColor = new Color(0.5f, 0.5f, 0.5f), width = 200, height = 40 } };
+            var overImage = new Image { style = { width = 200, height = 60 } };
+            overImage.Add(new Label("Over image") { name = "over-image" });
+            var cover = new VisualElement { name = "cover", style = { position = Position.Absolute, left = 0, right = 0, top = 0, bottom = 0 } };
+            var faintDisabled = new Label("Off") { name = "faint-disabled", style = { color = new Color(0.45f, 0.45f, 0.45f), backgroundColor = new Color(0.5f, 0.5f, 0.5f), width = 200, height = 40 } };
+            faintDisabled.SetEnabled(false);
+            // Card pattern: an absolutely positioned image sibling behind the text, inside a solid card.
+            var card = new VisualElement { style = { width = 200, height = 60, backgroundColor = new Color(0.5f, 0.5f, 0.5f) } };
+            card.Add(new Image { style = { position = Position.Absolute, left = 0, right = 0, top = 0, bottom = 0 } });
+            card.Add(new Label("On card") { name = "on-card", style = { color = new Color(0.45f, 0.45f, 0.45f) } });
+            // Opacity applies to the group: white text on red inside a 50% blue group over white.
+            var outerWhite = new VisualElement { style = { width = 200, height = 60, backgroundColor = Color.white } };
+            var halfBlue = new VisualElement { style = { opacity = 0.5f, backgroundColor = Color.blue, flexGrow = 1 } };
+            var onRed = new Label("Group") { name = "group-text", style = { color = Color.white, backgroundColor = Color.red, flexGrow = 1 } };
+            halfBlue.Add(onRed); outerWhite.Add(halfBlue);
+            menu.Add(tiny); menu.Add(faint); menu.Add(overImage); menu.Add(faintDisabled); menu.Add(card); menu.Add(outerWhite); liveRoot.Add(cover);
+            UIToolkitPanels.ValidateLayout(liveRoot.panel);
+            yield return null;
+            UIToolkitPanels.ValidateLayout(liveRoot.panel);
+
+            var host = UIToolkitPanels.GetHost(created);
+            var report = UIToolkitFunctions.AuditHosts(new System.Collections.Generic.List<Component> { host }, new UIToolkitFunctions.AuditOptions());
+            var json = JObject.FromObject(report.ToResponse());
+            var findings = ((JArray)json["hosts"][0]["findings"]).ToList();
+            bool Has(string code, string element) => findings.Any(f => (string)f["code"] == code && ((string)f["element"] ?? "").Contains(element));
+            Assert.IsTrue(Has("SMALL_TOUCH_TARGET", "#tiny"), json.ToString());
+            Assert.IsFalse(Has("SMALL_TOUCH_TARGET", "#play"), "200x60 is large enough");
+            Assert.IsTrue(Has("LOW_CONTRAST", "#faint"), json.ToString());
+            Assert.IsFalse(Has("LOW_CONTRAST", "#over-image"), "text over an image is indeterminate, never reported");
+            Assert.Greater((int)json["indeterminate_contrast"], 0);
+            Assert.IsFalse(Has("LOW_CONTRAST", "#faint-disabled"), "inactive controls are exempt");
+            Assert.IsFalse(Has("LOW_CONTRAST", "#on-card"), "an image sibling behind the text makes contrast indeterminate");
+            Assert.IsNull(UIToolkitFunctions.ContrastRatio(liveRoot.Q<Label>("on-card")));
+            // Group compositing: text pixel white; background (red at 50%) over white = (1, .5, .5) linear.
+            var expected = UIToolkitFunctions.ContrastRatio(Color.white, new Color(1f, 0.5f, 0.5f));
+            Assert.AreEqual(expected, UIToolkitFunctions.ContrastRatio(liveRoot.Q<Label>("group-text")).Value, 0.02f, "the blue group background is hidden under the red label");
+            if (UIToolkitPanels.TryGetScreenMapping(liveRoot.panel, out _) && RenderHeightOrZero() > 0)
+                Assert.IsTrue(Has("COVERED_CONTROL", "#play"), json.ToString());
+
+            cover.RemoveFromHierarchy();
+            var skipped = UIToolkitFunctions.AuditHosts(new System.Collections.Generic.List<Component> { host },
+                new UIToolkitFunctions.AuditOptions { Skip = new System.Collections.Generic.HashSet<string> { "LOW_CONTRAST" } });
+            var skippedJson = JObject.FromObject(skipped.ToResponse());
+            Assert.IsFalse(((JArray)skippedJson["hosts"][0]["findings"]).Any(f => (string)f["code"] == "LOW_CONTRAST" || (string)f["code"] == "COVERED_CONTROL"), skippedJson.ToString());
+        }
+
+        private static int RenderHeightOrZero()
+        {
+            try { return VisualCoordinates.Current().render_height; }
+            catch (InvalidOperationException) { return 0; }
+        }
+
+        [UnityTest]
+        public IEnumerator MissingGlyphsChecksTheSourceFontWithoutAddingCharacters()
+        {
+            // A label with an explicit font asset, the way projects set -unity-font-definition.
+            yield return BuildLivePanel("UitkGlyphs");
+            var font = Resources.FindObjectsOfTypeAll<UnityEngine.TextCore.Text.FontAsset>().FirstOrDefault(f => f.name.Contains("Sans"));
+            if (font == null) Assert.Ignore("No editor FontAsset available.");
+            var title = liveRoot.Q<Label>("title");
+            title.style.unityFontDefinition = FontDefinition.FromSDFFont(font);
+            UIToolkitPanels.ValidateLayout(title.panel);
+            yield return null;
+            var asset = UIToolkitFunctions.EffectiveFontAsset(title.resolvedStyle);
+            Assert.AreSame(font, asset, "the style's font asset is the one checked");
+            Assert.IsNull(UIToolkitFunctions.EffectiveFontAsset(liveRoot.Q<Button>("play").resolvedStyle), "theme default: no verdict");
+            var missing = UIToolkitFunctions.MissingGlyphs("AB \uE000", asset, null);
+            CollectionAssert.AreEqual(new uint[] { 0xE000 }, missing, "letters exist in the font; a private-use character does not");
+            var cache = new System.Collections.Generic.Dictionary<(UnityEngine.TextCore.Text.FontAsset, uint), bool>();
+            CollectionAssert.AreEqual(missing, UIToolkitFunctions.MissingGlyphs("AB \uE000", asset, null, cache), "checking is repeatable (nothing was added)");
+            Assert.IsTrue(cache.ContainsKey((asset, 0xE000u)), "answers are cached for the rest of the audit");
+            CollectionAssert.AreEqual(missing, UIToolkitFunctions.MissingGlyphs("AB \uE000", asset, null, cache));
+            Assert.IsNull(UIToolkitFunctions.MissingGlyphs("A", null, null), "unknown font: no verdict");
+        }
+
+        [UnityTest]
+        public IEnumerator DiffVisualTreeReportsOnlyWhatChanged()
+        {
+            yield return BuildLivePanel("UitkDiff");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var menu = liveRoot.Q("menu");
+            var dialog = new VisualElement { name = "dialog" };
+            dialog.style.position = Position.Absolute;
+            dialog.style.display = DisplayStyle.None;
+            for (var i = 0; i < 3; i++) dialog.Add(new Label("row " + i));
+            menu.Insert(0, dialog);
+            UIToolkitPanels.ValidateLayout(menu.panel);
+            yield return null;
+
+            var missing = JObject.FromObject(UIToolkitFunctions.DiffVisualTree("vt_missing"));
+            Assert.AreEqual("SNAPSHOT_NOT_FOUND", (string)missing["code"]);
+            var snapshotId = (string)Data(UIToolkitFunctions.GetVisualTree(id, "#title", snapshot: true))["snapshot_id"];
+            Assert.IsNotNull(snapshotId);
+
+            // Bring the dialog to the front (every sibling's index path shifts), open it, retitle.
+            dialog.BringToFront();
+            dialog.style.display = DisplayStyle.Flex;
+            dialog.AddToClassList("dialog--open");
+            liveRoot.Q<Label>("title").text = "Paused";
+            var diff = Data(UIToolkitFunctions.DiffVisualTree(snapshotId, update_snapshot: true));
+            var changed = (JArray)diff["changed"];
+            Assert.AreEqual(2, changed.Count, "the dialog and the title, nothing it contains or reordered: " + diff);
+            var dialogChange = changed.First(c => ((string)c["element"]).Contains("#dialog"));
+            Assert.IsFalse((bool)dialogChange["changes"]["displayed"]["before"]);
+            Assert.IsTrue((bool)dialogChange["changes"]["displayed"]["after"]);
+            Assert.AreEqual("dialog--open", (string)dialogChange["changes"]["classes"]["added"][0]);
+            var titleChange = changed.First(c => ((string)c["element"]).Contains("#title"));
+            Assert.AreEqual("Paused", (string)titleChange["changes"]["text"]["after"]);
+            Assert.AreEqual(0, ((JArray)diff["added"]).Count);
+            Assert.AreEqual(0, ((JArray)diff["removed"]).Count);
+
+            Assert.AreEqual(0, (int)Data(UIToolkitFunctions.DiffVisualTree(snapshotId))["counts"]["changed"], "update_snapshot rebased it");
+
+            // Moving a row into another parent keeps its parent-relative layout; the parent change is reported.
+            var row = dialog[0];
+            var otherSlot = new VisualElement { name = "slot" };
+            otherSlot.style.position = Position.Absolute;
+            dialog.Add(otherSlot);
+            var moveSnapshot = (string)Data(UIToolkitFunctions.GetVisualTree(id, "#title", snapshot: true))["snapshot_id"];
+            otherSlot.Add(row);
+            var moved = Data(UIToolkitFunctions.DiffVisualTree(moveSnapshot));
+            var rowChange = ((JArray)moved["changed"]).First(c => c["changes"]["parent"] != null);
+            StringAssert.Contains("#slot", (string)rowChange["changes"]["parent"]["after"], moved.ToString());
+            Data(UIToolkitFunctions.DiffVisualTree(snapshotId, update_snapshot: true));
+
+            liveRoot.Q<Button>("quit").RemoveFromHierarchy();
+            var panel = new VisualElement { name = "extra" };
+            panel.Add(new Label("a"));
+            panel.Add(new Label("b"));
+            menu.Add(panel);
+            var structural = Data(UIToolkitFunctions.DiffVisualTree(snapshotId));
+            Assert.AreEqual(1, ((JArray)structural["added"]).Count, structural.ToString());
+            Assert.AreEqual(3, (int)structural["added"][0]["subtree_size"], "one entry per added subtree");
+            Assert.AreEqual(1, ((JArray)structural["removed"]).Count, structural.ToString());
+            StringAssert.Contains("#quit", (string)structural["removed"][0]["element"]);
+        }
+
+        [UnityTest]
+        public IEnumerator SetUiToolkitValueFiresChangeEvents()
+        {
+            yield return BuildLivePanel("UitkSetValue");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var menu = liveRoot.Q("menu");
+            var slider = new Slider("Volume", 0, 10) { name = "volume" };
+            var toggle = new Toggle("Music") { name = "music" };
+            var field = new TextField { name = "player" };
+            var dropdown = new DropdownField(new System.Collections.Generic.List<string> { "Easy", "Normal", "Hard" }, 0) { name = "difficulty" };
+            var group = new ToggleButtonGroup { name = "speed" };
+            for (var i = 0; i < 3; i++) group.Add(new Button { text = "x" + (i + 1) });
+            foreach (var control in new VisualElement[] { slider, toggle, field, dropdown, group })
+            {
+                control.style.width = 200; control.style.height = 30;
+                menu.Add(control);
+            }
+            UIToolkitPanels.ValidateLayout(menu.panel);
+            yield return null;
+            var sliderChanges = 0;
+            slider.RegisterValueChangedCallback(_ => sliderChanges++);
+
+            var set = Data(UIToolkitFunctions.SetUiToolkitValue(id, "#volume", value: "4"));
+            Assert.IsTrue((bool)set["change_event"], set.ToString());
+            Assert.AreEqual(4f, (float)set["new_value"]);
+            Assert.AreEqual(1, sliderChanges, "ChangeEvent reached the game's callback");
+            var clamped = Data(UIToolkitFunctions.SetUiToolkitValue(id, "#volume", value: "20"));
+            Assert.AreEqual(10f, (float)clamped["new_value"]);
+            Assert.IsTrue((bool)clamped["clamped"], clamped.ToString());
+            Assert.IsFalse((bool)Data(UIToolkitFunctions.SetUiToolkitValue(id, "#volume", value: "10"))["change_event"], "same value: no event");
+
+            // Matching the inner checkbox sets the Toggle.
+            Assert.IsTrue((bool)Data(UIToolkitFunctions.SetUiToolkitValue(id, "#music .unity-toggle__checkmark", value: "on"))["change_event"]);
+            Assert.IsTrue(toggle.value);
+            Assert.AreEqual("Hard", (string)Data(UIToolkitFunctions.SetUiToolkitValue(id, "#difficulty", value: "2"))["new_value"]);
+            Assert.AreEqual("Normal", (string)Data(UIToolkitFunctions.SetUiToolkitValue(id, "#difficulty", value: "normal"))["new_value"]);
+            Assert.AreEqual("INVALID_VALUE", (string)JObject.FromObject(UIToolkitFunctions.SetUiToolkitValue(id, "#difficulty", value: "Impossible"))["code"]);
+            var groupSet = Data(UIToolkitFunctions.SetUiToolkitValue(id, "#speed", value: "0,x3"));
+            CollectionAssert.AreEqual(new[] { 0, 2 }, groupSet["new_value"].ToObject<int[]>(), groupSet.ToString());
+            Assert.AreEqual("USE_CLICK", (string)JObject.FromObject(UIToolkitFunctions.SetUiToolkitValue(id, "#play", value: "1"))["code"]);
+            // The field's label text matches the Label, which must set the Slider, not relabel it.
+            var byLabel = Data(UIToolkitFunctions.SetUiToolkitValue(id, null, "Volume", value: "3"));
+            Assert.AreEqual(3f, slider.value, byLabel.ToString());
+            Assert.AreEqual("Volume", slider.label);
+            Assert.AreEqual("NOT_A_VALUE_CONTROL", (string)JObject.FromObject(UIToolkitFunctions.SetUiToolkitValue(id, "#title", value: "x"))["code"], "a bare Label with several controls around it is ambiguous");
+            // A settings row: caption Label beside its Slider, as PolyGames builds them.
+            var row = new VisualElement { name = "row" };
+            row.Add(new Label("Brightness"));
+            var brightness = new Slider(0, 1) { style = { width = 200, height = 30 } };
+            row.Add(brightness);
+            menu.Add(row);
+            var beside = Data(UIToolkitFunctions.SetUiToolkitValue(id, null, "Brightness", value: "0.5"));
+            Assert.AreEqual(0.5f, brightness.value, beside.ToString());
+            StringAssert.Contains("Brightness", (string)beside["matched_label"]);
+            field.isReadOnly = true;
+            Assert.AreEqual("ELEMENT_READ_ONLY", (string)JObject.FromObject(UIToolkitFunctions.SetUiToolkitValue(id, "#player", value: "x"))["code"]);
+            field.isReadOnly = false;
+
+            var typed = Data(UIToolkitFunctions.SetUiToolkitValue(id, "#player", type_text: "Ada"));
+            Assert.AreEqual("Ada", field.value, typed.ToString());
+            Debug.Log("[Funplay test] synthesized typing typed=" + typed["typed"]);
+            Assert.IsTrue((bool)typed["typed"], "KeyDownEvents reach the TextField: " + typed);
+            Assert.IsTrue((bool)typed["change_event"]);
+        }
+
+        [UnityTest]
+        public IEnumerator NavigateUiToolkitMovesFocusAndSubmits()
+        {
+            yield return BuildLivePanel("UitkNavigate");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var quit = liveRoot.Q<Button>("quit");
+            var clicks = 0;
+            quit.clicked += () => clicks++;
+
+            Assert.AreEqual("NOTHING_FOCUSED", (string)JObject.FromObject(UIToolkitFunctions.NavigateUiToolkit("submit", id))["code"]);
+            var focus = Data(UIToolkitFunctions.NavigateUiToolkit("focus", id, "#play"));
+            StringAssert.Contains("#play", (string)focus["focused_after"], focus.ToString());
+            var moved = Data(UIToolkitFunctions.NavigateUiToolkit("move:next", id));
+            StringAssert.Contains("#quit", (string)moved["focused_after"], moved.ToString());
+            var submit = Data(UIToolkitFunctions.NavigateUiToolkit("submit", id));
+            Assert.AreEqual(1, clicks, submit.ToString());
+            Assert.IsTrue((bool)submit["handler_invoked"]);
+            Assert.AreEqual("INVALID_ACTION", (string)JObject.FromObject(UIToolkitFunctions.NavigateUiToolkit("move:sideways", id))["code"]);
+        }
+
+        [UnityTest]
+        public IEnumerator PointerUiToolkitHoversDragsAndLongPresses()
+        {
+            yield return BuildLivePanel("UitkPointer");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var handle = new VisualElement { name = "handle" };
+            handle.style.width = 60; handle.style.height = 60; handle.style.backgroundColor = Color.gray;
+            liveRoot.Q("menu").Add(handle);
+            int downs = 0, moves = 0, ups = 0, pointerId = -1;
+            float movedX = 0;
+            handle.RegisterCallback<PointerDownEvent>(e => { downs++; pointerId = e.pointerId; handle.CapturePointer(e.pointerId); });
+            handle.RegisterCallback<PointerMoveEvent>(e => { if (handle.HasPointerCapture(e.pointerId)) { moves++; movedX += e.deltaPosition.x; } });
+            handle.RegisterCallback<PointerUpEvent>(e => { ups++; handle.ReleasePointer(e.pointerId); });
+            UIToolkitPanels.ValidateLayout(handle.panel);
+            yield return null;
+
+            var hover = UIToolkitFunctions.PointerUiToolkit("hover", id, "#play");
+            yield return Await(hover);
+            var hovered = Data(hover.Result);
+            CollectionAssert.Contains(hovered["pseudo_states"].ToObject<string[]>(), "hover", hovered.ToString());
+
+            var drag = UIToolkitFunctions.PointerUiToolkit("drag", id, "#handle", delta: "50,0", duration_ms: 100);
+            yield return Await(drag);
+            var dragged = Data(drag.Result);
+            Assert.AreEqual(1, downs); Assert.AreEqual(1, ups, $"downs {downs} moves {moves} ups {ups} movedX {movedX} " + dragged["captured_by"] + " " + dragged["drop_target"] + " " + dragged["moves"]);
+            Assert.GreaterOrEqual(moves, 4, "moves while captured: " + dragged);
+            StringAssert.Contains("#handle", (string)dragged["captured_by"]);
+            Assert.AreEqual(50f, movedX, 1f, "the moves add up to the delta");
+
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var press = UIToolkitFunctions.PointerUiToolkit("long_press", id, "#handle", duration_ms: 200);
+            Assert.AreEqual(2, downs, "down at once");
+            Assert.AreEqual(1, ups, "still held");
+            yield return Await(press);
+            Assert.AreEqual(2, ups);
+            Assert.GreaterOrEqual(clock.ElapsedMilliseconds, 190);
+
+            var touch = UIToolkitFunctions.PointerUiToolkit("long_press", id, "#handle", duration_ms: 0, pointer_type: "touch");
+            yield return Await(touch);
+            var touched = Data(touch.Result);
+            Assert.AreEqual(pointerId, (int)touched["pointer_id"], touched.ToString());
+            Debug.Log("[Funplay test] touch pointer id " + pointerId);
+            Assert.AreNotEqual(PointerId.mousePointerId, pointerId, "touch events carry a touch pointer ID");
+        }
+
+        [UnityTest]
+        public IEnumerator StyleUiToolkitAppliesReportsRevertsAndReloadsSheets()
+        {
+            yield return BuildLivePanel("UitkStyle");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var play = liveRoot.Q<Button>("play");
+
+            var bad = UIToolkitFunctions.StyleUiToolkit(id, "#play", inline: "{\"color\":\"var(--x)\"}");
+            Assert.AreEqual("INVALID_INLINE_STYLE", (string)JObject.FromObject(bad.Result)["code"]);
+            var unknown = UIToolkitFunctions.StyleUiToolkit(id, "#play", inline: "{\"colour\":\"red\"}");
+            var transparent = UIToolkitFunctions.StyleUiToolkit(id, "#quit", inline: "{\"background-color\":\"transparent\",\"-unity-font-style\":\"bold\"}");
+            yield return Await(transparent);
+            var clear = Data(transparent.Result);
+            Assert.AreEqual(Color.clear, liveRoot.Q<Button>("quit").resolvedStyle.backgroundColor, clear.ToString());
+            Assert.AreEqual("bold", (string)((JArray)clear["styles"]).First(x => (string)x["property"] == "-unity-font-style")["resolved_after"], "the alias resolves");
+            Assert.AreEqual("UNSUPPORTED_STYLE_PROPERTY", (string)JObject.FromObject(unknown.Result)["code"]);
+
+            var styled = UIToolkitFunctions.StyleUiToolkit(id, "#play", add_classes: "big", inline: "{\"background-color\":\"rgb(0, 255, 0)\",\"width\":\"123px\",\"margin\":\"1px 2px\",\"justify-content\":\"flex-end\"}");
+            yield return Await(styled);
+            var data = Data(styled.Result);
+            Assert.IsTrue(play.ClassListContains("big"));
+            Assert.AreEqual(Color.green, play.resolvedStyle.backgroundColor);
+            Assert.AreEqual(123f, play.resolvedStyle.width, 0.01f);
+            Assert.AreEqual(2f, play.resolvedStyle.marginLeft, 0.01f, "margin shorthand: top/bottom 1px, left/right 2px");
+            Assert.AreEqual(Justify.FlexEnd, play.resolvedStyle.justifyContent);
+            Assert.AreEqual(JTokenType.Null, data["reverted"].Type, data.ToString());
+            Assert.IsTrue((bool)data["runtime_only"]);
+
+            // Project code that undoes a class on the next update is reported.
+            EditorApplication.CallbackFunction undo = null;
+            undo = () => { EditorApplication.update -= undo; play.RemoveFromClassList("wide"); };
+            var watched = UIToolkitFunctions.StyleUiToolkit(id, "#play", add_classes: "wide", inline: "{\"width\":null}");
+            EditorApplication.update += undo;
+            yield return Await(watched);
+            var reverted = Data(watched.Result);
+            StringAssert.Contains(".wide", (string)reverted["reverted"][0], reverted.ToString());
+            Assert.AreEqual(StyleKeyword.Null, play.style.width.keyword, "null removes the inline width (a UXML style attribute's included)");
+            Assert.Less(play.resolvedStyle.width, 123f, "USS rules apply again");
+
+            var ussPath = folder + "/Live.uss";
+            File.WriteAllText(ussPath, ".tint { color: rgb(255, 0, 0); }\n");
+            AssetDatabase.ImportAsset(ussPath, ImportAssetOptions.ForceSynchronousImport);
+            liveRoot.styleSheets.Add(AssetDatabase.LoadAssetAtPath<StyleSheet>(ussPath));
+            play.AddToClassList("tint");
+            UIToolkitPanels.ValidateLayout(play.panel);
+            Assert.AreEqual(Color.red, play.resolvedStyle.color);
+            File.WriteAllText(ussPath, ".tint { color: rgb(0, 0, 255); }\n");
+            var reload = UIToolkitFunctions.StyleUiToolkit(id, reload_stylesheets: true);
+            yield return Await(reload);
+            var reloaded = Data(reload.Result);
+            CollectionAssert.Contains(reloaded["reload"]["imported"].ToObject<string[]>(), ussPath, reloaded.ToString());
+            Assert.AreEqual(Color.blue, play.resolvedStyle.color, "the edited USS applies to the live panel");
+        }
+
+        [UnityTest]
+        public IEnumerator AuditIgnoresBuiltInControlInternals()
+        {
+            yield return BuildLivePanel("UitkAuditInternals");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var menu = liveRoot.Q("menu");
+            // Two Sliders: picking-ignored roots with pickable drag containers, and duplicate unity-* part names.
+            for (var i = 0; i < 2; i++) menu.Add(new Slider(0, 1) { name = "volume" + i, style = { width = 200, height = 30 } });
+            var blocked = new Button { name = "blocked", text = "Blocked", pickingMode = PickingMode.Ignore, style = { width = 200, height = 30 } };
+            menu.Add(blocked);
+            UIToolkitPanels.ValidateLayout(menu.panel);
+            yield return null;
+            Assert.AreEqual(PickingMode.Ignore, menu.Q<Slider>("volume0").pickingMode, "Unity's Slider root ignores picking by design");
+
+            var findings = (JArray)Data(UIToolkitFunctions.GetVisualTree(id, all_findings: true))["hosts"][0]["findings"];
+            var ignored = findings.Where(f => (string)f["code"] == "CONTROL_PICKING_IGNORED").Select(f => (string)f["element"]).ToList();
+            CollectionAssert.AreEqual(new[] { "Button#blocked \"Blocked\"" }, ignored, findings.ToString());
+            Assert.IsFalse(findings.Any(f => (string)f["code"] == "DUPLICATE_NAME" && ((string)f["element"]).StartsWith("#unity-")), findings.ToString());
         }
 
         private VisualElement liveRoot;
