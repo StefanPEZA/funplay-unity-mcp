@@ -66,6 +66,12 @@ namespace Funplay.Editor.Tests
             AssertBlockedIn(projectRoot, "var path = \"Library/a.png\"; path = \"Assets/a.png\"; File.WriteAllBytes(path, bytes);", "File write");
             AssertBlockedIn(projectRoot, "var path = \"Library/x\"; path += \"y\"; File.WriteAllBytes(path, bytes);", "File write");
             AssertBlockedIn(projectRoot, "File.WriteAllBytes($\"Library/{name}.png\", bytes);", "File write");
+            // A second binding of the name (other scope, lambda, deconstruction) is not resolvable.
+            AssertBlockedIn(projectRoot, "{ var p = \"Library/a\"; } foreach (var p in targets) File.WriteAllText(p, \"x\");", "File write");
+            AssertBlockedIn(projectRoot, "var p = \"Library/a\"; targets.ForEach(p => File.WriteAllText(p, \"x\"));", "File write");
+            AssertBlockedIn(projectRoot, "string p = \"Library/a\"; (p, q) = (target, 1); File.WriteAllText(p, \"x\");", "File write");
+            AssertBlockedIn(projectRoot, "Directory.SetCurrentDirectory(home); File.WriteAllText(\"Library/a\", \"x\");", "working directory");
+            AssertBlockedIn(projectRoot, "Environment.CurrentDirectory = home;", "working directory");
             AssertBlockedIn(projectRoot, "File.Move(\"Assets/a.png\", \"Library/a.png\");", "File write");
             AssertBlockedIn(projectRoot, "Directory.Move(\"Library\", \"Temp/Library\");", "Directory write");
             AssertBlockedIn(projectRoot, "var path = \"/etc/passwd\";", "Absolute");

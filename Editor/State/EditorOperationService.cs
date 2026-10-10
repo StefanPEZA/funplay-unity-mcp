@@ -168,7 +168,12 @@ namespace Funplay.Editor.State
                 // A transient write failure must not disable operations for the rest of the session.
                 if (journalErrorFromSave) { JournalError = null; journalErrorFromSave = false; }
             }
-            catch (Exception ex) { JournalError = ex.Message; journalErrorFromSave = true; throw; }
+            catch (Exception ex)
+            {
+                // A read failure stays sticky: a later save failure must not downgrade it to retryable.
+                if (JournalError == null || journalErrorFromSave) { JournalError = ex.Message; journalErrorFromSave = true; }
+                throw;
+            }
         }
 
         // Antivirus, indexers, git or a second Editor briefly lock the journal on Windows and the

@@ -16,6 +16,13 @@ namespace Funplay.Editor.Tools.Builtins
         // (Library/FunplayMcp/Screenshots, Recordings), e.g. for saving a cropped screenshot.
         private static readonly string[] WritableProjectFolders = { "Library", "Temp" };
 
+        // Words that can precede an identifier without declaring it (`return path;`, `x in path)`).
+        private static readonly HashSet<string> NonTypeKeywords = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "return", "in", "await", "out", "ref", "new", "is", "as", "case", "yield", "throw", "else",
+            "nameof", "typeof", "when", "and", "or", "not", "params", "this", "goto", "using", "lock"
+        };
+
         private static readonly SafetyRule[] BaseRules =
         {
             new SafetyRule(@"\bFile\.Delete\b", "File.Delete blocked by safety_checks"),
@@ -45,6 +52,9 @@ namespace Funplay.Editor.Tools.Builtins
             new SafetyRule(@"(?<![\w.])(?:System\.IO\.)?Directory\.CreateDirectory\b", DirectoryWriteReason, pathArguments: new[] { 0 }),
             new SafetyRule(@"(?<![\w.])(?:System\.IO\.)?Directory\.Move\b", DirectoryWriteReason, pathArguments: new[] { 0, 1 }),
             new SafetyRule(@"(?<![\w.])(?:System\.IO\.)?Directory\.Delete\b", DirectoryWriteReason),
+            // The Library/Temp allowance resolves relative paths against the project root, which is
+            // only sound while the process working directory stays there.
+            new SafetyRule(@"(?<![\w.])(?:System\.IO\.)?Directory\.SetCurrentDirectory\b|(?<![\w.])(?:System\.)?Environment\.CurrentDirectory\s*=(?!=)", "Changing the working directory blocked by strict filesystem safety"),
             new SafetyRule(@"(?<![\w.])(?:System\.IO\.)?FileInfo\.(?:CopyTo|Create|CreateText|Delete|MoveTo|Replace)\b", "FileInfo write/destructive operation blocked by strict filesystem safety"),
             new SafetyRule(@"(?<![\w.])(?:System\.IO\.)?DirectoryInfo\.(?:Create|CreateSubdirectory|Delete|MoveTo)\b", "DirectoryInfo write/destructive operation blocked by strict filesystem safety"),
             new SafetyRule(@"(?<![\w.])(?:System\.IO\.)?FileStream(?=\s*\()", "Raw FileStream construction blocked by strict filesystem safety", pathArguments: new[] { 0 }),
@@ -253,9 +263,23 @@ namespace Funplay.Editor.Tools.Builtins
         {
             var escaped = Regex.Escape(name);
             if (Regex.IsMatch(code, @"(?<![\w.])" + escaped + @"\s*(?:\+\+|--|[-+*/%&|^]=|\?\?=)") ||
-                Regex.IsMatch(code, @"(?:\+\+|--|\bref\s+|\bout\s+(?:var\s+|string\s+)?)" + escaped + @"\b"))
+                Regex.IsMatch(code, @"(?:\+\+|--|\bref\s+|\bout\s+(?:[\w.<>\[\]?]+\s+)?)" + escaped + @"\b") ||
+                // Lambda parameters and tuple deconstruction bind the name without a plain `name =`.
+                Regex.IsMatch(code, @"(?<![\w.])" + escaped + @"\s*=>") ||
+                Regex.IsMatch(code, @"\((?:[^()]*,)?\s*(?:[\w.<>\[\]?]+\s+)?" + escaped + @"\s*(?:,[^()]*)?\)\s*=(?![=>])") ||
+                Regex.IsMatch(code, @"\((?:[^()]*,)?\s*(?:[\w.<>\[\]?]+\s+)?" + escaped + @"\s*(?:,[^()]*)?\)\s*=>"))
             {
                 return null;
+            }
+
+            // A second declaration of the same name in another scope (foreach variable, parameter,
+            // `is` pattern) can hold any value; only one declaration is resolvable.
+            var declarations = 0;
+            foreach (Match declaration in Regex.Matches(code,
+                         @"(?<![\w.])([A-Za-z_][\w.]*)(?:<[^<>;]*>)?(?:\[\])?\??\s+" + escaped + @"\b(?=\s*(?:[,);=]|in\b))"))
+            {
+                if (!NonTypeKeywords.Contains(declaration.Groups[1].Value) && ++declarations > 1)
+                    return null;
             }
 
             var assignments = Regex.Matches(code, @"(?<![\w.])" + escaped + @"\s*=(?![=>])");

@@ -462,10 +462,10 @@ namespace Funplay.Editor.Tools.Helpers
             /// </summary>
             public VisualElement ClickTarget(VisualElement element)
             {
-                if (Text != null && !IsControl(element) && string.Equals(GetText(element), Text, StringComparison.OrdinalIgnoreCase))
+                if (Text != null && string.Equals(GetText(element), Text, StringComparison.OrdinalIgnoreCase))
                 {
-                    var receiver = FindClickReceiver(element);
-                    if (receiver != null && !ReferenceEquals(receiver, element) && MatchesExceptText(receiver)) return receiver;
+                    var receiver = LabelClickReceiver(element);
+                    if (receiver != null && MatchesExceptText(receiver)) return receiver;
                 }
                 return Matches(element) ? element : null;
             }
@@ -626,22 +626,53 @@ namespace Funplay.Editor.Tools.Helpers
         internal sealed class ClipCache
         {
             private readonly Dictionary<VisualElement, Rect> _childClip = new Dictionary<VisualElement, Rect>();
+            private readonly Dictionary<VisualElement, Visibility> _visibility = new Dictionary<VisualElement, Visibility>();
+            private readonly Dictionary<VisualElement, ScrollView> _scrollView = new Dictionary<VisualElement, ScrollView>();
+            private readonly Dictionary<VisualElement, ScrollView> _ancestorScrollView = new Dictionary<VisualElement, ScrollView>();
 
             public Visibility Of(VisualElement element)
             {
+                if (_visibility.TryGetValue(element, out var cached)) return cached;
                 var bound = element.worldBound;
                 var parent = element.hierarchy.parent;
                 var clip = parent != null ? ChildClip(parent) : new Rect(float.NaN, float.NaN, float.NaN, float.NaN);
                 var visible = Intersect(bound, clip);
                 var area = bound.width * bound.height;
                 var fraction = area > 0f ? visible.width * visible.height / area : float.IsNaN(clip.width) || clip.Contains(bound.position) ? 1f : 0f;
-                var result = new Visibility { Visible = visible, Fraction = Mathf.Clamp01(fraction) };
-                for (var current = parent; current != null; current = current.hierarchy.parent)
+                var result = new Visibility { Visible = visible, Fraction = Mathf.Clamp01(fraction), ScrollView = NearestScrollView(element) };
+                for (var current = parent; current != null && !result.FullyVisible; current = current.hierarchy.parent)
                 {
-                    if (result.ScrollView == null && current is ScrollView scrollView && scrollView.contentContainer.Contains(element)) result.ScrollView = scrollView;
-                    if (result.FullyVisible || result.ClippedBy != null) continue;
-                    if (current.hierarchy.parent == null || ClipsChildren(current) && !ContainsRect(current.worldBound, bound)) result.ClippedBy = current;
+                    if (current.hierarchy.parent == null || ClipsChildren(current) && !ContainsRect(current.worldBound, bound))
+                    {
+                        result.ClippedBy = current;
+                        break;
+                    }
                 }
+                _visibility[element] = result;
+                return result;
+            }
+
+            // Nearest ScrollView whose content holds the element, memoized per element: either the
+            // parent is a ScrollView's contentContainer, or the answer is the parent's.
+            private ScrollView NearestScrollView(VisualElement element)
+            {
+                var parent = element.hierarchy.parent;
+                if (parent == null) return null;
+                if (_scrollView.TryGetValue(element, out var cached)) return cached;
+                var ancestor = AncestorScrollView(parent);
+                var result = ancestor != null && ReferenceEquals(ancestor.contentContainer, parent) ? ancestor : NearestScrollView(parent);
+                _scrollView[element] = result;
+                return result;
+            }
+
+            // Nearest ScrollView above the element, whether or not the element is in its content.
+            private ScrollView AncestorScrollView(VisualElement element)
+            {
+                var parent = element.hierarchy.parent;
+                if (parent == null) return null;
+                if (_ancestorScrollView.TryGetValue(element, out var cached)) return cached;
+                var result = parent as ScrollView ?? AncestorScrollView(parent);
+                _ancestorScrollView[element] = result;
                 return result;
             }
 
@@ -718,6 +749,18 @@ namespace Funplay.Editor.Tools.Helpers
             return null;
         }
 
+        /// <summary>
+        /// The click receiver a non-control element (the Label inside a Button) stands for, or null.
+        /// A Foldout is excluded: its header label resolves to the header Toggle, and anything in its
+        /// content is not part of the Foldout's click area.
+        /// </summary>
+        internal static VisualElement LabelClickReceiver(VisualElement element)
+        {
+            if (IsControl(element)) return null;
+            var receiver = FindClickReceiver(element);
+            return receiver == null || ReferenceEquals(receiver, element) || receiver is Foldout ? null : receiver;
+        }
+
         internal static object DescribeElement(VisualElement element, string path, ScreenMapping? mapping, int renderHeight, bool includeStyles, DisplayCache displayCache = null, ClipCache clipCache = null)
         {
             var bound = element.worldBound;
@@ -741,8 +784,8 @@ namespace Funplay.Editor.Tools.Helpers
 
             // A Label inside a Button: give the receiver's path so it can be clicked directly.
             string receiverPath = null;
-            var receiver = path != null && !IsControl(element) ? FindClickReceiver(element) : null;
-            if (receiver != null && !ReferenceEquals(receiver, element))
+            var receiver = path != null ? LabelClickReceiver(element) : null;
+            if (receiver != null)
             {
                 var levels = 0;
                 for (var current = element; current != null && !ReferenceEquals(current, receiver); current = current.hierarchy.parent) levels++;

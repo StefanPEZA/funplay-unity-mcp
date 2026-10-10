@@ -574,7 +574,7 @@ namespace Funplay.Editor.MCP.Server
         {
             var response = CreateBackendUnavailableResponse(request?.Id);
             var data = (Dictionary<string, object>)response.Error.Data;
-            response.Error.Message = "Unity domain reload interrupted this request before it responded (RELOAD_IN_PROGRESS).";
+            response.Error.Message = "A Unity domain reload (or MCP server stop) interrupted this request before it responded (RELOAD_IN_PROGRESS).";
             data["code"] = "RELOAD_IN_PROGRESS";
 
             var kind = GetRecoverableTaskKind(request, out var requestKey);
