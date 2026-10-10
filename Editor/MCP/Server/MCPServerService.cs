@@ -515,7 +515,7 @@ namespace Funplay.Editor.MCP.Server
                 // cancellation can only mean the server is going away.
                 PluginDebugLogger.Log(
                     "[Funplay MCP Server] Request cancelled because the server is stopping or the domain is reloading.");
-                sendResponse(CreateBackendUnavailableResponse(request?.Id));
+                sendResponse(CreateInterruptedByReloadResponse(request));
             }
             catch (Exception ex)
             {
@@ -562,6 +562,58 @@ namespace Funplay.Editor.MCP.Server
                     }
                 }
             };
+        }
+
+        /// <summary>
+        /// Response for a request whose transport stopped (domain reload or server stop) before
+        /// the handler answered, replacing a bare "Request cancelled". Editor and preview
+        /// operations started with a request_key keep running and survive the reload, so the
+        /// caller is pointed at get_task for that key instead of being told the call failed.
+        /// </summary>
+        internal static MCPResponse CreateInterruptedByReloadResponse(MCPRequest request)
+        {
+            var response = CreateBackendUnavailableResponse(request?.Id);
+            var data = (Dictionary<string, object>)response.Error.Data;
+            response.Error.Message = "Unity domain reload interrupted this request before it responded (RELOAD_IN_PROGRESS).";
+            data["code"] = "RELOAD_IN_PROGRESS";
+
+            var kind = GetRecoverableTaskKind(request, out var requestKey);
+            if (kind != null)
+            {
+                data["kind"] = kind;
+                data["request_key"] = requestKey;
+                data["hint"] = $"The operation keeps running across the reload. Once the server is back, call get_task(kind=\"{kind}\", request_key=\"{requestKey}\"); repeating the call with the same request_key returns the same operation.";
+            }
+            else
+            {
+                data["hint"] = "Retry shortly. Call get_reload_recovery_status before repeating a call with side effects.";
+            }
+
+            return response;
+        }
+
+        // get_task kind for start tools that are idempotent per request_key; null otherwise.
+        private static string GetRecoverableTaskKind(MCPRequest request, out string requestKey)
+        {
+            requestKey = null;
+            if (request?.Params == null || !string.Equals(request.Method, "tools/call", StringComparison.Ordinal))
+                return null;
+
+            var toolName = GetToolName(request);
+            var kind = string.Equals(toolName, "prepare_editor", StringComparison.OrdinalIgnoreCase) ? "editor"
+                : string.Equals(toolName, "start_ui_preview_session", StringComparison.OrdinalIgnoreCase) ? "ui_preview"
+                : null;
+            if (kind == null ||
+                !request.Params.TryGetValue("arguments", out var argumentsObject) ||
+                !(argumentsObject is Dictionary<string, object> arguments) ||
+                !arguments.TryGetValue("request_key", out var key) ||
+                string.IsNullOrWhiteSpace(key?.ToString()))
+            {
+                return null;
+            }
+
+            requestKey = key.ToString();
+            return kind;
         }
 
         private void HandleSettingsChanged()

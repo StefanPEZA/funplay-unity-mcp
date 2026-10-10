@@ -260,7 +260,7 @@ namespace Funplay.Editor.Tools.Builtins
             catch (Exception ex) { return Response.Error("PANEL_SETTINGS_NOT_CREATED", new { detail = ex.Message, created_assets = createdAssets }); }
         }
 
-        [Description("Read the live VisualElement tree of PanelRenderer/UIDocument hosts (Edit or Play Mode): type, name, classes, text/value, displayed/enabled/picking state, panel bounds and Game View screen bounds (render bottom-left + image top-left, same contract as clicks/screenshots), optional resolved styles. Filter with selector (Type#name.class) and/or exact text. Includes findings such as zero-size or picking-ignored controls, offscreen elements and duplicate names. Element paths feed click_ui_toolkit_element.")]
+        [Description("Read the live VisualElement tree of PanelRenderer/UIDocument hosts (Edit or Play Mode): type, name, classes, text/value, displayed/enabled/picking state, visible_fraction/clipped_by (ScrollView viewport or overflow clipping), panel bounds and Game View screen bounds (render bottom-left + image top-left, same contract as clicks/screenshots), optional resolved styles. Filter with selector (Type#name.class) and/or exact text; a text match inside a Button reports the Button's click_receiver_path. Includes findings such as zero-size or picking-ignored controls, elements outside the panel and duplicate names, limited to the matched elements' subtrees unless all_findings. Element paths feed click_ui_toolkit_element.")]
         [ReadOnlyTool]
         public static object GetVisualTree(
             [ToolParam("Panel host GameObject name/path/ID; omitted reads every host", Required = false)] string target = null,
@@ -268,7 +268,8 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Exact element text, case-insensitive", Required = false)] string text = null,
             [ToolParam("Maximum depth below each root, 0..64", Required = false)] int max_depth = 24,
             [ToolParam("Maximum elements returned across hosts, 1..2000", Required = false)] int max_elements = 300,
-            [ToolParam("Include resolved styles per element", Required = false)] bool include_styles = false)
+            [ToolParam("Include resolved styles per element", Required = false)] bool include_styles = false,
+            [ToolParam("Report findings for the whole tree, uncapped, instead of the matched subtrees (at most 50 per host)", Required = false)] bool all_findings = false)
         {
             try
             {
@@ -294,13 +295,20 @@ namespace Funplay.Editor.Tools.Builtins
                     var elements = new List<object>();
                     var walked = UIToolkitPanels.Walk(root, max_depth, hostRoots).ToList();
                     var displayCache = new UIToolkitPanels.DisplayCache();
+                    var clipCache = new UIToolkitPanels.ClipCache();
+                    var hostMatches = new HashSet<VisualElement>();
                     foreach (var entry in walked)
                     {
                         if (!filter.IsEmpty && !filter.Matches(entry.Value)) continue;
+                        hostMatches.Add(entry.Value);
                         if (++matched <= max_elements)
-                            elements.Add(UIToolkitPanels.DescribeElement(entry.Value, entry.Key, mapping, renderHeight, include_styles, displayCache));
+                            elements.Add(UIToolkitPanels.DescribeElement(entry.Value, entry.Key, mapping, renderHeight, include_styles, displayCache, clipCache));
                     }
 
+                    // A query's findings cover what it matched (and their subtrees), not the whole tree.
+                    var scope = filter.IsEmpty || all_findings ? null : hostMatches;
+                    var findings = Audit(root, walked, displayCache, clipCache, scope);
+                    var findingsOmitted = all_findings ? 0 : Math.Max(0, findings.Count - MaxFindingsPerHost);
                     results.Add(new
                     {
                         host = DescribeHost(host, walked.Count),
@@ -309,7 +317,9 @@ namespace Funplay.Editor.Tools.Builtins
                         screen_mapping = mapping.HasValue ? "screen_space" : UIToolkitPanels.IsWorldSpace(UIToolkitPanels.GetPanelSettings(host)) ? "world_space_unmapped" : "unavailable",
                         element_count = walked.Count,
                         elements,
-                        findings = Audit(root, walked, displayCache)
+                        findings = findingsOmitted > 0 ? findings.Take(MaxFindingsPerHost).ToList() : findings,
+                        findings_omitted = findingsOmitted > 0 ? (int?)findingsOmitted : null,
+                        findings_scope = scope != null ? "matched_subtrees" : "tree"
                     });
                 }
 
@@ -345,60 +355,100 @@ namespace Funplay.Editor.Tools.Builtins
             });
         }
 
-        [Description("Click a UI Toolkit element in Play Mode by selector (Type#name.class), exact text and/or element_path from get_visual_tree, optionally scoped to one host. Requires a unique, displayed, enabled match; refuses when another element covers its center unless allow_covered. Dispatches pointer move/down/up through the panel like real mouse input (Clickable, :hover/:active, ClickEvent). Reports click_event_received. Works without an EventSystem.")]
+        [Description("Click a UI Toolkit element in Play Mode by selector (Type#name.class), exact text and/or element_path from get_visual_tree, optionally scoped to one host. A text match on a Button's inner Label clicks the Button. Requires a unique, displayed, enabled match; clicks the visible part of an element partly clipped by a ScrollView/overflow, refuses ELEMENT_CLIPPED when fully clipped (scroll_into_view scrolls it in first) and ELEMENT_COVERED when another element receives the pointer, unless allow_covered. Dispatches pointer move/down/up through the panel like real mouse input (Clickable, :hover/:active, ClickEvent). Reports clicked, handler_invoked and click_event_received. Works without an EventSystem.")]
         public static object ClickUiToolkitElement(
             [ToolParam("Panel host GameObject name/path/ID", Required = false)] string target = null,
             [ToolParam("Compound selector Type#name.class", Required = false)] string selector = null,
             [ToolParam("Exact element text, case-insensitive", Required = false)] string text = null,
             [ToolParam("Element path from get_visual_tree (requires a single host)", Required = false)] string element_path = null,
             [ToolParam("left, right or middle", Required = false)] string button = "left",
-            [ToolParam("Click even when another element covers the center", Required = false)] bool allow_covered = false)
+            [ToolParam("Click even when another element covers the center", Required = false)] bool allow_covered = false,
+            [ToolParam("Scroll enclosing ScrollViews so a clipped element is in view before clicking", Required = false)] bool scroll_into_view = false)
         {
             if (!EditorApplication.isPlaying)
                 return Response.Error("PLAY_MODE_REQUIRED", new { hint = "UI callbacks are registered by runtime scripts; enter Play Mode first." });
-            return ClickElement(target, selector, text, element_path, button, allow_covered);
+            return ClickElement(target, selector, text, element_path, button, allow_covered, scroll_into_view);
+        }
+
+        [Description("Scroll a UI Toolkit ScrollView (Edit or Play Mode; scroll state is not saved). Without deltas, scrolls every ScrollView around the matched element until it is in view (ScrollView.ScrollTo): the fix for ELEMENT_CLIPPED from click_ui_toolkit_element. With delta_x/delta_y (panel pixels; positive scrolls right/down), offsets the matched ScrollView, or the nearest one around the matched element; the ScrollView clamps the offset. Match by selector (Type#name.class), exact text and/or element_path as for clicks. Reports offsets and the element's visible_fraction afterwards.")]
+        public static object ScrollUiToolkit(
+            [ToolParam("Panel host GameObject name/path/ID", Required = false)] string target = null,
+            [ToolParam("Compound selector Type#name.class", Required = false)] string selector = null,
+            [ToolParam("Exact element text, case-insensitive", Required = false)] string text = null,
+            [ToolParam("Element path from get_visual_tree (requires a single host)", Required = false)] string element_path = null,
+            [ToolParam("Horizontal scroll in panel pixels; 0 with delta_y 0 scrolls the element into view", Required = false)] float delta_x = 0,
+            [ToolParam("Vertical scroll in panel pixels, positive scrolls down", Required = false)] float delta_y = 0)
+        {
+            return ScrollElement(target, selector, text, element_path, delta_x, delta_y);
         }
 
         // ---- Shared implementation (also used by tests in Edit Mode) -------------------------
 
-        internal static object ClickElement(string target, string selector, string text, string elementPath, string button, bool allowCovered)
+        internal static object ScrollElement(string target, string selector, string text, string elementPath, float deltaX, float deltaY)
+        {
+            try
+            {
+                if (float.IsNaN(deltaX) || float.IsNaN(deltaY) || float.IsInfinity(deltaX) || float.IsInfinity(deltaY) ||
+                    Mathf.Abs(deltaX) > 100000f || Mathf.Abs(deltaY) > 100000f)
+                    throw new UIToolkitException("INVALID_SCROLL_DELTA", "delta_x and delta_y must be finite and within 100000 panel pixels.");
+                var (matchHost, matchPath, element) = ResolveUniqueElement(target, selector, text, elementPath);
+                var panel = element.panel ?? throw new UIToolkitException("ROOT_NOT_READY", "The element is not attached to a panel.");
+                UIToolkitPanels.ValidateLayout(panel);
+
+                List<KeyValuePair<ScrollView, Vector2>> scrolled;
+                if (deltaX != 0f || deltaY != 0f)
+                {
+                    var scrollView = element as ScrollView;
+                    for (var current = element.hierarchy.parent; scrollView == null && current != null; current = current.hierarchy.parent)
+                        if (current is ScrollView ancestor && ancestor.contentContainer.Contains(element)) scrollView = ancestor;
+                    if (scrollView == null) throw new UIToolkitException("NO_SCROLL_VIEW", "The element is not a ScrollView and is not inside one.");
+                    scrolled = new List<KeyValuePair<ScrollView, Vector2>> { new KeyValuePair<ScrollView, Vector2>(scrollView, scrollView.scrollOffset) };
+                    scrollView.scrollOffset += new Vector2(deltaX, deltaY);
+                    UIToolkitPanels.ValidateLayout(panel);
+                }
+                else
+                {
+                    if (element is ScrollView) throw new ArgumentException("Pass delta_x/delta_y to scroll a ScrollView, or match an element inside it to scroll it into view.");
+                    scrolled = UIToolkitPanels.ScrollIntoView(element);
+                    if (scrolled.Count == 0) throw new UIToolkitException("NO_SCROLL_VIEW", "The element is not inside a ScrollView.");
+                }
+
+                var root = UIToolkitPanels.GetRoot(matchHost);
+                var mapping = MappingFor(matchHost, panel);
+                var renderHeight = TryGetRenderHeight(out _);
+                if (mapping.HasValue && renderHeight > 0)
+                {
+                    var screen = mapping.Value.ToScreen(scrolled[0].Key.worldBound.center);
+                    VideoRecordingFunctions.RecordMarker("scroll", "UI Toolkit scroll " + Label(scrolled[0].Key), new Vector2(screen.x, renderHeight - screen.y));
+                }
+                var moved = scrolled.Any(s => s.Key.scrollOffset != s.Value);
+                var visibility = UIToolkitPanels.GetVisibility(element);
+                return Response.Success(moved ? $"Scrolled {Label(scrolled[0].Key)}." : $"{Label(scrolled[0].Key)} did not move (already in view or at its limit).", new
+                {
+                    host_id = ObjectIdHelper.GetSerializableId(matchHost.gameObject),
+                    element = UIToolkitPanels.DescribeElement(element, matchPath, mapping, renderHeight, false),
+                    scroll_views = scrolled.Select(s => new
+                    {
+                        scroll_view = Label(s.Key),
+                        element_path = root != null ? UIToolkitPanels.PathOf(root, s.Key) : null,
+                        offset_before = new { x = s.Value.x, y = s.Value.y },
+                        offset_after = new { x = s.Key.scrollOffset.x, y = s.Key.scrollOffset.y }
+                    }).ToArray(),
+                    visible_fraction = (float)Math.Round(visibility.Fraction, 3),
+                    hint = visibility.Fraction <= 0f && moved ? "Layout may settle on the next frame; re-read get_visual_tree before clicking." : null
+                });
+            }
+            catch (UIToolkitException ex) { return Response.Error(ex.Code, new { detail = ex.Message, details = ex.Details }); }
+            catch (Exception ex) { return Response.Error("UI_TOOLKIT_SCROLL_FAILED", new { detail = ex.Message }); }
+        }
+
+        internal static object ClickElement(string target, string selector, string text, string elementPath, string button, bool allowCovered, bool scrollIntoView = false)
         {
             try
             {
                 if (!InputInteractionFunctions.TryParseButton(button, out var inputButton))
                     throw new ArgumentException("button must be left, right or middle.");
-                var hosts = ResolveHosts(target);
-                var filter = UIToolkitPanels.Selector.Parse(selector, text);
-                var matches = new List<(Component host, string path, VisualElement element)>();
-                if (!string.IsNullOrEmpty(elementPath))
-                {
-                    if (hosts.Count != 1) throw new UIToolkitException("TARGET_REQUIRED", "element_path is relative to one host; pass target.");
-                    var root = UIToolkitPanels.GetRoot(hosts[0]) ?? throw new UIToolkitException("ROOT_NOT_READY", "The panel host has not built its visual tree.");
-                    var element = UIToolkitPanels.ResolvePath(root, elementPath) ?? throw new UIToolkitException("ELEMENT_NOT_FOUND", "element_path does not resolve in the current tree.");
-                    if (!filter.IsEmpty && !filter.Matches(element)) throw new UIToolkitException("ELEMENT_NOT_FOUND", "The element at element_path does not match selector/text.");
-                    matches.Add((hosts[0], elementPath, element));
-                }
-                else
-                {
-                    if (filter.IsEmpty) throw new ArgumentException("Pass selector, text or element_path.");
-                    // A nested host's root lives inside its parent host's tree; excluding host roots
-                    // reaches each element once, relative to the host that owns it.
-                    var hostRoots = UIToolkitPanels.HostRoots(hosts);
-                    foreach (var host in hosts)
-                    {
-                        var root = UIToolkitPanels.GetRoot(host);
-                        if (root == null) continue;
-                        foreach (var entry in UIToolkitPanels.Walk(root, exclude: hostRoots))
-                            if (filter.Matches(entry.Value)) matches.Add((host, entry.Key, entry.Value));
-                    }
-                }
-
-                if (matches.Count == 0) throw new UIToolkitException("ELEMENT_NOT_FOUND", "No element matches; inspect get_visual_tree.");
-                if (matches.Count > 1)
-                    throw new UIToolkitException("AMBIGUOUS_ELEMENT", $"{matches.Count} elements match; narrow the selector or pass element_path.",
-                        matches.Take(10).Select(m => new { host_id = ObjectIdHelper.GetSerializableId(m.host.gameObject), element_path = m.path, element = Label(m.element) }).ToArray());
-
-                var (matchHost, matchPath, matched) = matches[0];
+                var (matchHost, matchPath, matched) = ResolveUniqueElement(target, selector, text, elementPath);
                 var panel = matched.panel ?? throw new UIToolkitException("ROOT_NOT_READY", "The element is not attached to a panel.");
                 UIToolkitPanels.ValidateLayout(panel);
                 if (!UIToolkitPanels.IsDisplayed(matched)) throw new UIToolkitException("ELEMENT_NOT_DISPLAYED", "The element is hidden (display:none or visibility:hidden on it or an ancestor).");
@@ -406,35 +456,120 @@ namespace Funplay.Editor.Tools.Builtins
                 if (!UIToolkitPanels.HasLayout(matched) || matched.worldBound.width < 1f || matched.worldBound.height < 1f)
                     throw new UIToolkitException("ELEMENT_HAS_NO_AREA", "The element has no laid-out area to click.");
 
-                var center = matched.worldBound.center;
-                var picked = panel.Pick(center);
+                // Clipping first: a clipped center picks nothing or an ancestor, which is not "covered".
+                var visibility = UIToolkitPanels.GetVisibility(matched);
+                var scrolled = false;
+                if (!visibility.FullyVisible && scrollIntoView && visibility.ScrollView != null)
+                {
+                    scrolled = UIToolkitPanels.ScrollIntoView(matched).Any(s => s.Key.scrollOffset != s.Value);
+                    visibility = UIToolkitPanels.GetVisibility(matched);
+                }
+                if (visibility.Fraction <= 0f)
+                    throw new UIToolkitException("ELEMENT_CLIPPED",
+                        scrolled
+                            ? "Scrolled toward the element, but it is still outside the viewport; layout may settle on the next frame, so retry."
+                            : visibility.ScrollView != null
+                                ? $"The element is scrolled out of view of {Label(visibility.ScrollView)}; pass scroll_into_view=true or call scroll_ui_toolkit first."
+                                : "The element lies outside the visible area of its clipping ancestor or the panel.",
+                        new
+                        {
+                            clipped_by = ClipperLabel(visibility.ClippedBy),
+                            scroll_view = visibility.ScrollView != null ? Label(visibility.ScrollView) : null,
+                            visible_fraction = 0f,
+                            scrolled
+                        });
+
+                var point = visibility.FullyVisible ? matched.worldBound.center : visibility.Visible.center;
+                var picked = panel.Pick(point);
                 var covered = picked == null || !(ReferenceEquals(picked, matched) || matched.Contains(picked));
                 if (covered && !allowCovered)
-                    throw new UIToolkitException("ELEMENT_COVERED", "Another element (or picking-mode ignore) receives the pointer at this element's center.",
-                        new { covered_by = picked != null ? Label(picked) : null, picking_mode = matched.pickingMode.ToString() });
+                {
+                    if (picked == null)
+                        throw new UIToolkitException("ELEMENT_NOT_PICKABLE", "Nothing pickable is at the element's center: it and its children use picking-mode Ignore.",
+                            new { picking_mode = matched.pickingMode.ToString() });
+                    throw new UIToolkitException("ELEMENT_COVERED", "Another element receives the pointer at this element's center.",
+                        new { covered_by = Label(picked), picking_mode = matched.pickingMode.ToString() });
+                }
 
                 var dispatchTarget = covered ? matched : picked;
                 var mapping = MappingFor(matchHost, panel);
                 var renderHeight = TryGetRenderHeight(out _);
                 if (mapping.HasValue && renderHeight > 0)
                 {
-                    var screen = mapping.Value.ToScreen(center);
+                    var screen = mapping.Value.ToScreen(point);
                     VideoRecordingFunctions.RecordMarker("click", "UI Toolkit click " + Label(matched), new Vector2(screen.x, renderHeight - screen.y));
                 }
-                var received = UIToolkitPanels.DispatchClick(panel, dispatchTarget, center, (int)inputButton);
                 var receiver = UIToolkitPanels.FindClickReceiver(dispatchTarget);
-                return Response.Success(received ? $"Clicked {Label(matched)}." : $"Pointer sequence sent to {Label(matched)}, but no ClickEvent reached it.", new
+                var result = UIToolkitPanels.DispatchClick(panel, dispatchTarget, point, (int)inputButton);
+                var who = receiver is Button ? "the button" : "the receiver";
+                var message = !result.Activated ? $"Pointer sequence sent to {Label(matched)}, but no ClickEvent or click handler reached it."
+                    : result.ReceiverDetached ? $"Clicked {Label(matched)}; {who} was removed from its panel."
+                    : result.ReceiverDisabled ? $"Clicked {Label(matched)}; {who} disabled itself."
+                    : $"Clicked {Label(matched)}.";
+                return Response.Success(message, new
                 {
                     host_id = ObjectIdHelper.GetSerializableId(matchHost.gameObject),
                     element = UIToolkitPanels.DescribeElement(matched, matchPath, mapping, renderHeight, false),
                     dispatched_to = Label(dispatchTarget),
                     click_receiver = receiver != null ? Label(receiver) : null,
-                    click_event_received = received,
+                    clicked = result.Activated,
+                    handler_invoked = result.HandlerInvoked,
+                    click_event_received = result.ClickEventReceived,
+                    receiver_disabled = result.ReceiverDisabled,
+                    receiver_detached = result.ReceiverDetached,
+                    visible_fraction = (float)Math.Round(visibility.Fraction, 3),
+                    scrolled_into_view = scrolled,
                     covered
                 });
             }
             catch (UIToolkitException ex) { return Response.Error(ex.Code, new { detail = ex.Message, details = ex.Details }); }
             catch (Exception ex) { return Response.Error("UI_TOOLKIT_CLICK_FAILED", new { detail = ex.Message }); }
+        }
+
+        /// <summary>
+        /// The single element a click/scroll query names. Text matches on a control's inner label
+        /// resolve to the control (<see cref="UIToolkitPanels.Selector.ClickTarget"/>).
+        /// </summary>
+        private static (Component host, string path, VisualElement element) ResolveUniqueElement(string target, string selector, string text, string elementPath)
+        {
+            var hosts = ResolveHosts(target);
+            var filter = UIToolkitPanels.Selector.Parse(selector, text);
+            var matches = new List<(Component host, string path, VisualElement element)>();
+            if (!string.IsNullOrEmpty(elementPath))
+            {
+                if (hosts.Count != 1) throw new UIToolkitException("TARGET_REQUIRED", "element_path is relative to one host; pass target.");
+                var root = UIToolkitPanels.GetRoot(hosts[0]) ?? throw new UIToolkitException("ROOT_NOT_READY", "The panel host has not built its visual tree.");
+                var element = UIToolkitPanels.ResolvePath(root, elementPath) ?? throw new UIToolkitException("ELEMENT_NOT_FOUND", "element_path does not resolve in the current tree.");
+                var resolved = filter.IsEmpty ? element : filter.ClickTarget(element);
+                if (resolved == null) throw new UIToolkitException("ELEMENT_NOT_FOUND", "The element at element_path does not match selector/text.");
+                matches.Add((hosts[0], ReferenceEquals(resolved, element) ? elementPath : UIToolkitPanels.PathOf(root, resolved) ?? elementPath, resolved));
+            }
+            else
+            {
+                if (filter.IsEmpty) throw new ArgumentException("Pass selector, text or element_path.");
+                // A nested host's root lives inside its parent host's tree; excluding host roots
+                // reaches each element once, relative to the host that owns it.
+                var hostRoots = UIToolkitPanels.HostRoots(hosts);
+                var seen = new HashSet<VisualElement>();
+                foreach (var host in hosts)
+                {
+                    var root = UIToolkitPanels.GetRoot(host);
+                    if (root == null) continue;
+                    foreach (var entry in UIToolkitPanels.Walk(root, exclude: hostRoots))
+                    {
+                        var resolved = filter.ClickTarget(entry.Value);
+                        if (resolved == null || !seen.Add(resolved)) continue;
+                        var path = ReferenceEquals(resolved, entry.Value) ? entry.Key : UIToolkitPanels.PathOf(root, resolved);
+                        if (path != null) matches.Add((host, path, resolved));
+                    }
+                }
+            }
+
+            if (matches.Count == 0) throw new UIToolkitException("ELEMENT_NOT_FOUND", "No element matches; inspect get_visual_tree.");
+            if (matches.Count > 1)
+                throw new UIToolkitException("AMBIGUOUS_ELEMENT", $"{matches.Count} elements match; narrow the selector or pass element_path.",
+                    matches.Take(10).Select(m => new { host_id = ObjectIdHelper.GetSerializableId(m.host.gameObject), element_path = m.path, element = Label(m.element) }).ToArray());
+            return matches[0];
         }
 
         // ---- Helpers -----------------------------------------------------------------------
@@ -451,7 +586,10 @@ namespace Funplay.Editor.Tools.Builtins
             var issues = new List<string>();
             if (parent == null && settings == null) issues.Add("NO_PANEL_SETTINGS: the panel is not displayed until PanelSettings is assigned.");
             if (settings != null && settings.themeStyleSheet == null) issues.Add("NO_THEME_STYLE_SHEET: built-in controls render unstyled without a theme.");
-            if (tree == null) issues.Add("NO_VISUAL_TREE_ASSET: nothing is loaded unless code builds the tree.");
+            // Code-built trees (no UXML) are normal; only a built root that stays empty in Play Mode is an issue.
+            var treeSource = tree != null ? "uxml" : root != null && root.hierarchy.childCount > 0 ? "code" : "none";
+            if (treeSource == "none" && root != null && EditorApplication.isPlaying)
+                issues.Add("NO_VISUAL_TREE_ASSET: no UXML is assigned and no code has added elements to the root.");
             if (host is UIDocument && UIToolkitPanels.PanelRendererAvailable) issues.Add("LEGACY_UI_DOCUMENT: PanelRenderer is the current host on this Unity version; keep unless migrating deliberately.");
             if (host.gameObject.activeInHierarchy && UIToolkitPanels.IsEnabled(host) && root == null && (settings != null || parent != null))
                 issues.Add("ROOT_NOT_READY: the host has not built its visual tree yet (enter Play Mode or repaint the Game View).");
@@ -465,6 +603,7 @@ namespace Funplay.Editor.Tools.Builtins
                 active = host.gameObject.activeInHierarchy,
                 enabled = UIToolkitPanels.IsEnabled(host),
                 visual_tree_asset = tree != null ? AssetDatabase.GetAssetPath(tree) : null,
+                tree_source = treeSource,
                 panel_settings = UIToolkitPanels.DescribePanelSettings(settings),
                 parent_ui_id = parent != null ? ObjectIdHelper.GetSerializableId(parent.gameObject) : null,
                 sorting_order = UIToolkitPanels.GetSortingOrder(host),
@@ -474,23 +613,47 @@ namespace Funplay.Editor.Tools.Builtins
             };
         }
 
-        private static List<object> Audit(VisualElement root, List<KeyValuePair<string, VisualElement>> walked, UIToolkitPanels.DisplayCache displayCache)
+        private const int MaxFindingsPerHost = 50;
+
+        /// <param name="scope">Matched elements; when set, only they and their subtrees are audited.</param>
+        private static List<object> Audit(VisualElement root, List<KeyValuePair<string, VisualElement>> walked, UIToolkitPanels.DisplayCache displayCache,
+            UIToolkitPanels.ClipCache clipCache, ISet<VisualElement> scope = null)
         {
             var findings = new List<object>();
-            var rootBound = root.worldBound;
-            var rootHasLayout = UIToolkitPanels.HasLayout(root) && rootBound.width > 0 && rootBound.height > 0;
+            var inScope = new Dictionary<VisualElement, bool>();
+            bool InScope(VisualElement element)
+            {
+                if (scope == null) return true;
+                if (element == null) return false;
+                if (inScope.TryGetValue(element, out var value)) return value;
+                value = scope.Contains(element) || !ReferenceEquals(element, root) && InScope(element.hierarchy.parent);
+                inScope[element] = value;
+                return value;
+            }
+
+            var outside = new HashSet<VisualElement>();
             foreach (var entry in walked)
             {
                 var element = entry.Value;
-                if (ReferenceEquals(element, root) || !displayCache.IsDisplayed(element) || !UIToolkitPanels.HasLayout(element)) continue;
+                if (ReferenceEquals(element, root) || !displayCache.IsDisplayed(element) || !UIToolkitPanels.HasLayout(element) || !InScope(element)) continue;
                 var bound = element.worldBound;
                 var control = UIToolkitPanels.IsControl(element);
                 if (control && (bound.width < 1f || bound.height < 1f))
                     findings.Add(new { code = "ZERO_SIZE_CONTROL", element_path = entry.Key, element = Label(element), detail = "Displayed control has no clickable area." });
                 if (control && element.pickingMode == PickingMode.Ignore)
                     findings.Add(new { code = "CONTROL_PICKING_IGNORED", element_path = entry.Key, element = Label(element), detail = "picking-mode Ignore: pointer input passes through this control." });
-                if (rootHasLayout && bound.width > 0 && bound.height > 0 && !rootBound.Overlaps(bound))
-                    findings.Add(new { code = "OUTSIDE_PANEL", element_path = entry.Key, element = Label(element), detail = "Element lies entirely outside its panel root." });
+                // Content scrolled out of a ScrollView is normal (see visible_fraction); report only the
+                // topmost element of a subtree that lies outside the panel itself.
+                if (bound.width > 0 && bound.height > 0)
+                {
+                    var visibility = clipCache.Of(element);
+                    if (visibility.Fraction <= 0f && visibility.ScrollView == null && visibility.ClippedBy != null && visibility.ClippedBy.hierarchy.parent == null)
+                    {
+                        outside.Add(element);
+                        if (!outside.Contains(element.hierarchy.parent))
+                            findings.Add(new { code = "OUTSIDE_PANEL", element_path = entry.Key, element = Label(element), detail = "Element lies entirely outside the panel's visible area." });
+                    }
+                }
                 if (element is TextElement textElement && !string.IsNullOrEmpty(textElement.text) && bound.width >= 1f && bound.height >= 1f &&
                     element.resolvedStyle.whiteSpace == WhiteSpace.NoWrap)
                 {
@@ -500,7 +663,7 @@ namespace Funplay.Editor.Tools.Builtins
                 }
             }
 
-            foreach (var group in walked.Select(e => e.Value).Where(e => !string.IsNullOrEmpty(e.name)).GroupBy(e => e.name).Where(g => g.Count() > 1))
+            foreach (var group in walked.Select(e => e.Value).Where(e => !string.IsNullOrEmpty(e.name)).GroupBy(e => e.name).Where(g => g.Count() > 1 && g.Any(InScope)))
                 findings.Add(new { code = "DUPLICATE_NAME", element = "#" + group.Key, detail = $"{group.Count()} elements share this name; #name selectors are ambiguous." });
             return findings;
         }
@@ -589,5 +752,7 @@ namespace Funplay.Editor.Tools.Builtins
         }
 
         private static string Label(VisualElement element) => UIToolkitPanels.Label(element);
+
+        private static string ClipperLabel(VisualElement clipper) => UIToolkitPanels.ClipperLabel(clipper);
     }
 }

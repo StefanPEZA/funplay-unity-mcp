@@ -399,7 +399,7 @@ namespace Funplay.Editor.MCP.Server
                         {
                             var errResponse = timeoutCts.IsCancellationRequested
                                 ? CreateErrorResponse(request.Id, -32000, "Request timeout")
-                                : CreateErrorResponse(request.Id, -32000, "Request cancelled");
+                                : MCPServerService.CreateInterruptedByReloadResponse(request);
                             await SendResponseAsync(stream, errResponse, CancellationToken.None);
                         }
                     }

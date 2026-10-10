@@ -182,7 +182,7 @@ namespace Funplay.Editor.MCP.Server
             if (!string.IsNullOrEmpty(directory))
                 Directory.CreateDirectory(directory);
 
-            File.WriteAllText(manifestPath, JsonUtility.ToJson(normalized, true));
+            WriteTextIfChanged(manifestPath, JsonUtility.ToJson(normalized, true));
         }
 
         internal static string GetManifestPath(string projectRoot)
@@ -605,25 +605,29 @@ namespace Funplay.Editor.MCP.Server
 
         private static void WriteManagedSkillDirectories(string skillsRoot, ProjectSkillsManifest manifest, SkillPlatform platform)
         {
-            DeleteManagedSkillDirectories(skillsRoot);
+            // Installed skills are rewritten in place (unchanged files are skipped) instead of
+            // deleted and recreated; only skills that are no longer installed are removed.
+            var installed = GetInstalledSkills(manifest);
+            DeleteManagedSkillDirectories(skillsRoot, installed);
 
-            foreach (var skill in GetInstalledSkills(manifest))
+            foreach (var skill in installed)
             {
                 var directory = Path.Combine(skillsRoot, $"funplay-{skill.Id}");
                 Directory.CreateDirectory(directory);
-                File.WriteAllText(Path.Combine(directory, "SKILL.md"), BuildSkillDocument(skill, platform));
+                WriteTextIfChanged(Path.Combine(directory, "SKILL.md"), BuildSkillDocument(skill, platform));
                 WriteManagedSkillReferences(directory, skill);
             }
         }
 
         private static void WriteManagedCursorRules(string rulesRoot, ProjectSkillsManifest manifest)
         {
-            DeleteManagedCursorRules(rulesRoot);
+            var installed = GetInstalledSkills(manifest);
+            DeleteManagedCursorRules(rulesRoot, installed);
 
-            foreach (var skill in GetInstalledSkills(manifest))
+            foreach (var skill in installed)
             {
                 var path = Path.Combine(rulesRoot, $"funplay-{skill.Id}.mdc");
-                File.WriteAllText(path, BuildCursorRuleContent(skill));
+                WriteTextIfChanged(path, BuildCursorRuleContent(skill));
                 WriteManagedSkillReferences(rulesRoot, skill);
             }
         }
@@ -634,9 +638,36 @@ namespace Funplay.Editor.MCP.Server
             {
                 var path = Path.Combine(root, reference.Key);
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
-                File.WriteAllText(path,
+                WriteTextIfChanged(path,
                     ManagedMarker + "\n" + BuildSkillVersionMarker(skill) + "\n\n" + reference.Value);
             }
+        }
+
+        // Writes generated text without churning the working copy: content that matches the file
+        // once line endings are normalized is not rewritten, and an existing CRLF file (a git
+        // autocrlf checkout) keeps CRLF instead of being replaced with the generator's LF text.
+        // Returns true when the file was written.
+        internal static bool WriteTextIfChanged(string path, string content)
+        {
+            content = content ?? string.Empty;
+            if (File.Exists(path))
+            {
+                var existing = File.ReadAllText(path);
+                var normalized = NormalizeLineEndings(content);
+                if (string.Equals(NormalizeLineEndings(existing), normalized, StringComparison.Ordinal))
+                    return false;
+
+                if (existing.Contains("\r\n"))
+                    content = normalized.Replace("\n", "\r\n");
+            }
+
+            File.WriteAllText(path, content);
+            return true;
+        }
+
+        private static string NormalizeLineEndings(string text)
+        {
+            return (text ?? string.Empty).Replace("\r\n", "\n");
         }
 
         private static void DeleteManagedSkillReferences(string root, SkillDefinition skill)
@@ -659,13 +690,20 @@ namespace Funplay.Editor.MCP.Server
             }
         }
 
-        private static void DeleteManagedSkillDirectories(string skillsRoot)
+        private static void DeleteManagedSkillDirectories(string skillsRoot, IEnumerable<SkillDefinition> keep = null)
         {
             if (!Directory.Exists(skillsRoot))
                 return;
 
+            var keptDirectories = new HashSet<string>(
+                (keep ?? Enumerable.Empty<SkillDefinition>()).Select(skill => $"funplay-{skill.Id}"),
+                StringComparer.OrdinalIgnoreCase);
+
             foreach (var directory in Directory.GetDirectories(skillsRoot, "funplay-*", SearchOption.TopDirectoryOnly))
             {
+                if (keptDirectories.Contains(Path.GetFileName(directory)))
+                    continue;
+
                 var skillPath = Path.Combine(directory, "SKILL.md");
                 if (IsManagedFile(skillPath))
                 {
@@ -680,19 +718,26 @@ namespace Funplay.Editor.MCP.Server
             }
         }
 
-        private static void DeleteManagedCursorRules(string rulesRoot)
+        private static void DeleteManagedCursorRules(string rulesRoot, IEnumerable<SkillDefinition> keep = null)
         {
             if (!Directory.Exists(rulesRoot))
                 return;
 
+            var keptFiles = new HashSet<string>(
+                (keep ?? Enumerable.Empty<SkillDefinition>()).Select(skill => $"funplay-{skill.Id}.mdc"),
+                StringComparer.OrdinalIgnoreCase);
+
             foreach (var file in Directory.GetFiles(rulesRoot, "funplay-*.mdc", SearchOption.TopDirectoryOnly))
             {
-                if (IsManagedFile(file))
+                if (!keptFiles.Contains(Path.GetFileName(file)) && IsManagedFile(file))
                     File.Delete(file);
             }
 
             foreach (var skill in SkillCatalog)
-                DeleteManagedSkillReferences(rulesRoot, skill);
+            {
+                if (!keptFiles.Contains($"funplay-{skill.Id}.mdc"))
+                    DeleteManagedSkillReferences(rulesRoot, skill);
+            }
         }
 
         // Write `block` (which begins with ManagedMarker and ends with ManagedEndMarker) into a
@@ -707,7 +752,7 @@ namespace Funplay.Editor.MCP.Server
         {
             if (!File.Exists(path))
             {
-                File.WriteAllText(path, defaultTitle + "\n\n" + block + "\n");
+                WriteTextIfChanged(path, defaultTitle + "\n\n" + block + "\n");
                 return;
             }
 
@@ -723,7 +768,7 @@ namespace Funplay.Editor.MCP.Server
             {
                 var prefix = content.Substring(0, begin);
                 var suffix = content.Substring(end + ManagedEndMarker.Length);
-                File.WriteAllText(path, prefix + block + suffix);
+                WriteTextIfChanged(path, prefix + block + suffix);
                 return;
             }
 
@@ -731,7 +776,7 @@ namespace Funplay.Editor.MCP.Server
             {
                 if (MatchesAnyLegacyContent(content, legacyContents))
                 {
-                    File.WriteAllText(path, defaultTitle + "\n\n" + block + "\n");
+                    WriteTextIfChanged(path, defaultTitle + "\n\n" + block + "\n");
                     return;
                 }
 
@@ -745,7 +790,7 @@ namespace Funplay.Editor.MCP.Server
 
             var trimmed = content.TrimEnd('\n', '\r', ' ', '\t');
             var userContent = trimmed.Length == 0 ? defaultTitle : trimmed;
-            File.WriteAllText(path, userContent + "\n\n" + block + "\n");
+            WriteTextIfChanged(path, userContent + "\n\n" + block + "\n");
         }
 
         // Inverse of WriteManagedBlock, used when a platform is disabled: strip ONLY the managed
@@ -794,7 +839,7 @@ namespace Funplay.Editor.MCP.Server
                 return;
             }
 
-            File.WriteAllText(path, prefix.TrimEnd() + "\n" + suffix.TrimStart('\n', '\r'));
+            WriteTextIfChanged(path, prefix.TrimEnd() + "\n" + suffix.TrimStart('\n', '\r'));
         }
 
         private static int CountOccurrences(string content, string marker)

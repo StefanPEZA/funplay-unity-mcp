@@ -64,7 +64,7 @@ namespace Funplay.Editor.Tests
         public void ToolsAreDiscoverable()
         {
             foreach (var name in new[] { "get_ui_toolkit_info", "create_ui_toolkit_panel", "configure_ui_toolkit_panel", "create_panel_settings",
-                         "get_visual_tree", "pick_ui_toolkit_element", "click_ui_toolkit_element" })
+                         "get_visual_tree", "pick_ui_toolkit_element", "click_ui_toolkit_element", "scroll_ui_toolkit" })
                 Assert.IsNotNull(ToolRegistry.GetMethod(name), name);
         }
 
@@ -126,6 +126,7 @@ namespace Funplay.Editor.Tests
             Assert.AreEqual(uxmlPath, AssetDatabase.GetAssetPath(UIToolkitPanels.GetVisualTreeAsset(host)));
             Assert.AreEqual(2f, UIToolkitPanels.GetSortingOrder(host));
             Assert.AreEqual(uxmlPath, (string)response["data"]["host"]["visual_tree_asset"]);
+            Assert.AreEqual("uxml", (string)response["data"]["host"]["tree_source"]);
 
             var info = Data(UIToolkitFunctions.GetUiToolkitInfo());
             Assert.IsTrue(info["hosts"].Any(h => (string)h["path"] == "/UitkMenu" || ((string)h["path"]).EndsWith("UitkMenu")), info.ToString());
@@ -171,6 +172,8 @@ namespace Funplay.Editor.Tests
             Assert.IsTrue((bool)JObject.FromObject(UIToolkitFunctions.CreateUiToolkitPanel("UitkConfigure", null, settingsPath))["success"]);
             created = GameObject.Find("UitkConfigure");
             var id = ObjectIdHelper.GetSerializableId(created);
+            var codeBuilt = JObject.FromObject(UIToolkitFunctions.DescribeHost(UIToolkitPanels.GetHost(created)));
+            Assert.IsFalse(codeBuilt["issues"].Any(i => ((string)i).StartsWith("NO_VISUAL_TREE_ASSET")), "hosts whose tree is built in code are not flagged in Edit Mode: " + codeBuilt);
 
             var set = JObject.FromObject(UIToolkitFunctions.ConfigureUiToolkitPanel(id, uxmlPath, null, "5"));
             Assert.IsTrue((bool)set["success"], set.ToString());
@@ -268,7 +271,118 @@ namespace Funplay.Editor.Tests
                 Assert.IsNotNull(pick);
                 Assert.AreSame(play, UIToolkitPanels.FindClickReceiver(pick.Element));
                 Assert.AreSame(host, pick.Host);
+                var described = JObject.FromObject(UIToolkitPanels.DescribePick(pick, renderHeight));
+                Assert.AreEqual(JTokenType.Object, described["element"]["screen_bounds"].Type, "picks carry screen bounds like get_visual_tree: " + described);
             }
+        }
+
+        [UnityTest]
+        public IEnumerator ClickReportsHandlersThatDisableTheirOwnButton()
+        {
+            yield return BuildLivePanel("UitkSelfDisable");
+            var quit = liveRoot.Q<Button>("quit");
+            var clicks = 0;
+            quit.clicked += () => { clicks++; quit.SetEnabled(false); };
+
+            var click = JObject.FromObject(UIToolkitFunctions.ClickElement(ObjectIdHelper.GetSerializableId(created), "Button#quit", null, null, "left", false));
+            Assert.IsTrue((bool)click["success"], click.ToString());
+            Assert.AreEqual(1, clicks);
+            Assert.IsTrue((bool)click["data"]["clicked"], click.ToString());
+            Assert.IsTrue((bool)click["data"]["handler_invoked"], click.ToString());
+            Assert.IsTrue((bool)click["data"]["receiver_disabled"], click.ToString());
+            StringAssert.Contains("disabled itself", (string)click["message"]);
+        }
+
+        [UnityTest]
+        public IEnumerator TextOnAButtonsInnerLabelClicksTheButton()
+        {
+            yield return BuildLivePanel("UitkInnerLabel");
+            var custom = new Button { name = "custom", style = { width = 200, height = 60 } };
+            custom.Add(new Label("Klotski"));
+            liveRoot.Q("menu").Add(custom);
+            UIToolkitPanels.ValidateLayout(liveRoot.panel);
+            var clicks = 0;
+            custom.clicked += () => clicks++;
+            var id = ObjectIdHelper.GetSerializableId(created);
+
+            var tree = Data(UIToolkitFunctions.GetVisualTree(id, null, "Klotski"));
+            var label = (JObject)tree["hosts"][0]["elements"][0];
+            Assert.AreEqual("Label", (string)label["type"], tree.ToString());
+            Assert.AreEqual(UIToolkitPanels.PathOf(liveRoot, custom), (string)label["click_receiver_path"], tree.ToString());
+
+            var click = JObject.FromObject(UIToolkitFunctions.ClickElement(id, null, "klotski", null, "left", false));
+            Assert.IsTrue((bool)click["success"], click.ToString());
+            Assert.AreEqual(UIToolkitPanels.PathOf(liveRoot, custom), (string)click["data"]["element"]["path"], click.ToString());
+            Assert.AreEqual(1, clicks);
+            var labelOnly = JObject.FromObject(UIToolkitFunctions.ClickElement(id, "Label", "Klotski", null, "left", false));
+            Assert.IsTrue((bool)labelOnly["success"], "an explicit Label selector keeps the label: " + labelOnly);
+            Assert.AreEqual("Label", (string)labelOnly["data"]["element"]["type"]);
+        }
+
+        [UnityTest]
+        public IEnumerator ScrolledOutElementsAreClippedNotCoveredAndCanBeScrolledIn()
+        {
+            yield return BuildLivePanel("UitkScroll");
+            var scroll = new ScrollView { name = "list", style = { width = 220, height = 100, flexShrink = 0 } };
+            for (var i = 0; i < 10; i++) scroll.Add(new Button { name = "row" + i, text = "Row " + i, style = { height = 60, flexShrink = 0 } });
+            liveRoot.Q("menu").Add(scroll);
+            for (var frame = 0; frame < 10; frame++)
+            {
+                UIToolkitPanels.ValidateLayout(liveRoot.panel);
+                if (scroll.contentViewport.worldBound.height > 0) break;
+                yield return null;
+            }
+            if (!(scroll.contentViewport.worldBound.height > 0)) Assert.Ignore("The ScrollView was not laid out in this Editor mode.");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var row9 = scroll.Q<Button>("row9");
+
+            var tree = Data(UIToolkitFunctions.GetVisualTree(id, "Button#row9"));
+            var host = tree["hosts"][0];
+            Assert.AreEqual(0f, (float)host["elements"][0]["visible_fraction"], tree.ToString());
+            Assert.IsNotNull((string)host["elements"][0]["scroll_view"], tree.ToString());
+            Assert.AreEqual("matched_subtrees", (string)host["findings_scope"]);
+            Assert.IsFalse(((JArray)host["findings"]).Any(f => (string)f["code"] == "OUTSIDE_PANEL"), "scrolled-out content is not a finding: " + tree);
+
+            var clipped = JObject.FromObject(UIToolkitFunctions.ClickElement(id, "Button#row9", null, null, "left", false));
+            Assert.AreEqual("ELEMENT_CLIPPED", (string)clipped["code"], clipped.ToString());
+            Assert.IsNotNull((string)clipped["data"]["details"]["scroll_view"], clipped.ToString());
+
+            var scrolled = JObject.FromObject(UIToolkitFunctions.ScrollElement(id, "Button#row9", null, null, 0, 0));
+            Assert.IsTrue((bool)scrolled["success"], scrolled.ToString());
+            Assert.Greater((float)scrolled["data"]["scroll_views"][0]["offset_after"]["y"], 0f, scrolled.ToString());
+            for (var frame = 0; frame < 10 && UIToolkitPanels.GetVisibility(row9).Fraction <= 0f; frame++)
+            {
+                yield return null;
+                UIToolkitPanels.ValidateLayout(liveRoot.panel);
+            }
+            Assert.Greater(UIToolkitPanels.GetVisibility(row9).Fraction, 0f, "ScrollTo brings the row into the viewport");
+
+            var clicks = 0;
+            row9.clicked += () => clicks++;
+            var click = JObject.FromObject(UIToolkitFunctions.ClickElement(id, "Button#row9", null, null, "left", false));
+            Assert.IsTrue((bool)click["success"], click.ToString());
+            Assert.AreEqual(1, clicks);
+
+            var back = JObject.FromObject(UIToolkitFunctions.ScrollElement(id, "ScrollView#list", null, null, 0, -100000));
+            Assert.IsTrue((bool)back["success"], back.ToString());
+            Assert.AreEqual(0f, scroll.scrollOffset.y, "delta scrolling is clamped by the ScrollView");
+            UIToolkitPanels.ValidateLayout(liveRoot.panel);
+            var viaOption = JObject.FromObject(UIToolkitFunctions.ClickElement(id, "Button#row9", null, null, "left", false, scrollIntoView: true));
+            Assert.That((string)viaOption["code"] == null || (string)viaOption["code"] == "ELEMENT_CLIPPED", viaOption.ToString());
+            if ((bool)viaOption["success"]) Assert.IsTrue((bool)viaOption["data"]["scrolled_into_view"], viaOption.ToString());
+        }
+
+        [Test]
+        public void TextMatchResolvesToTheClickReceiverOnlyWhenItFitsTheSelector()
+        {
+            var button = new Button { name = "go" };
+            var label = new Label("Go");
+            button.Add(label);
+            Assert.AreSame(button, UIToolkitPanels.Selector.Parse(null, "go").ClickTarget(label));
+            Assert.AreSame(button, UIToolkitPanels.Selector.Parse("Button", "Go").ClickTarget(label));
+            Assert.AreSame(label, UIToolkitPanels.Selector.Parse("Label", "Go").ClickTarget(label));
+            Assert.IsNull(UIToolkitPanels.Selector.Parse("Button", "Go").ClickTarget(button), "the button's own (empty) text does not match");
+            Assert.IsNull(UIToolkitPanels.Selector.Parse(null, "Stop").ClickTarget(label));
         }
 
         [Test]
@@ -398,6 +512,29 @@ namespace Funplay.Editor.Tests
             var onButton = InputInteractionFunctions.PerformUiToolkitClick(RenderPoint(play.worldBound.center), UnityEngine.EventSystems.PointerEventData.InputButton.Left, attempts, renderHeight);
             Assert.IsTrue(onButton.Hit, onButton.Detail);
             Assert.AreEqual(1, clicks);
+        }
+
+        private VisualElement liveRoot;
+
+        /// <summary>Creates a host from the test UXML and waits until it is built and laid out; ignores the test otherwise.</summary>
+        private IEnumerator BuildLivePanel(string name)
+        {
+            CreateSettings();
+            Assert.IsTrue((bool)JObject.FromObject(UIToolkitFunctions.CreateUiToolkitPanel(name, uxmlPath, settingsPath))["success"]);
+            created = GameObject.Find(name);
+            var host = UIToolkitPanels.GetHost(created);
+            liveRoot = null;
+            for (var frame = 0; frame < 120; frame++)
+            {
+                liveRoot = UIToolkitPanels.GetRoot(host);
+                if (liveRoot?.panel != null && liveRoot.Q<Button>("play") != null)
+                {
+                    UIToolkitPanels.ValidateLayout(liveRoot.panel);
+                    if (UIToolkitPanels.HasLayout(liveRoot.Q<Button>("play")) && liveRoot.Q<Button>("play").worldBound.width > 0) yield break;
+                }
+                yield return null;
+            }
+            Assert.Ignore("The panel host did not build and lay out its tree in this Editor mode.");
         }
 
         private void CreateSettings()

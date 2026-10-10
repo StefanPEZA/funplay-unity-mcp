@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Funplay.Editor.Tools.Helpers;
 using Newtonsoft.Json;
@@ -16,12 +17,16 @@ namespace Funplay.Editor.State
     internal static class EditorOperationService
     {
         private const string SessionKey = "Funplay.EditorOperation.Session";
+        private const int JournalIoAttempts = 5;
         internal static readonly string JournalPath = Path.Combine(Path.GetDirectoryName(Application.dataPath), "Library/FunplayMcp/Operations/editor-operations.json");
         private static readonly List<EditorOperation> Operations;
         private static readonly EditorOperationCoordinator Coordinator;
         private static Task<EditorRefreshResult> refreshTask;
         private static string refreshError;
         private static bool recoveredRefresh;
+        private static bool journalErrorFromSave;
+        private const double RecoveredCheckIntervalSeconds = .5, RecoveredPendingGraceSeconds = 3;
+        private static double recoveredCheckedAt, recoveredPendingSince;
         internal static string JournalError { get; private set; }
         internal static double Now => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000d;
         internal static bool HasActive => Coordinator.Active != null;
@@ -34,7 +39,8 @@ namespace Funplay.Editor.State
             Operations = new List<EditorOperation>();
             try
             {
-                if (File.Exists(JournalPath)) Operations = JsonConvert.DeserializeObject<List<EditorOperation>>(File.ReadAllText(JournalPath)) ?? Operations;
+                if (File.Exists(JournalPath))
+                    Operations = JsonConvert.DeserializeObject<List<EditorOperation>>(RetryJournalIo(_ => File.ReadAllText(JournalPath))) ?? Operations;
                 if (!EditorOperationCoordinator.ValidJournal(Operations)) throw new InvalidDataException("Invalid operation journal; no actions will be replayed.");
             }
             catch (Exception ex) { Operations = new List<EditorOperation>(); JournalError = "Cannot read operation journal: " + ex.Message; }
@@ -60,12 +66,14 @@ namespace Funplay.Editor.State
             is_playing = EditorApplication.isPlaying,
             is_changing_play_mode = EditorApplication.isPlaying != EditorApplication.isPlayingOrWillChangePlaymode,
             compilation_failed = EditorUtility.scriptCompilationFailed,
-            refresh_pending = refreshTask != null && !refreshTask.IsCompleted,
+            // A recovered refresh is still pending until its post-reload script check settles.
+            refresh_pending = (refreshTask != null && !refreshTask.IsCompleted) || (recoveredRefresh && Coordinator.Active != null),
             refresh_error = refreshError
         };
         internal static object Start(string target, bool refresh, int timeout, string key)
         {
-            if (JournalError != null) return Response.Error("OPERATION_JOURNAL_UNAVAILABLE", new { detail = JournalError, journal_path = JournalPath });
+            // A failed read disables operations for the session; a failed write is retried by the next save.
+            if (JournalError != null && !journalErrorFromSave) return Response.Error("OPERATION_JOURNAL_UNAVAILABLE", new { detail = JournalError, journal_path = JournalPath });
             try
             {
                 // Idempotent lookup must work even while the original operation imports assets.
@@ -73,12 +81,12 @@ namespace Funplay.Editor.State
                 if (previous == null && refreshTask != null && !refreshTask.IsCompleted && Coordinator.Active == null)
                     return Response.Error("REFRESH_STILL_RUNNING", new { current_editor = CurrentEditor() });
                 var op = Coordinator.Start(target, refresh, timeout, key, Now);
-                if (previous == null) { refreshTask = null; refreshError = null; recoveredRefresh = false; }
+                if (previous == null) { refreshTask = null; refreshError = null; recoveredRefresh = false; recoveredPendingSince = 0; }
                 return Receipt(op);
             }
             catch (ArgumentException ex) { return Response.Error("INVALID_ARGUMENT", new { detail = ex.Message }); }
             catch (InvalidOperationException ex) { return Response.Error(ex.Message, new { active_operation_id = Coordinator.Active?.operation_id }); }
-            catch (Exception ex) { return Response.Error("OPERATION_JOURNAL_UNAVAILABLE", new { detail = ex.Message }); }
+            catch (Exception ex) { return Response.Error("OPERATION_JOURNAL_UNAVAILABLE", new { detail = ex.Message, journal_path = JournalPath }); }
         }
         internal static object Get(string id, string key)
         {
@@ -109,13 +117,21 @@ namespace Funplay.Editor.State
                     else if (refreshTask.Result.ScriptChangesStillPending) refreshError = "Script changes are still pending; a refresh interceptor may be active.";
                     refreshTask = null;
                 }
-                if (recoveredRefresh && !EditorApplication.isCompiling && !EditorApplication.isUpdating)
+                if (recoveredRefresh && !EditorApplication.isCompiling && !EditorApplication.isUpdating && Now - recoveredCheckedAt >= RecoveredCheckIntervalSeconds)
                 {
                     // Reload destroys Tasks. Reconcile imported code, without repeating the refresh side effect.
-                    recoveredRefresh = false;
-                    if (EditorRefreshHelper.CaptureScriptChangeState(true).HasPendingScriptChanges)
+                    // Unity often starts a further compile shortly after a reload, so pending scripts get a
+                    // short grace period (the coordinator waits while compiling) before the refresh fails.
+                    recoveredCheckedAt = Now;
+                    if (!EditorRefreshHelper.CaptureScriptChangeState(true).HasPendingScriptChanges) recoveredRefresh = false;
+                    else if (recoveredPendingSince == 0) recoveredPendingSince = Now;
+                    else if (Now - recoveredPendingSince >= RecoveredPendingGraceSeconds)
+                    {
+                        recoveredRefresh = false;
                         refreshError = "Scripts are still pending after reload. Start a new preparation after inspecting compilation errors.";
+                    }
                 }
+                else if (EditorApplication.isCompiling || EditorApplication.isUpdating) recoveredPendingSince = 0;
                 switch (Coordinator.Tick(Snapshot(), Now))
                 {
                     case EditorOperationAction.ExitPlay: EditorApplication.isPlaying = false; break;
@@ -138,11 +154,35 @@ namespace Funplay.Editor.State
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(JournalPath));
                 var temp = JournalPath + ".tmp";
-                File.WriteAllText(temp, JsonConvert.SerializeObject(Operations, Formatting.Indented));
-                if (File.Exists(JournalPath)) File.Replace(temp, JournalPath, null);
-                else File.Move(temp, JournalPath);
+                var json = JsonConvert.SerializeObject(Operations, Formatting.Indented);
+                RetryJournalIo(attempt =>
+                {
+                    File.WriteAllText(temp, json);
+                    if (!File.Exists(JournalPath)) File.Move(temp, JournalPath);
+                    // File.Replace must delete the destination, which a reader holding it open blocks
+                    // ("Unable to remove the file to be replaced"); the last attempt overwrites in place.
+                    else if (attempt < JournalIoAttempts) File.Replace(temp, JournalPath, null);
+                    else { File.Copy(temp, JournalPath, true); File.Delete(temp); }
+                    return true;
+                });
+                // A transient write failure must not disable operations for the rest of the session.
+                if (journalErrorFromSave) { JournalError = null; journalErrorFromSave = false; }
             }
-            catch (Exception ex) { JournalError = ex.Message; throw; }
+            catch (Exception ex) { JournalError = ex.Message; journalErrorFromSave = true; throw; }
+        }
+
+        // Antivirus, indexers, git or a second Editor briefly lock the journal on Windows and the
+        // write or read fails with a sharing violation. Retry a few times with a short backoff.
+        internal static T RetryJournalIo<T>(Func<int, T> io, int attempts = JournalIoAttempts, int delayMilliseconds = 25)
+        {
+            for (var attempt = 1; ; attempt++)
+            {
+                try { return io(attempt); }
+                catch (Exception ex) when ((ex is IOException || ex is UnauthorizedAccessException) && attempt < attempts)
+                {
+                    Thread.Sleep(delayMilliseconds * attempt);
+                }
+            }
         }
     }
 }

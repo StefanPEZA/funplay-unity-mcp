@@ -279,7 +279,7 @@ namespace Funplay.Editor.Tests
         }
         [Test] public void FocusedCoreRetainsDailyWorkAndSafeCancellationWhileFullKeepsManagement()
         {
-            Assert.AreEqual(44, MCPToolExportPolicy.DefaultCoreTools.Count);
+            Assert.AreEqual(45, MCPToolExportPolicy.DefaultCoreTools.Count);
             foreach (var name in new[] { "get_task", "prepare_editor", "audit_ui", "cancel_ui_audit", "cancel_editor_operation", "record_game_view", "set_prefab_properties", "find_game_objects",
                 "get_ui_toolkit_info", "create_ui_toolkit_panel", "get_visual_tree", "click_ui_toolkit_element" })
                 Assert.Contains(name, MCPToolExportPolicy.DefaultCoreTools.ToArray());

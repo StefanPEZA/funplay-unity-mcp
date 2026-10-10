@@ -155,5 +155,25 @@ namespace Funplay.Editor.Tests
             for (int i = 0; i < 40; i++) coordinator.Cancel(coordinator.Start("edit", false, 30, "k" + i, 100), 101);
             Assert.AreEqual(32, records.Count); Assert.AreEqual("k8", records[0].request_key);
         }
+        [Test] public void JournalIoRetriesTransientSharingViolations()
+        {
+            var calls = 0;
+            var result = EditorOperationService.RetryJournalIo(attempt =>
+            {
+                calls++;
+                if (attempt < 3) throw new System.IO.IOException("The process cannot access the file because it is being used by another process.");
+                return attempt;
+            }, 5, 1);
+            Assert.AreEqual(3, result); Assert.AreEqual(3, calls);
+        }
+        [Test] public void JournalIoRetryIsBoundedAndOnlyForIoErrors()
+        {
+            var calls = 0;
+            Assert.Throws<UnauthorizedAccessException>(() => EditorOperationService.RetryJournalIo<int>(_ => { calls++; throw new UnauthorizedAccessException(); }, 3, 1));
+            Assert.AreEqual(3, calls);
+            calls = 0;
+            Assert.Throws<InvalidOperationException>(() => EditorOperationService.RetryJournalIo<int>(_ => { calls++; throw new InvalidOperationException(); }, 3, 1));
+            Assert.AreEqual(1, calls);
+        }
     }
 }

@@ -175,10 +175,9 @@ namespace Funplay.Editor.MCP.Server
                         }
                         else
                         {
-                            responseJson = SerializeResponse(CreateError(
-                                request.Id,
-                                -32000,
-                                timeoutCts.IsCancellationRequested ? "Request timeout" : "Request cancelled"));
+                            responseJson = SerializeResponse(timeoutCts.IsCancellationRequested
+                                ? CreateError(request.Id, -32000, "Request timeout")
+                                : MCPServerService.CreateInterruptedByReloadResponse(request));
                         }
                     }
                 }

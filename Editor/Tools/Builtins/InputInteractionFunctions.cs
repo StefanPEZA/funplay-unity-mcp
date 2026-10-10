@@ -299,7 +299,7 @@ namespace Funplay.Editor.Tools.Builtins
 
             var snapshot = CreateUiToolkitSnapshot(pick);
             var receiver = UIToolkitPanels.FindClickReceiver(pick.Element);
-            var received = UIToolkitPanels.DispatchClick(pick.Panel.Panel, pick.Element, pick.PanelPosition, (int)inputButton);
+            var received = UIToolkitPanels.DispatchClick(pick.Panel.Panel, pick.Element, pick.PanelPosition, (int)inputButton).Activated;
             if (receiver == null)
             {
                 var passThrough = ClickOutcome.Miss(
@@ -317,8 +317,8 @@ namespace Funplay.Editor.Tools.Builtins
                 Hit = true,
                 Target = snapshot,
                 Detail = received
-                    ? $"dispatched pointer events; ClickEvent reached {UIToolkitPanels.Label(receiver)}"
-                    : $"dispatched pointer events to {UIToolkitPanels.Label(receiver)}; no ClickEvent was observed"
+                    ? $"dispatched pointer events; {UIToolkitPanels.Label(receiver)} received the click"
+                    : $"dispatched pointer events to {UIToolkitPanels.Label(receiver)}; no ClickEvent or click handler was observed"
             };
             attempts.Add(outcome);
             return outcome;

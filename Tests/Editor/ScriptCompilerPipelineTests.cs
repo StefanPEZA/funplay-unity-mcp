@@ -40,6 +40,23 @@ public class AmbiguousRandomSyntax
         }
 
         [Test]
+        public void RoslynCompiler_GivesEachSnippetAUniqueAssemblyName()
+        {
+            var compiler = new RoslynCscScriptCompiler();
+            const string code = "public class UniqueNameSmoke { public static string Run() { return \"ok\"; } }";
+
+            var first = compiler.Compile(code);
+            var second = compiler.Compile(code);
+
+            Assert.AreEqual(ScriptCompilationStatus.Success, first.Status, first.Message);
+            Assert.AreEqual(ScriptCompilationStatus.Success, second.Status, second.Message);
+            var firstName = first.Assembly.GetName().Name;
+            var secondName = second.Assembly.GetName().Name;
+            Assert.AreNotEqual(firstName, secondName);
+            StringAssert.StartsWith("FunplaySnippet_", firstName);
+        }
+
+        [Test]
         public void CompilerPipeline_FallsBackToCodeDomWhenRoslynUnavailable()
         {
             var result = ScriptCompilerPipeline.Compile(
