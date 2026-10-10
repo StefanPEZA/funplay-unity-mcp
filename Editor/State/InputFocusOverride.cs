@@ -2,6 +2,8 @@
 #if ENABLE_INPUT_SYSTEM
 using System;
 using System.IO;
+using System.Linq;
+using System.Reflection;
 using Newtonsoft.Json;
 using UnityEditor;
 using UnityEngine;
@@ -17,6 +19,9 @@ namespace Funplay.Editor.State
     /// restored on Play exit, before a script reload and at the next Editor start. The original values
     /// are journaled in Library/FunplayMcp first; a restore only reverts a value that is still the one
     /// set here, so a change the user made meanwhile is kept. The settings object is never marked dirty.
+    /// Devices the Input System disabled when focus was lost before the override applied are re-enabled:
+    /// with IgnoreFocus it never re-enables them itself, so all input, real input included, would stay
+    /// dead for the rest of the Play session.
     /// </summary>
     [InitializeOnLoad]
     internal static class InputFocusOverride
@@ -46,8 +51,16 @@ namespace Funplay.Editor.State
 
         internal static bool Active => File.Exists(JournalPath);
 
-        /// <summary>"applied", "already" (both settings already route input to the game) or "failed: …".</summary>
+        /// <summary>"applied", "already" (both settings already route input to the game) or "failed: …", plus re-enabled devices.</summary>
         internal static string Apply()
+        {
+            var result = ApplySettings();
+            if (result.StartsWith("failed", StringComparison.Ordinal)) return result;
+            var reenabled = ReenableBackgroundDisabledDevices();
+            return reenabled > 0 ? $"{result}; re-enabled {reenabled} device(s) the Input System had disabled while the Editor was in the background" : result;
+        }
+
+        private static string ApplySettings()
         {
             var settings = InputSystem.settings;
             if (settings == null) return "failed: InputSystem.settings is not available.";
@@ -78,6 +91,34 @@ namespace Funplay.Editor.State
             if (background != wantedBackground) settings.backgroundBehavior = wantedBackground;
             if (editor != wantedEditor) settings.editorInputBehaviorInPlayMode = wantedEditor;
             return "applied";
+        }
+
+        // Internal Input System members: the per-device "disabled while in background" flag and the
+        // manager call that undoes exactly that scope (a device a game disabled itself stays disabled).
+        private static readonly PropertyInfo DisabledWhileInBackground =
+            typeof(InputDevice).GetProperty("disabledWhileInBackground", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
+        private static readonly FieldInfo ManagerField = typeof(InputSystem).GetField("s_Manager", BindingFlags.NonPublic | BindingFlags.Static);
+
+        /// <summary>Re-enables devices disabled only because the Editor lost focus; returns how many.</summary>
+        internal static int ReenableBackgroundDisabledDevices()
+        {
+            if (DisabledWhileInBackground == null) return 0;
+            var manager = ManagerField?.GetValue(null);
+            var method = manager?.GetType().GetMethod("EnableOrDisableDevice", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            var parameters = method?.GetParameters();
+            if (parameters == null || parameters.Length != 3 || !parameters[2].ParameterType.IsEnum) return 0;
+            object scope;
+            try { scope = Enum.Parse(parameters[2].ParameterType, "TemporaryWhilePlayerIsInBackground"); }
+            catch (ArgumentException) { return 0; }
+
+            var count = 0;
+            foreach (var device in InputSystem.devices.ToArray())
+            {
+                if (!(DisabledWhileInBackground.GetValue(device, null) is bool disabled) || !disabled) continue;
+                method.Invoke(manager, new[] { device, true, scope });
+                count++;
+            }
+            return count;
         }
 
         internal static void Restore()

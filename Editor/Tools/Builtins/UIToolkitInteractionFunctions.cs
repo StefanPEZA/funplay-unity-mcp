@@ -19,7 +19,7 @@ namespace Funplay.Editor.Tools.Builtins
     {
         // ---- set_ui_toolkit_value ----------------------------------------------------------
 
-        [Description("Set the value of a UI Toolkit control the way user input does, so ChangeEvent fires (not SetValueWithoutNotify): Slider/SliderInt (number, clamped by the control), Toggle (true/false), TextField (string), DropdownField (a choice or its index), EnumField (name), Integer/Float fields, ToggleButtonGroup (active button indices or texts, comma-separated). Matching an element inside a control sets the control. type_text types into a TextField instead: focus, select all, then one KeyDownEvent per character (falls back to value when the field does not take synthesized keys; reported as typed=false). submit=true sends Return to a TextField afterwards (commits delayed fields). Plain Buttons, including segmented controls built from Buttons, are clicked with click_ui_toolkit_element instead. Reports old and new value and change_event. Runtime state only; works in Edit and Play Mode.")]
+        [Description("Set the value of a UI Toolkit control the way user input does, so ChangeEvent fires (not SetValueWithoutNotify): Slider/SliderInt (number, clamped by the control), Toggle (true/false), TextField (string), DropdownField (a choice or its index), EnumField (name), Integer/Float fields, ToggleButtonGroup (active button indices or texts, comma-separated). Matching an element inside a control sets the control, and a caption Label beside exactly one control (a settings row) sets that control. type_text types into a TextField instead: focus, select all, then one KeyDownEvent per character (falls back to value when the field does not take synthesized keys; reported as typed=false). submit=true sends Return to a TextField afterwards (commits delayed fields). Plain Buttons, including segmented controls built from Buttons, are clicked with click_ui_toolkit_element instead. Reports old and new value and change_event. Runtime state only; works in Edit and Play Mode.")]
         public static object SetUiToolkitValue(
             [ToolParam("Panel host GameObject name/path/ID", Required = false)] string target = null,
             [ToolParam("Selector: Type#name.class compounds joined by space (descendant) or > (child), optional :nth-of-type(n)/:nth-child(n)", Required = false)] string selector = null,
@@ -37,6 +37,13 @@ namespace Funplay.Editor.Tools.Builtins
                 var panel = matched.panel ?? throw new UIToolkitException("ROOT_NOT_READY", "The element is not attached to a panel.");
                 UIToolkitPanels.ValidateLayout(panel);
                 var (control, valueType) = FindValueControl(matched);
+                VisualElement labelledBy = null;
+                if (control == null && matched is TextElement && !(matched is Button))
+                {
+                    // A caption beside its control (a settings row: Label + Slider) names that control.
+                    (control, valueType) = FindControlBesideLabel(matched);
+                    if (control != null) labelledBy = matched;
+                }
                 if (control == null)
                 {
                     if (UIToolkitPanels.FindClickReceiver(matched) is Button)
@@ -88,6 +95,7 @@ namespace Funplay.Editor.Tools.Builtins
                     host_id = ObjectIdHelper.GetSerializableId(host.gameObject),
                     element = Label(control),
                     element_path = ReferenceEquals(control, matched) ? path : UIToolkitPanels.PathOf(UIToolkitPanels.GetRoot(host), control),
+                    matched_label = labelledBy != null ? Label(labelledBy) : null,
                     value_type = valueType.Name,
                     old_value = DescribeControlValue(before),
                     new_value = DescribeControlValue(after),
@@ -126,6 +134,34 @@ namespace Funplay.Editor.Tools.Builtins
                 if (notify != null) return (current, notify.GetGenericArguments()[0]);
             }
             return (null, null);
+        }
+
+        /// <summary>
+        /// The one value control in the nearest ancestor of <paramref name="label"/> that holds any, for a
+        /// caption laid out beside its control. Two or more controls there are ambiguous: none is returned.
+        /// </summary>
+        internal static (VisualElement control, Type valueType) FindControlBesideLabel(VisualElement label)
+        {
+            for (var container = label.hierarchy.parent; container != null && container.hierarchy.parent != null; container = container.hierarchy.parent)
+            {
+                var found = new List<(VisualElement, Type)>();
+                CollectValueControls(container, found);
+                if (found.Count == 1) return found[0];
+                if (found.Count > 1) break;
+            }
+            return (null, null);
+        }
+
+        private static void CollectValueControls(VisualElement parent, List<(VisualElement, Type)> found)
+        {
+            for (var i = 0; i < parent.hierarchy.childCount && found.Count < 2; i++)
+            {
+                var child = parent.hierarchy[i];
+                if (child is Button) continue;
+                var notify = child is TextElement ? null : child.GetType().GetInterfaces().FirstOrDefault(t => t.IsGenericType && t.GetGenericTypeDefinition() == typeof(INotifyValueChanged<>));
+                if (notify != null) found.Add((child, notify.GetGenericArguments()[0]));
+                else CollectValueControls(child, found);
+            }
         }
 
         internal static object ConvertValue(VisualElement control, Type type, object current, string raw)

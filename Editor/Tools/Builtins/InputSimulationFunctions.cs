@@ -92,6 +92,8 @@ namespace Funplay.Editor.Tools.Builtins
                     return ToolResultFormatter.ErrorMessage("INPUT_DEVICE_NOT_FOUND", "No mouse device found in Input System");
 
                 duration = Mathf.Clamp(duration, 0.1f, 3f);
+                // The mouse must reach the game while the Editor is unfocused, like simulated keys.
+                Funplay.Editor.State.InputFocusOverride.Apply();
                 var pressButton = GetMouseButton(mouse, button);
                 VideoRecordingFunctions.RecordMarker("drag", "Mouse drag events queued", startPoint, endPoint, geometry);
 

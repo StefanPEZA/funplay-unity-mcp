@@ -1024,7 +1024,16 @@ namespace Funplay.Editor.Tests
             var byLabel = Data(UIToolkitFunctions.SetUiToolkitValue(id, null, "Volume", value: "3"));
             Assert.AreEqual(3f, slider.value, byLabel.ToString());
             Assert.AreEqual("Volume", slider.label);
-            Assert.AreEqual("NOT_A_VALUE_CONTROL", (string)JObject.FromObject(UIToolkitFunctions.SetUiToolkitValue(id, "#title", value: "x"))["code"], "a bare Label holds no value");
+            Assert.AreEqual("NOT_A_VALUE_CONTROL", (string)JObject.FromObject(UIToolkitFunctions.SetUiToolkitValue(id, "#title", value: "x"))["code"], "a bare Label with several controls around it is ambiguous");
+            // A settings row: caption Label beside its Slider, as PolyGames builds them.
+            var row = new VisualElement { name = "row" };
+            row.Add(new Label("Brightness"));
+            var brightness = new Slider(0, 1) { style = { width = 200, height = 30 } };
+            row.Add(brightness);
+            menu.Add(row);
+            var beside = Data(UIToolkitFunctions.SetUiToolkitValue(id, null, "Brightness", value: "0.5"));
+            Assert.AreEqual(0.5f, brightness.value, beside.ToString());
+            StringAssert.Contains("Brightness", (string)beside["matched_label"]);
             field.isReadOnly = true;
             Assert.AreEqual("ELEMENT_READ_ONLY", (string)JObject.FromObject(UIToolkitFunctions.SetUiToolkitValue(id, "#player", value: "x"))["code"]);
             field.isReadOnly = false;
@@ -1153,6 +1162,26 @@ namespace Funplay.Editor.Tests
             var reloaded = Data(reload.Result);
             CollectionAssert.Contains(reloaded["reload"]["imported"].ToObject<string[]>(), ussPath, reloaded.ToString());
             Assert.AreEqual(Color.blue, play.resolvedStyle.color, "the edited USS applies to the live panel");
+        }
+
+        [UnityTest]
+        public IEnumerator AuditIgnoresBuiltInControlInternals()
+        {
+            yield return BuildLivePanel("UitkAuditInternals");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var menu = liveRoot.Q("menu");
+            // Two Sliders: picking-ignored roots with pickable drag containers, and duplicate unity-* part names.
+            for (var i = 0; i < 2; i++) menu.Add(new Slider(0, 1) { name = "volume" + i, style = { width = 200, height = 30 } });
+            var blocked = new Button { name = "blocked", text = "Blocked", pickingMode = PickingMode.Ignore, style = { width = 200, height = 30 } };
+            menu.Add(blocked);
+            UIToolkitPanels.ValidateLayout(menu.panel);
+            yield return null;
+            Assert.AreEqual(PickingMode.Ignore, menu.Q<Slider>("volume0").pickingMode, "Unity's Slider root ignores picking by design");
+
+            var findings = (JArray)Data(UIToolkitFunctions.GetVisualTree(id, all_findings: true))["hosts"][0]["findings"];
+            var ignored = findings.Where(f => (string)f["code"] == "CONTROL_PICKING_IGNORED").Select(f => (string)f["element"]).ToList();
+            CollectionAssert.AreEqual(new[] { "Button#blocked \"Blocked\"" }, ignored, findings.ToString());
+            Assert.IsFalse(findings.Any(f => (string)f["code"] == "DUPLICATE_NAME" && ((string)f["element"]).StartsWith("#unity-")), findings.ToString());
         }
 
         private VisualElement liveRoot;

@@ -1,6 +1,7 @@
 // Copyright (C) Funplay. Licensed under MIT.
 #if ENABLE_INPUT_SYSTEM
 using System.IO;
+using System.Reflection;
 using Funplay.Editor.State;
 using Funplay.Editor.Tools.Helpers;
 using NUnit.Framework;
@@ -72,6 +73,34 @@ namespace Funplay.Editor.Tests
             Assert.AreEqual(InputSettings.BackgroundBehavior.ResetAndDisableNonBackgroundDevices, InputSystem.settings.backgroundBehavior);
             Assert.AreEqual(InputSettings.EditorInputBehaviorInPlayMode.AllDevicesRespectGameViewFocus, InputSystem.settings.editorInputBehaviorInPlayMode);
             Assert.IsFalse(File.Exists(InputFocusOverride.JournalPath));
+        }
+
+        [Test]
+        public void DevicesDisabledInTheBackgroundAreReenabled()
+        {
+            // Focus was lost under the default background behaviour: the Input System disabled the device for
+            // the background. Once IgnoreFocus applies it never re-enables it, so the override must.
+            _keyboard = InputSystem.AddDevice<Keyboard>();
+            var gameDisabled = InputSystem.AddDevice<Mouse>();
+            try
+            {
+                InputSystem.DisableDevice(gameDisabled);
+                var manager = typeof(InputSystem).GetField("s_Manager", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+                var method = manager.GetType().GetMethod("EnableOrDisableDevice", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                var scope = System.Enum.Parse(method.GetParameters()[2].ParameterType, "TemporaryWhilePlayerIsInBackground");
+                method.Invoke(manager, new object[] { _keyboard, false, scope });
+                var flag = typeof(InputDevice).GetProperty("disabledWhileInBackground", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance);
+                Assert.IsTrue((bool)flag.GetValue(_keyboard), "disabled for the background");
+
+                Assert.AreEqual(1, InputFocusOverride.ReenableBackgroundDisabledDevices());
+                Assert.IsFalse((bool)flag.GetValue(_keyboard));
+                Assert.IsTrue(_keyboard.enabled, "the keyboard takes events again");
+                Assert.IsFalse(gameDisabled.enabled, "a device disabled on purpose stays disabled");
+            }
+            finally
+            {
+                InputSystem.RemoveDevice(gameDisabled);
+            }
         }
 
         [Test]

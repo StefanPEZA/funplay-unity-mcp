@@ -709,7 +709,9 @@ namespace Funplay.Editor.Tools.Builtins
                 var control = UIToolkitPanels.IsControl(element);
                 if (control && (bound.width < 1f || bound.height < 1f))
                     findings.Add(new { code = "ZERO_SIZE_CONTROL", element_path = entry.Key, element = Label(element), detail = "Displayed control has no clickable area." });
-                if (control && element.pickingMode == PickingMode.Ignore)
+                // Built-in Sliders are picking-ignored themselves and take the pointer on their drag
+                // container, so only a control with nothing pickable in it lets the pointer through.
+                if (control && element.pickingMode == PickingMode.Ignore && !HasPickableDescendant(element))
                     findings.Add(new { code = "CONTROL_PICKING_IGNORED", element_path = entry.Key, element = Label(element), detail = "picking-mode Ignore: pointer input passes through this control." });
                 // Content scrolled out of a ScrollView is normal (see visible_fraction); report only the
                 // topmost element of a subtree that lies outside the panel itself.
@@ -732,9 +734,21 @@ namespace Funplay.Editor.Tools.Builtins
                 }
             }
 
-            foreach (var group in walked.Select(e => e.Value).Where(e => !string.IsNullOrEmpty(e.name)).GroupBy(e => e.name).Where(g => g.Count() > 1 && g.Any(InScope)))
+            // unity-* names are the parts of built-in controls (every Slider has a #unity-dragger); they repeat by design.
+            foreach (var group in walked.Select(e => e.Value).Where(e => !string.IsNullOrEmpty(e.name) && !e.name.StartsWith("unity-", StringComparison.Ordinal))
+                         .GroupBy(e => e.name).Where(g => g.Count() > 1 && g.Any(InScope)))
                 findings.Add(new { code = "DUPLICATE_NAME", element = "#" + group.Key, detail = $"{group.Count()} elements share this name; #name selectors are ambiguous." });
             return findings;
+        }
+
+        internal static bool HasPickableDescendant(VisualElement element)
+        {
+            for (var i = 0; i < element.hierarchy.childCount; i++)
+            {
+                var child = element.hierarchy[i];
+                if (child.pickingMode == PickingMode.Position || HasPickableDescendant(child)) return true;
+            }
+            return false;
         }
 
         private static string ResolveKind(string component)
