@@ -1,6 +1,7 @@
 // Copyright (C) Funplay. Licensed under MIT.
 
 using System;
+using Funplay.Editor.Api;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
@@ -39,7 +40,7 @@ namespace Funplay.Editor.Tools.Helpers
 
             try
             {
-                var obj = JObject.Parse(result);
+                var obj = JsonParse.ParseObject(result);
                 return obj.TryGetValue("success", out var successToken) &&
                     successToken.Type == JTokenType.Boolean &&
                     !successToken.Value<bool>();

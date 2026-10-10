@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Funplay.Editor.Api;
 using Funplay.Editor.Settings;
 using Newtonsoft.Json.Linq;
 using Funplay.Editor.Tools.Helpers;
@@ -294,7 +295,7 @@ namespace Funplay.Editor.MCP.Server
             {
                 try
                 {
-                    var receipt = JObject.Parse(result);
+                    var receipt = JsonParse.ParseObject(result);
                     var inline = (string)receipt["data"]?["inline_image"];
                     if ((int?)receipt["_meta"]?["funplay_capture"] == 1 && inline != null && inline.StartsWith(ImageDataUriPrefix, StringComparison.Ordinal))
                     {

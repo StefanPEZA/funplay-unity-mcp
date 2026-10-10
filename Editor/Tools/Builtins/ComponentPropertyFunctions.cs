@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
+using Funplay.Editor.Api;
 using Funplay.Editor.Tools.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -150,7 +151,7 @@ namespace Funplay.Editor.Tools.Builtins
                 return selectorError;
 
             JObject jobj;
-            try { jobj = JObject.Parse(properties); }
+            try { jobj = JsonParse.ParseObject(properties); }
             catch (Exception ex) { return Response.Error("INVALID_PROPERTIES_JSON", new { message = ex.Message }); }
             if (!jobj.HasValues)
                 return Response.Error("PROPERTIES_REQUIRED",
@@ -262,7 +263,7 @@ namespace Funplay.Editor.Tools.Builtins
                 return Response.Error("PROPERTIES_REQUIRED");
 
             JObject jobj;
-            try { jobj = JObject.Parse(properties); }
+            try { jobj = JsonParse.ParseObject(properties); }
             catch (Exception ex) { return Response.Error("INVALID_PROPERTIES_JSON", new { message = ex.Message }); }
             if (!jobj.HasValues)
                 return Response.Error("PROPERTIES_REQUIRED",
@@ -987,7 +988,7 @@ namespace Funplay.Editor.Tools.Builtins
             raw = raw.Trim();
             if (raw.Length == 0) return JValue.CreateString(string.Empty);
             if (raw.StartsWith("{") || raw.StartsWith("[") || raw.StartsWith("\""))
-                return JToken.Parse(raw);
+                return JsonParse.ParseToken(raw);
             if (bool.TryParse(raw, out var b)) return new JValue(b);
             if (long.TryParse(raw, out var l)) return new JValue(l);
             if (double.TryParse(raw, System.Globalization.NumberStyles.Float,

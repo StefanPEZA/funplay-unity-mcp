@@ -932,6 +932,15 @@ namespace Funplay.Editor.Tests
             if (UIToolkitPanels.TryGetScreenMapping(liveRoot.panel, out _) && RenderHeightOrZero() > 0)
                 Assert.IsTrue(Has("COVERED_CONTROL", "#play"), json.ToString());
 
+            // The same overlay dimming the screen is an open dialog's backdrop: blocking is its purpose.
+            cover.style.backgroundColor = new Color(0f, 0f, 0f, 0.5f);
+            UIToolkitPanels.ValidateLayout(liveRoot.panel);
+            var modal = JObject.FromObject(UIToolkitFunctions.AuditHosts(new System.Collections.Generic.List<Component> { host }, new UIToolkitFunctions.AuditOptions()).ToResponse());
+            Assert.IsFalse(((JArray)modal["hosts"][0]["findings"]).Any(f => (string)f["code"] == "COVERED_CONTROL"), modal.ToString());
+            Assert.IsNull(modal["counts"]["COVERED_CONTROL"], modal.ToString());
+            if (UIToolkitPanels.TryGetScreenMapping(liveRoot.panel, out _) && RenderHeightOrZero() > 0)
+                Assert.IsTrue(((JArray)modal["hosts"][0]["blocked_by_modal"]).Any(b => ((string)b["element"]).Contains("#play") && ((string)b["modal"]).Contains("#cover")), modal.ToString());
+
             cover.RemoveFromHierarchy();
             var skipped = UIToolkitFunctions.AuditHosts(new System.Collections.Generic.List<Component> { host },
                 new UIToolkitFunctions.AuditOptions { Skip = new System.Collections.Generic.HashSet<string> { "LOW_CONTRAST" } });
@@ -1176,6 +1185,19 @@ namespace Funplay.Editor.Tests
             Assert.AreEqual(Color.clear, liveRoot.Q<Button>("quit").resolvedStyle.backgroundColor, clear.ToString());
             Assert.AreEqual("bold", (string)((JArray)clear["styles"]).First(x => (string)x["property"] == "-unity-font-style")["resolved_after"], "the alias resolves");
             Assert.AreEqual("UNSUPPORTED_STYLE_PROPERTY", (string)JObject.FromObject(unknown.Result)["code"]);
+
+            // A theme transition on the property: the report waits for the end value instead of a midpoint.
+            var quit = liveRoot.Q<Button>("quit");
+            quit.style.transitionProperty = new System.Collections.Generic.List<StylePropertyName> { "background-color" };
+            quit.style.transitionDuration = new System.Collections.Generic.List<TimeValue> { new TimeValue(0.25f, TimeUnit.Second) };
+            yield return null;
+            var animated = UIToolkitFunctions.StyleUiToolkit(id, "#quit", inline: "{\"background-color\":\"#ff0000\"}");
+            yield return Await(animated);
+            var animatedData = Data(animated.Result);
+            if (animatedData["transitions_running"] != null && animatedData["transitions_running"].Type != JTokenType.Null)
+                Assert.IsTrue((bool)animatedData["styles"][0]["transitioning"], "a capped wait flags the mid-transition value: " + animatedData);
+            else
+                Assert.AreEqual("#FF0000FF", (string)animatedData["styles"][0]["resolved_after"], "the end value, not a midpoint: " + animatedData);
 
             var styled = UIToolkitFunctions.StyleUiToolkit(id, "#play", add_classes: "big", inline: "{\"background-color\":\"rgb(0, 255, 0)\",\"width\":\"123px\",\"margin\":\"1px 2px\",\"justify-content\":\"flex-end\"}");
             yield return Await(styled);

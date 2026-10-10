@@ -2,6 +2,7 @@
 using System;
 using System.Linq;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
+using Funplay.Editor.Api;
 using Funplay.Editor.Tools.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -92,7 +93,7 @@ namespace Funplay.Editor.Tools.Builtins
             if (resolved.Error != null) return resolved.Error;
 
             JObject jobj;
-            try { jobj = JObject.Parse(properties); }
+            try { jobj = JsonParse.ParseObject(properties); }
             catch (Exception ex) { return Response.Error("INVALID_PROPERTIES_JSON", new { message = ex.Message }); }
 
             var results = ComponentSerializer.WriteProperties(resolved.Asset, jobj,

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
 using System.Threading.Tasks;
+using Funplay.Editor.Api;
 using Funplay.Editor.Tools.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -154,7 +155,7 @@ namespace Funplay.Editor.Tools
                 return false;
             try
             {
-                var obj = JObject.Parse(s);
+                var obj = JsonParse.ParseObject(s);
                 return obj.TryGetValue("success", out var token) && token.Type == JTokenType.Boolean;
             }
             catch

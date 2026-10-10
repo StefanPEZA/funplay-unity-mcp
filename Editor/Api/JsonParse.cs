@@ -21,6 +21,29 @@ namespace Funplay.Editor.Api
             return JsonConvert.SerializeObject(obj, SerializeSettings);
         }
 
+        // JToken.Parse turns ISO-8601 strings into DateTime values by default, which re-serialize in
+        // local time with trimmed precision ("...+03:00" next to "...+00:00") and reach tools as
+        // culture-formatted text. Every parse keeps strings exactly as sent.
+        internal static JToken ParseToken(string json)
+        {
+            using (var reader = new JsonTextReader(new System.IO.StringReader(json ?? throw new System.ArgumentNullException(nameof(json))))
+                   { DateParseHandling = DateParseHandling.None })
+            {
+                var token = JToken.ReadFrom(reader);
+                // Like JToken.Parse: content after the value is an error.
+                while (reader.Read())
+                    if (reader.TokenType != JsonToken.Comment)
+                        throw new JsonReaderException("Additional text found in JSON string after parsing content.");
+                return token;
+            }
+        }
+
+        internal static JObject ParseObject(string json) =>
+            ParseToken(json) as JObject ?? throw new JsonReaderException("Expected a JSON object.");
+
+        internal static JArray ParseArray(string json) =>
+            ParseToken(json) as JArray ?? throw new JsonReaderException("Expected a JSON array.");
+
         internal static Dictionary<string, object> ParseJsonObject(string json, int start, out int end)
         {
             end = json?.Length ?? 0;
@@ -29,7 +52,7 @@ namespace Funplay.Editor.Api
             try
             {
                 var substring = start > 0 ? json.Substring(start) : json;
-                var token = JToken.Parse(substring);
+                var token = JsonParse.ParseToken(substring);
                 end = start + substring.Length;
                 return ConvertToDictionary(token);
             }

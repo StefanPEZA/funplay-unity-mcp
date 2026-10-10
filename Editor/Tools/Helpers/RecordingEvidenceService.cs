@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using Funplay.Editor.Api;
 using Funplay.Editor.Tools.Builtins;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -57,7 +58,7 @@ namespace Funplay.Editor.Tools.Helpers
         internal static RecordingFramesJob Find(string id) => jobs.FirstOrDefault(x => x.job_id == id);
         internal static double[] ParseTimes(string json, double lastFrame)
         {
-            var array = JArray.Parse(json);
+            var array = JsonParse.ParseArray(json);
             if (array.Count < 1 || array.Count > 16) throw new ArgumentException("Request 1..16 timestamps.");
             if (array.Any(x => x.Type != JTokenType.Integer && x.Type != JTokenType.Float)) throw new ArgumentException("Timestamps must be numbers in seconds.");
             var times = array.Select(x => (double)x).ToArray();

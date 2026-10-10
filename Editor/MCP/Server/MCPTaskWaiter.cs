@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Funplay.Editor.Api;
 using Funplay.Editor.State;
 using Funplay.Editor.Threading;
 using Funplay.Editor.Tools.Helpers;
@@ -50,7 +51,7 @@ namespace Funplay.Editor.MCP.Server
             string initial, IEditorThreadHelper thread, CancellationToken cancellation, double? remainingWaitSeconds = null)
         {
             if (!Waitable.Contains(tool)) return initial;
-            var response = JObject.Parse(initial);
+            var response = JsonParse.ParseObject(initial);
             var task = response["data"]?["task"];
             if (task == null || response.Value<bool?>("success") != true) return initial;
             int seconds = arguments.TryGetValue("wait_seconds", out var supplied) ? Convert.ToInt32(supplied, CultureInfo.InvariantCulture) : tool == "get_task" ? 20 : 2;

@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using Funplay.Editor.Api;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -125,7 +126,7 @@ namespace Funplay.Editor.MCP.Server
 
             try
             {
-                var token = JToken.Parse(trimmed);
+                var token = JsonParse.ParseToken(trimmed);
                 var builder = new StringBuilder(Math.Min(resultSummary.Length, MaxDisplayResultCharacters));
 
                 if (token is JObject obj && IsResponseEnvelope(obj))
@@ -367,7 +368,7 @@ namespace Funplay.Editor.MCP.Server
 
             try
             {
-                nested = JToken.Parse(trimmed);
+                nested = JsonParse.ParseToken(trimmed);
                 return true;
             }
             catch (JsonException)

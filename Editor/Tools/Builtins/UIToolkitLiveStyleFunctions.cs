@@ -7,6 +7,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
+using Funplay.Editor.Api;
 using Funplay.Editor.Tools.Helpers;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -17,7 +18,7 @@ namespace Funplay.Editor.Tools.Builtins
 {
     internal static partial class UIToolkitFunctions
     {
-        [Description("Live style experiments on a UI Toolkit element (runtime only: nothing is saved, and Play Mode exit or a panel rebuild discards it). add_classes/remove_classes (comma-separated), inline {\"uss-property\": value | null} sets element.style the way UXML style=\"\" does (lengths px/%/auto, numbers, colours #hex/rgb()/rgba()/names, enum keywords like flex-end, translate/scale/rotate; margin, padding, border-width, border-color and border-radius shorthands; var() is not allowed inline; null removes the inline value so USS applies again). reload_stylesheets=true imports USS files changed on disk and re-applies them to live panels (auto-refresh is off in Play Mode, so edited USS otherwise stays stale). Afterwards it watches a few frames and reports reverted changes, which means project code (e.g. a responsive script toggling classes on geometry change) undid them. Match the element by selector, text and/or element_path as for clicks; reload_stylesheets alone needs no element.")]
+        [Description("Live style experiments on a UI Toolkit element (runtime only: nothing is saved, and Play Mode exit or a panel rebuild discards it). add_classes/remove_classes (comma-separated), inline {\"uss-property\": value | null} sets element.style the way UXML style=\"\" does (lengths px/%/auto, numbers, colours #hex/rgb()/rgba()/names, enum keywords like flex-end, translate/scale/rotate; margin, padding, border-width, border-color and border-radius shorthands; var() is not allowed inline; null removes the inline value so USS applies again). reload_stylesheets=true imports USS files changed on disk and re-applies them to live panels (auto-refresh is off in Play Mode, so edited USS otherwise stays stale). Afterwards it watches a few frames (and, up to 3 s, until transitions the change started have ended, so resolved_after is the end value; transitioning=true when one was still running) and reports reverted changes, which means project code (e.g. a responsive script toggling classes on geometry change) undid them. Match the element by selector, text and/or element_path as for clicks; reload_stylesheets alone needs no element.")]
         public static Task<object> StyleUiToolkit(
             [ToolParam("Panel host GameObject name/path/ID", Required = false)] string target = null,
             [ToolParam("Selector: Type#name.class compounds joined by space (descendant) or > (child), optional :nth-of-type(n)/:nth-child(n)", Required = false)] string selector = null,
@@ -90,7 +91,7 @@ namespace Funplay.Editor.Tools.Builtins
             var result = new List<InlineStyle>();
             if (string.IsNullOrWhiteSpace(inline)) return result;
             JObject json;
-            try { json = JObject.Parse(inline); }
+            try { json = JsonParse.ParseObject(inline); }
             catch (Exception ex) { throw new UIToolkitException("INVALID_INLINE_STYLE", "inline must be a JSON object of USS property → value or null: " + ex.Message); }
             foreach (var pair in json)
             {
@@ -290,6 +291,7 @@ namespace Funplay.Editor.Tools.Builtins
         {
             private const int WatchFrames = 3;
             private const double WatchSeconds = 0.5;
+            private const double MaxTransitionWaitSeconds = 3.0;
 
             private readonly Component _host;
             private readonly string _path;
@@ -303,6 +305,8 @@ namespace Funplay.Editor.Tools.Builtins
             private readonly int _startFrame = Time.frameCount;
             private readonly TaskCompletionSource<object> _done = new TaskCompletionSource<object>();
             private int _ticks;
+            private readonly HashSet<string> _running = new HashSet<string>(StringComparer.Ordinal);
+            private int _transitionsObserved;
 
             public StyleWatch(Component host, string path, VisualElement element, List<string> add, List<string> remove, List<InlineStyle> styles,
                 List<(string, string)> before, string[] classesBefore, object reload)
@@ -313,20 +317,46 @@ namespace Funplay.Editor.Tools.Builtins
 
             public Task<object> Run()
             {
+                // A theme that animates the property would otherwise report a value halfway to the target.
+                _element.RegisterCallback<TransitionRunEvent>(OnTransitionRun);
+                _element.RegisterCallback<TransitionEndEvent>(OnTransitionEnd);
+                _element.RegisterCallback<TransitionCancelEvent>(OnTransitionCancel);
                 EditorApplication.update += Tick;
                 return _done.Task;
+            }
+
+            private void OnTransitionRun(TransitionRunEvent evt)
+            {
+                if (!ReferenceEquals(evt.target, _element)) return;
+                _transitionsObserved++;
+                foreach (var property in evt.stylePropertyNames) _running.Add(property.ToString());
+            }
+
+            private void OnTransitionEnd(TransitionEndEvent evt) => Ended(evt.target, evt.stylePropertyNames);
+            private void OnTransitionCancel(TransitionCancelEvent evt) => Ended(evt.target, evt.stylePropertyNames);
+
+            private void Ended(IEventHandler target, StylePropertyNameCollection properties)
+            {
+                if (!ReferenceEquals(target, _element)) return;
+                foreach (var property in properties) _running.Remove(property.ToString());
             }
 
             private void Tick()
             {
                 _ticks++;
                 var frames = EditorApplication.isPlaying ? Time.frameCount - _startFrame : _ticks;
-                if (frames < WatchFrames && _clock.Elapsed.TotalSeconds < WatchSeconds && _element.panel != null)
+                var elapsed = _clock.Elapsed.TotalSeconds;
+                var watching = frames < WatchFrames && elapsed < WatchSeconds;
+                var transitioning = _running.Count > 0 && elapsed < MaxTransitionWaitSeconds;
+                if ((watching || transitioning) && _element.panel != null)
                 {
                     if (!EditorApplication.isPlaying) EditorApplication.QueuePlayerLoopUpdate();
                     return;
                 }
                 EditorApplication.update -= Tick;
+                _element.UnregisterCallback<TransitionRunEvent>(OnTransitionRun);
+                _element.UnregisterCallback<TransitionEndEvent>(OnTransitionEnd);
+                _element.UnregisterCallback<TransitionCancelEvent>(OnTransitionCancel);
                 try { _done.TrySetResult(Report(frames)); }
                 catch (Exception ex) { _done.TrySetResult(Response.Error("UI_TOOLKIT_STYLE_FAILED", new { detail = ex.Message })); }
             }
@@ -346,7 +376,8 @@ namespace Funplay.Editor.Tools.Builtins
                     inline = s.Remove ? null : StyleIntrospection.InlineValue(_element, s.Uss),
                     removed = s.Remove ? (bool?)true : null,
                     resolved_before = _before[i].resolved,
-                    resolved_after = detached ? null : StyleIntrospection.ResolvedValue(_element, s.Uss)
+                    resolved_after = detached ? null : StyleIntrospection.ResolvedValue(_element, s.Uss),
+                    transitioning = _running.Contains(s.Uss) ? (bool?)true : null
                 }).ToList();
                 var renderHeight = TryGetRenderHeight(out _);
                 var mapping = detached ? null : MappingFor(_host, _element.panel);
@@ -362,6 +393,9 @@ namespace Funplay.Editor.Tools.Builtins
                         styles,
                         reverted = reverted.Count > 0 ? reverted : null,
                         watched_frames = frames,
+                        watched_ms = (int)_clock.Elapsed.TotalMilliseconds,
+                        transitions_observed = _transitionsObserved > 0 ? (int?)_transitionsObserved : null,
+                        transitions_running = _running.Count > 0 ? _running.OrderBy(n => n, StringComparer.Ordinal).ToArray() : null,
                         reload = _reload,
                         runtime_only = true,
                         warning = reverted.Count > 0 ? "A script changed the element back within a few frames (for example a responsive layout script toggling classes on geometry change). Change the script or its inputs instead." : null,

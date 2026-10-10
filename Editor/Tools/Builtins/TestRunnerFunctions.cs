@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
+using Funplay.Editor.Api;
 using Funplay.Editor.Tools.Helpers;
 using Funplay.Editor.State;
 using Newtonsoft.Json.Linq;
@@ -253,7 +254,7 @@ namespace Funplay.Editor.Tools.Builtins
         {
             var raw = SessionState.GetString(ActiveJobKey, null);
             if (string.IsNullOrEmpty(raw)) return null;
-            try { return JObject.Parse(raw); }
+            try { return JsonParse.ParseObject(raw); }
             catch { return null; }
         }
 
