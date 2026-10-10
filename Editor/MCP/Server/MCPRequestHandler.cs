@@ -21,7 +21,16 @@ namespace Funplay.Editor.MCP.Server
         private readonly MCPResourceProvider _resourceProvider;
         private readonly MCPPromptProvider _promptProvider;
         private readonly string _serverName;
-        private readonly string _serverVersion;
+        private readonly Func<string> _serverVersion;
+
+        private string ServerVersion
+        {
+            get
+            {
+                var version = _serverVersion();
+                return string.IsNullOrWhiteSpace(version) ? "0.0.0" : version;
+            }
+        }
         private readonly string _projectIdentity;
 
         public MCPRequestHandler(
@@ -30,7 +39,7 @@ namespace Funplay.Editor.MCP.Server
             MCPResourceProvider resourceProvider,
             MCPPromptProvider promptProvider,
             string serverName,
-            string serverVersion,
+            Func<string> serverVersion,
             string projectIdentity)
         {
             _toolExporter = toolExporter ?? throw new ArgumentNullException(nameof(toolExporter));
@@ -38,7 +47,7 @@ namespace Funplay.Editor.MCP.Server
             _resourceProvider = resourceProvider ?? throw new ArgumentNullException(nameof(resourceProvider));
             _promptProvider = promptProvider ?? throw new ArgumentNullException(nameof(promptProvider));
             _serverName = string.IsNullOrWhiteSpace(serverName) ? "Funplay MCP Server" : serverName;
-            _serverVersion = string.IsNullOrWhiteSpace(serverVersion) ? "0.0.0" : serverVersion;
+            _serverVersion = serverVersion ?? (() => null);
             _projectIdentity = projectIdentity ?? string.Empty;
         }
 
@@ -105,7 +114,7 @@ namespace Funplay.Editor.MCP.Server
                 ["serverInfo"] = new Dictionary<string, object>
                 {
                     ["name"] = _serverName,
-                    ["version"] = _serverVersion
+                    ["version"] = ServerVersion
                 },
                 // Cross-client usage guidance (MCP `instructions`); see MCPServerInstructions.
                 ["instructions"] = MCPServerInstructions.Text,

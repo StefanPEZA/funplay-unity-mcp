@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- The installed version stayed stale after a package update that changed no scripts (server info and the update check showed the old version).
+
 ## [0.8.5] - 2026-10-10
 
 ### Added

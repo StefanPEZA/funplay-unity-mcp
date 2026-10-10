@@ -14,6 +14,15 @@ namespace Funplay.Editor.Services
         private const string PackageInstallRoot = "Packages/com.gamebooom.unity.mcp";
         private static string _cachedVersion;
 
+        static PackageVersionUtility()
+        {
+            // An update that changes no scripts reloads no domain, so the cached version would go stale.
+            // Re-resolve here (main thread) so readers on other threads still get a plain cached string.
+            Events.registeredPackages += _ => Refresh();
+        }
+
+        internal static void Refresh() => _cachedVersion = ResolveVersion();
+
         public static string CurrentVersion
         {
             get
