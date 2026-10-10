@@ -23,6 +23,26 @@ namespace Funplay.Editor.Tests
         }
 
         [Test]
+        public void SchemaStatus_FlagsChangesAfterTheLastInitialize()
+        {
+            var initialized = new System.DateTime(2026, 10, 10, 17, 0, 0, System.DateTimeKind.Utc).Ticks;
+            var changed = initialized + System.TimeSpan.TicksPerMinute;
+
+            var stale = Newtonsoft.Json.Linq.JObject.FromObject(MCPToolListChangeNotifier.SchemaStatus("h", changed, initialized, changed));
+            Assert.IsTrue((bool)stale["schemas_may_be_stale"], stale.ToString());
+            Assert.AreEqual("2026-10-10T17:01:00.000Z", (string)stale["changed_at"]);
+            StringAssert.Contains("Reconnect", (string)stale["hint"]);
+
+            var reconnected = Newtonsoft.Json.Linq.JObject.FromObject(MCPToolListChangeNotifier.SchemaStatus("h", changed, changed + 1, changed));
+            Assert.IsFalse((bool)reconnected["schemas_may_be_stale"], reconnected.ToString());
+            Assert.IsNull((string)reconnected["hint"]);
+
+            var unchanged = Newtonsoft.Json.Linq.JObject.FromObject(MCPToolListChangeNotifier.SchemaStatus("h", 0, 0, 0));
+            Assert.IsFalse((bool)unchanged["schemas_may_be_stale"]);
+            Assert.IsNull((string)unchanged["changed_at"]);
+        }
+
+        [Test]
         public void BuildSseBody_EmitsNotificationBeforeResponse()
         {
             var body = MCPToolListChangeNotifier.BuildSseBody("{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":{}}");

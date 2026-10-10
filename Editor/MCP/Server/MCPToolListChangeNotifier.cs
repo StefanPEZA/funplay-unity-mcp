@@ -2,9 +2,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using Funplay.Editor.Settings;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -30,6 +32,9 @@ namespace Funplay.Editor.MCP.Server
     {
         private const string HashKey = "Funplay.MCP.ExposedToolsHash";
         private const string PendingKey = "Funplay.MCP.ToolsChangedPending";
+        private const string ChangedAtKey = "Funplay.MCP.ToolsChangedAt";
+        private const string InitializedAtKey = "Funplay.MCP.ClientInitializedAt";
+        private const string DeliveredAtKey = "Funplay.MCP.ToolsChangeDeliveredAt";
 
         internal const string NotificationJson =
             "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}";
@@ -37,6 +42,9 @@ namespace Funplay.Editor.MCP.Server
         private static volatile bool _pending;
         private static volatile bool _persistedFlagDirty;
         private static bool _updateHooked;
+        private static volatile string _currentHash;
+        // UTC ticks; 0 = unknown. Written from transport threads, mirrored to SessionState on the main thread.
+        private static long _changedAt, _initializedAt, _deliveredAt;
 
         /// <summary>
         /// Compare the currently exposed tool list (names, descriptions, input schemas and
@@ -54,6 +62,10 @@ namespace Funplay.Editor.MCP.Server
                 if (string.IsNullOrEmpty(previous))
                     previous = ReadPersistedHash();
                 var pending = SessionState.GetBool(PendingKey, false);
+                _currentHash = hash;
+                RestoreTicks(ref _changedAt, ChangedAtKey);
+                RestoreTicks(ref _initializedAt, InitializedAtKey);
+                RestoreTicks(ref _deliveredAt, DeliveredAtKey);
 
                 if (string.IsNullOrEmpty(previous))
                 {
@@ -66,6 +78,8 @@ namespace Funplay.Editor.MCP.Server
                     WritePersistedHash(hash);
                     SessionState.SetBool(PendingKey, true);
                     pending = true;
+                    Interlocked.Exchange(ref _changedAt, DateTime.UtcNow.Ticks);
+                    PersistTicks(_changedAt, ChangedAtKey);
                     PluginDebugLogger.Log(
                         "[Funplay MCP Server] Exposed tool list changed; clients will be notified via tools/list_changed.");
                 }
@@ -98,8 +112,55 @@ namespace Funplay.Editor.MCP.Server
                 _pending = false;
             }
 
+            Interlocked.Exchange(ref _deliveredAt, DateTime.UtcNow.Ticks);
             _persistedFlagDirty = true;
             return true;
+        }
+
+        /// <summary>A client sent initialize; it fetches fresh schemas from here on. Thread-safe.</summary>
+        public static void NoteClientInitialized()
+        {
+            Interlocked.Exchange(ref _initializedAt, DateTime.UtcNow.Ticks);
+            _persistedFlagDirty = true;
+        }
+
+        /// <summary>
+        /// Whether a client may still hold old input schemas. Some clients (Claude Code among them)
+        /// add new tools on tools/list_changed but keep the schemas of tools they already knew until
+        /// they reconnect, so a change after the last initialize is reported as possibly stale.
+        /// </summary>
+        public static object SchemaStatus() => SchemaStatus(_currentHash, Interlocked.Read(ref _changedAt),
+            Interlocked.Read(ref _initializedAt), Interlocked.Read(ref _deliveredAt));
+
+        internal static object SchemaStatus(string hash, long changedAt, long initializedAt, long deliveredAt)
+        {
+            var stale = changedAt > 0 && changedAt > initializedAt;
+            return new
+            {
+                schema_hash = hash,
+                changed_at = Iso(changedAt),
+                client_initialized_at = Iso(initializedAt),
+                list_changed_delivered_at = Iso(deliveredAt),
+                schemas_may_be_stale = stale,
+                hint = stale
+                    ? "The exposed tool schemas changed after the last MCP initialize. Some clients keep the old input schemas of tools they already knew until they reconnect, and reject newly documented parameters. Ask the user to reconnect the Unity MCP server (Claude Code: /mcp, then Reconnect)."
+                    : null
+            };
+        }
+
+        private static string Iso(long ticks) =>
+            ticks > 0 ? new DateTime(ticks, DateTimeKind.Utc).ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture) : null;
+
+        private static void RestoreTicks(ref long field, string key)
+        {
+            if (Interlocked.Read(ref field) == 0 &&
+                long.TryParse(SessionState.GetString(key, null), NumberStyles.Integer, CultureInfo.InvariantCulture, out var ticks))
+                Interlocked.CompareExchange(ref field, ticks, 0);
+        }
+
+        private static void PersistTicks(long ticks, string key)
+        {
+            if (ticks > 0) SessionState.SetString(key, ticks.ToString(CultureInfo.InvariantCulture));
         }
 
         /// <summary>
@@ -108,6 +169,7 @@ namespace Funplay.Editor.MCP.Server
         /// </summary>
         public static void MarkChanged()
         {
+            Interlocked.Exchange(ref _changedAt, DateTime.UtcNow.Ticks);
             _pending = true;
             _persistedFlagDirty = true;
         }
@@ -137,6 +199,9 @@ namespace Funplay.Editor.MCP.Server
 
             _persistedFlagDirty = false;
             SessionState.SetBool(PendingKey, _pending);
+            PersistTicks(Interlocked.Read(ref _changedAt), ChangedAtKey);
+            PersistTicks(Interlocked.Read(ref _initializedAt), InitializedAtKey);
+            PersistTicks(Interlocked.Read(ref _deliveredAt), DeliveredAtKey);
         }
 
         internal static string ComputeToolListHash(MCPToolExporter toolExporter)

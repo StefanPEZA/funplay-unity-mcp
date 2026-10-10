@@ -123,6 +123,7 @@ namespace Funplay.Editor.Tools.Builtins
                     read_only = ToolRegistry.GetMethod(name) != null && ToolRegistry.IsReadOnly(ToolRegistry.GetMethod(name)),
                     role = name == "execute_code" ? "fallback" : "structured"
                 }).ToArray(),
+                schemas = MCPToolListChangeNotifier.SchemaStatus(),
                 hint = "If implemented but unexposed, adjust MCP Server tool exposure deliberately; do not assume the plugin lacks the capability."
             });
         }

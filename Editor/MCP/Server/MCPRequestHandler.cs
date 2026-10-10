@@ -134,6 +134,7 @@ namespace Funplay.Editor.MCP.Server
                 }
             };
 
+            MCPToolListChangeNotifier.NoteClientInitialized();
             PluginDebugLogger.Log("[Funplay MCP Server] Initialized successfully");
             return new MCPResponse { Id = request.Id, Result = result };
         }
