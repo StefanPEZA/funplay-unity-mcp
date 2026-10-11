@@ -33,14 +33,26 @@ namespace Funplay.Editor.Tools.Builtins
                      "AssetDatabase is refreshed first (skip_refresh=true to skip, e.g. in a live Play Mode session). " +
                      "The snippet is a separate assembly: reach package internals by reflection. " +
                      "safety_checks blocks obviously dangerous patterns (File.Delete, Process.Start, while(true), AssetDatabase.DeleteAsset ...) and, when strict, System.IO writes outside Library/ or Temp/; it is not a sandbox. " +
-                     "CS0104 (ambiguous name): pass preferred_namespaces. Every call is kept in get_execute_code_history / replay_execute_code.")]
+                     "Repeated snippet: save_as=<name> on a successful run, then execute_code(snippet=<name>, args={...}) reads ctx.Args[\"k\"] and skips recompiling. "
+                     + "CS0104 (ambiguous name): pass preferred_namespaces. Every call is kept in get_execute_code_history / replay_execute_code.")]
         [SceneEditingTool]
         public static async Task<object> ExecuteCode(
-            [ToolParam("C# code to execute. See description for IFunplayCommand vs legacy Run() templates.")] string code,
+            [ToolParam("C# code to execute (statements, or a class). Omit when running a saved snippet.", Required = false)] string code = null,
             [ToolParam("If true, reject the call before compile when the code contains obviously dangerous patterns. If omitted, uses the MCP Settings window default.", Required = false)] bool? safety_checks = null,
             [ToolParam("If true, skip the pre-compile AssetDatabase.Refresh + wait-for-ready. Use only when the editor is already up to date -- e.g. a read-only inspection snippet, or during a live Play Mode session you must not disturb. The default refresh can trigger an import/domain reload (from your own OR another actor's pending changes in a shared editor) that wipes Play Mode runtime state. When skipped, external file edits made since the last compile are NOT picked up.", Required = false)] bool skip_refresh = false,
-            [ToolParam("Optional comma-separated namespaces used to auto-resolve CS0104 ambiguity: when an unqualified type name is ambiguous between two imported namespaces, a using-alias binding that name to the candidate in the listed (winning) namespace is inserted and the snippet is recompiled once. Does NOT fix CS0433 (same fully-qualified type in two assemblies). If it stays ambiguous, a structured COMPILATION_FAILED error with an `ambiguous` array is returned.", Required = false)] string preferred_namespaces = null)
+            [ToolParam("Optional comma-separated namespaces used to auto-resolve CS0104 ambiguity: when an unqualified type name is ambiguous between two imported namespaces, a using-alias binding that name to the candidate in the listed (winning) namespace is inserted and the snippet is recompiled once. Does NOT fix CS0433 (same fully-qualified type in two assemblies). If it stays ambiguous, a structured COMPILATION_FAILED error with an `ambiguous` array is returned.", Required = false)] string preferred_namespaces = null,
+            [ToolParam("Save the code as a named snippet (Library/FunplayMcp/Snippets/<name>.cs) after it runs successfully; rerun it with snippet=<name>", Required = false)] string save_as = null,
+            [ToolParam("Run a saved snippet by name instead of passing code", Required = false)] string snippet = null,
+            [ToolParam("JSON object of arguments for the snippet, read as ctx.Args[\"name\"]", Required = false)] string args = null)
         {
+            if (!string.IsNullOrEmpty(snippet))
+            {
+                if (!string.IsNullOrEmpty(code)) return Response.Error("INVALID_ARGUMENT", new { detail = "Pass code or snippet, not both." });
+                code = SnippetStore.Load(snippet);
+                if (code == null) return Response.Error("SNIPPET_NOT_FOUND", new { snippet, available = SnippetStore.Names() });
+            }
+            if (string.IsNullOrWhiteSpace(code)) return Response.Error("INVALID_ARGUMENT", new { detail = "Pass code or snippet." });
+            if (!SnippetStore.TryParseArgs(args, out var parsedArgs, out var argsError)) return Response.Error("INVALID_ARGS", new { detail = argsError });
             var effectiveSafetyChecks = ResolveSafetyChecks(safety_checks);
             if (effectiveSafetyChecks)
             {
@@ -89,7 +101,8 @@ namespace Funplay.Editor.Tools.Builtins
                 }
             }
 
-            var className = "TempScript_" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            // Same text, same class name: an unchanged snippet then hits the compile cache.
+            var className = "TempScript_" + SnippetStore.Hash(code);
             var fullCode = BuildCodeForCompilation(
                 code,
                 className,
@@ -98,8 +111,11 @@ namespace Funplay.Editor.Tools.Builtins
 
             try
             {
-                var result = await CompileAndExecuteAsync(fullCode, actualClassName, preferred_namespaces);
-                AppendHistory(code, IsSuccess(result), SummarizeResult(result), preferred_namespaces);
+                var result = await CompileAndExecuteAsync(fullCode, actualClassName, preferred_namespaces, parsedArgs);
+                var succeeded = IsSuccess(result);
+                AppendHistory(code, succeeded, SummarizeResult(result), preferred_namespaces);
+                if (succeeded && !string.IsNullOrEmpty(save_as))
+                    result = SnippetStore.Save(save_as, code) is string saveError ? WithWarning(result, saveError) : result;
                 return WithWarning(result, staleScriptsWarning);
             }
             catch (Exception ex)
@@ -313,9 +329,22 @@ namespace Funplay.Editor.Tools.Builtins
             return s.Substring(0, max) + "…";
         }
 
-        private static async Task<object> CompileAndExecuteAsync(string code, string className, string preferredNamespaces)
+        // Compiled snippets by source text. Static, so a domain reload (project scripts changed) clears it.
+        private static readonly Dictionary<string, ScriptCompilationResult> CompileCache = new Dictionary<string, ScriptCompilationResult>();
+        private const int CompileCacheMax = 32;
+        private static IDictionary<string, object> executionArgs;
+
+        private static async Task<object> CompileAndExecuteAsync(string code, string className, string preferredNamespaces, IDictionary<string, object> args = null)
         {
-            var compilation = await ScriptCompilerPipeline.CompileAsync(code);
+            if (!CompileCache.TryGetValue(code, out var compilation))
+            {
+                compilation = await ScriptCompilerPipeline.CompileAsync(code);
+                if (compilation.Status == ScriptCompilationStatus.Success && compilation.Assembly != null)
+                {
+                    if (CompileCache.Count >= CompileCacheMax) CompileCache.Clear();
+                    CompileCache[code] = compilation;
+                }
+            }
 
             if (compilation.Status == ScriptCompilationStatus.CompilationFailed)
             {
@@ -331,7 +360,10 @@ namespace Funplay.Editor.Tools.Builtins
                         {
                             var retry = await ScriptCompilerPipeline.CompileAsync(BuildAliasRetryCode(aliasBlock, code));
                             if (retry.Status == ScriptCompilationStatus.Success && retry.Assembly != null)
+                            {
+                                executionArgs = args;
                                 return ExecuteCompiledAssembly(retry.Assembly, className, retry.CompilerName, retry.Attempts);
+                            }
 
                             if (retry.Status == ScriptCompilationStatus.CompilationFailed)
                             {
@@ -385,6 +417,7 @@ namespace Funplay.Editor.Tools.Builtins
                 });
             }
 
+            executionArgs = args;
             return ExecuteCompiledAssembly(compilation.Assembly, className, compilation.CompilerName, compilation.Attempts);
         }
 
@@ -637,6 +670,8 @@ namespace Funplay.Editor.Tools.Builtins
             }
 
             var ctx = new ExecutionContext();
+            if (executionArgs != null) ctx.Args = executionArgs;
+            executionArgs = null;
             try
             {
                 instance.Execute(ctx);

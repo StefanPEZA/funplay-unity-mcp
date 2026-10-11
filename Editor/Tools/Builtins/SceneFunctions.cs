@@ -491,12 +491,17 @@ namespace Funplay.Editor.Tools.Builtins
                 });
             }
 
+            // Play runs the loaded scripts; edits made since the last import are not in them.
+            bool refreshNeeded;
+            try { refreshNeeded = EditorRefreshHelper.CaptureScriptChangeState(true).HasPendingScriptChanges; }
+            catch (Exception) { refreshNeeded = false; }
             EditorApplication.isPlaying = true;
-            return Response.Success("Entering play mode", new
+            return Response.Success(refreshNeeded ? "Entering play mode with the previously loaded scripts; script edits since then are NOT in this session. Exit Play and use prepare_editor(target=play, refresh_assets=true)" : "Entering play mode", new
             {
                 wasPlaying = false,
                 transitionRequested = true,
                 domain_reload_expected = domainReloadExpected,
+                refresh_needed = refreshNeeded ? true : (bool?)null,
                 next = BuildPlayModeNextStep(true, domainReloadExpected)
             });
         }

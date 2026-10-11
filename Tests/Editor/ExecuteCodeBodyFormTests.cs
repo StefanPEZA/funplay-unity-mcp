@@ -72,5 +72,25 @@ namespace Funplay.Editor.Tests
             Assert.AreEqual("COMPILATION_FAILED", (string)result["code"], result.ToString());
             StringAssert.Contains("Execute(ExecutionContext ctx)", (string)result["data"]["fix"]);
         }
+
+        [UnityTest]
+        public IEnumerator SavedSnippetRunsByNameWithArgsAndIsRecompiledOnlyOnce()
+        {
+            var name = "probe_" + System.Guid.NewGuid().ToString("N").Substring(0, 8);
+            var first = ScriptExecutionFunctions.ExecuteCode("return (int)ctx.Args.Count;", false, true, null, name);
+            while (!first.IsCompleted) yield return null;
+            Assert.AreEqual(0, (int)JObject.FromObject(first.Result)["data"]["returnValue"]);
+
+            var again = ScriptExecutionFunctions.ExecuteCode(null, false, true, null, null, name, "{\"a\":1,\"b\":2}");
+            while (!again.IsCompleted) yield return null;
+            var result = JObject.FromObject(again.Result);
+            Assert.IsTrue((bool)result["success"], result.ToString());
+            Assert.AreEqual(2, (int)result["data"]["returnValue"]);
+
+            var missing = ScriptExecutionFunctions.ExecuteCode(null, false, true, null, null, "no_such_snippet_" + name);
+            while (!missing.IsCompleted) yield return null;
+            Assert.AreEqual("SNIPPET_NOT_FOUND", (string)JObject.FromObject(missing.Result)["code"]);
+            System.IO.File.Delete(System.IO.Path.Combine("Library", "FunplayMcp", "Snippets", name + ".cs"));
+        }
     }
 }

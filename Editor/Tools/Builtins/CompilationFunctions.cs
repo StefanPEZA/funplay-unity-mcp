@@ -67,10 +67,7 @@ namespace Funplay.Editor.Tools.Builtins
             }
         }
 
-        [Description("IMPORTANT: This should be the AI's default next step immediately after editing project files outside the Unity Editor. " +
-                     "Treat this as required after any external code or asset change. " +
-                     "Call it after modifying .cs, .asmdef, .shader, prefabs, scenes, ScriptableObjects, or other Assets files, and before running tests, entering Play Mode, executing follow-up tools, or assuming Unity has imported the latest state. " +
-                     "It forces Unity to import external file changes and handles any resulting script compilation or domain reload recovery.")]
+        [Description("Deprecated alias of prepare_editor(target=edit, refresh_assets=true): imports external file changes and waits for compilation. It fails in Play Mode and cannot survive its own domain reload; prefer prepare_editor with a request_key.")]
         public static async Task<string> RequestRecompile(
             [ToolParam("Maximum seconds to wait for compilation", Required = false)] int timeout_seconds = 30)
         {
