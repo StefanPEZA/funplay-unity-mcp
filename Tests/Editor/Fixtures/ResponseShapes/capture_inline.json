@@ -1,0 +1,1 @@
+{"tool":"capture_game_view","result":{"success":true,"message":"Screenshot captured.","data":{"bytes":1000,"geometry":{"capture_id":"c1","size":[1920,1080]},"fell_back_to_file":false},"_meta":{"funplay_capture":1}}}

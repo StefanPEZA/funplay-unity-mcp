@@ -306,6 +306,8 @@ namespace Funplay.Editor.Tests
             Assert.IsTrue((bool)click["success"], click.ToString());
             Assert.IsTrue((bool)click["data"]["click_event_received"], click.ToString());
             Assert.AreEqual(1, clicks, "Button.clicked runs through the panel's Clickable manipulator");
+            var wire = ResponsePruner.Prune("click_ui_toolkit_element", click.ToString(Newtonsoft.Json.Formatting.None), "compact");
+            Assert.Less(wire.Length, 400, "a plain click costs a few hundred bytes, not the full element description: " + wire);
 
             if (UIToolkitPanels.TryGetScreenMapping(root.panel, out var mapping))
             {
