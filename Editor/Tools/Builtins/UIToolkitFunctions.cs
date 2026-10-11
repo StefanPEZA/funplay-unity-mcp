@@ -611,11 +611,42 @@ namespace Funplay.Editor.Tools.Builtins
                 }
             }
 
-            if (matches.Count == 0) throw new UIToolkitException("ELEMENT_NOT_FOUND", "No element matches; inspect get_visual_tree.");
+            if (matches.Count == 0)
+                throw new UIToolkitException("ELEMENT_NOT_FOUND",
+                    "No element matches. If the UI is still building, wait_for_ui_toolkit(state=exists) first; otherwise pick one of the candidates or inspect get_visual_tree.",
+                    NearMisses(hosts, filter));
             if (matches.Count > 1)
                 throw new UIToolkitException("AMBIGUOUS_ELEMENT", $"{matches.Count} elements match; narrow the selector or pass element_path.",
                     matches.Take(10).Select(m => new { host_id = ObjectIdHelper.GetSerializableId(m.host.gameObject), element_path = m.path, element = Label(m.element) }).ToArray());
             return matches[0];
+        }
+
+        /// <summary>Up to five elements whose name, text or type resembles an unmatched query, so a miss can be corrected without a tree read.</summary>
+        private static object NearMisses(List<Component> hosts, UIToolkitPanels.Selector filter)
+        {
+            bool Like(string value, string wanted) => !string.IsNullOrEmpty(value) && !string.IsNullOrEmpty(wanted) &&
+                (value.IndexOf(wanted, StringComparison.OrdinalIgnoreCase) >= 0 || wanted.IndexOf(value, StringComparison.OrdinalIgnoreCase) >= 0);
+            var found = new List<object>();
+            try
+            {
+                var hostRoots = UIToolkitPanels.HostRoots(hosts);
+                foreach (var host in hosts)
+                {
+                    var root = UIToolkitPanels.GetRoot(host);
+                    if (root == null) continue;
+                    foreach (var entry in UIToolkitPanels.Walk(root, exclude: hostRoots))
+                    {
+                        var element = entry.Value;
+                        var similar = Like(element.name, filter.Name) || Like(UIToolkitPanels.GetText(element), filter.Text) ||
+                            (filter.Name == null && filter.Text == null && filter.Type != null && element.GetType().Name == filter.Type);
+                        if (!similar) continue;
+                        found.Add(new { host_id = ObjectIdHelper.GetSerializableId(host.gameObject), element_path = entry.Key, element = Label(element) });
+                        if (found.Count == 5) return found.ToArray();
+                    }
+                }
+            }
+            catch (Exception) { /* candidates are a courtesy; the miss itself is the answer */ }
+            return found.ToArray();
         }
 
         // ---- Helpers -----------------------------------------------------------------------

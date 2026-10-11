@@ -754,6 +754,11 @@ namespace Funplay.Editor.Tests
 
             var missing = JObject.FromObject(UIToolkitFunctions.GetVisualTree(id, element_path: "99/99"));
             Assert.AreEqual("ELEMENT_NOT_FOUND", (string)missing["code"], missing.ToString());
+            var near = JObject.FromObject(UIToolkitFunctions.ClickElement(id, "#pla", null, null, "left", false));
+            Assert.AreEqual("ELEMENT_NOT_FOUND", (string)near["code"], near.ToString());
+            var candidates = (JArray)near["data"]["details"];
+            Assert.IsTrue(candidates.Any(c => (string)c["element_path"] == playPath), "a near miss names the likely element: " + near);
+            Assert.LessOrEqual(candidates.Count, 5);
             var snapshot = Data(UIToolkitFunctions.GetVisualTree(id, max_depth: 0, snapshot: true));
             Assert.AreEqual("whole_tree", (string)snapshot["snapshot_scope"]);
         }
