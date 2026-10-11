@@ -26,27 +26,14 @@ namespace Funplay.Editor.Tools.Builtins
         private const int HistoryMaxEntries = 50;
         private const string FunplayScriptingNamespace = "Funplay.Editor.Tools.Scripting";
 
-        [Description("Fallback for project-specific operations. Prefer structured tools when available. Compiles a C# snippet with Unity's Roslyn csc first " +
-                     "while preserving the in-memory compilation/execution flow, then runs the compiled assembly on the editor thread. " +
-                     "Two templates are supported:\n" +
-                     "  1) Recommended: implement IFunplayCommand on a class — receives an ExecutionContext (ctx) " +
-                     "with RegisterObjectCreation/RegisterObjectModification/DestroyObject (auto-Undo + tracked) and " +
-                     "Log/LogWarning/LogError (returned in the response).\n" +
-                     "  2) Legacy: any class with `public static string Run()` — return value becomes the response message.\n" +
-                     "Before compiling, the editor's AssetDatabase is refreshed and pending compilation is awaited, " +
-                     "so external file edits are picked up automatically without a separate request_recompile " +
-                     "(pass skip_refresh=true to bypass this for read-only snippets or a live Play Mode session you must not disturb). " +
-                     "In Play Mode, script changes that Unity recompiles only after Play ends don't block the call: it runs against the loaded scripts and the response carries a warning. " +
-                     "When a full-class snippet implements IFunplayCommand, the required Funplay.Editor.Tools.Scripting using is added automatically if omitted. " +
-                     "The snippet is compiled into a SEPARATE assembly, so funplay package internal types (e.g. ToolRegistry) cannot be referenced directly from the snippet -- reach them via reflection. " +
-                     "safety_checks blocks a small set of obviously dangerous patterns " +
-                     "(File.Delete, Process.Start, while(true), Environment.Exit, AssetDatabase.DeleteAsset, etc) " +
-                     "and, when strict filesystem safety is enabled, broad System.IO writes (except to paths that statically resolve under the project's Library/ or Temp/, e.g. \"Library/FunplayMcp/crop.png\") plus obvious absolute/system/traversal paths. " +
-                     "This is a defensive layer, not a full sandbox. If omitted, the MCP Settings window's default safety-check setting is used " +
-                     "(enabled by default); explicitly passing true or false overrides that default. Project namespaces are not auto-injected " +
-                     "by default; add `using` directives in the snippet, or enable the ScriptAssemblies-based convenience toggle in the MCP Settings window. " +
-                     "If a compile fails with CS0104 (a type name ambiguous between two imported namespaces, e.g. System.Random vs UnityEngine.Random) or CS0433 (a type provided by multiple loaded assemblies) the error carries a structured `ambiguous` list; for CS0104 pass preferred_namespaces (comma-separated) to auto-insert a using-alias binding the name to that namespace and recompile once. CS0433 (same fully-qualified type in two assemblies) can't be fixed by an alias — use extern alias / drop a reference / reflection. " +
-                     "Every invocation is appended to a session-scoped history (see get_execute_code_history / replay_execute_code).")]
+        [Description("Fallback for project-specific operations; prefer structured tools. Compiles a C# snippet and runs it on the editor thread. " +
+                     "Write plain statements (no class): `ctx` is in scope (ctx.Log/LogWarning/LogError, RegisterObjectCreation/RegisterObjectModification/DestroyObject for Undo), " +
+                     "`return expr;` sets returnValue, and System, Linq, UnityEngine, UnityEditor, UIElements and Reflection usings are included. " +
+                     "A full class implementing IFunplayCommand (Execute(ExecutionContext ctx)) or with `public static string Run()` also works. " +
+                     "AssetDatabase is refreshed first (skip_refresh=true to skip, e.g. in a live Play Mode session). " +
+                     "The snippet is a separate assembly: reach package internals by reflection. " +
+                     "safety_checks blocks obviously dangerous patterns (File.Delete, Process.Start, while(true), AssetDatabase.DeleteAsset ...) and, when strict, System.IO writes outside Library/ or Temp/; it is not a sandbox. " +
+                     "CS0104 (ambiguous name): pass preferred_namespaces. Every call is kept in get_execute_code_history / replay_execute_code.")]
         [SceneEditingTool]
         public static async Task<object> ExecuteCode(
             [ToolParam("C# code to execute. See description for IFunplayCommand vs legacy Run() templates.")] string code,
@@ -384,7 +371,7 @@ namespace Funplay.Editor.Tools.Builtins
                     compiler = compilation.CompilerName,
                     errors = compilation.Errors,
                     compiler_attempts = compilation.Attempts,
-                    hint = "Roslyn is tried first for modern C# syntax while preserving execute_code's in-memory compilation/execution flow."
+                    fix = FixFor(compilation.Errors)
                 });
             }
 
@@ -523,6 +510,19 @@ namespace Funplay.Editor.Tools.Builtins
             }
 
             return sb.ToString();
+        }
+
+        /// <summary>A one-line correction for the compile errors agents hit most; null when there is none.</summary>
+        internal static string FixFor(IEnumerable<ScriptCompilationError> errors)
+        {
+            var list = errors?.ToList() ?? new List<ScriptCompilationError>();
+            if (list.Any(e => e.code == "CS0535" || e.code == "CS0738"))
+                return "IFunplayCommand needs `public void Execute(ExecutionContext ctx)`. Or drop the class and write statements: `ctx` is available and `return expr;` sets the return value.";
+            if (list.Any(e => e.code == "CS1061" && e.text != null && (e.text.Contains("'Q'") || e.text.Contains("'Query'"))))
+                return "Q/Query are VisualElement extension methods: add `using UnityEngine.UIElements;`.";
+            if (list.Any(e => e.code == "CS0619"))
+                return "That API is obsolete in this Unity version; the error text names its replacement.";
+            return null;
         }
 
         private static string BuildAliasRetryCode(string aliasBlock, string code)
@@ -688,12 +688,9 @@ namespace Funplay.Editor.Tools.Builtins
             actualClassName = className;
             var projectUsings = injectProjectNamespaces ? GetReachableProjectNamespaceUsings() : string.Empty;
 
-            if (code.Contains("class "))
+            if (SnippetSyntax.TryFindTypeDeclaration(code, out var declared))
             {
-                var match = Regex.Match(code, @"class\s+(\w+)");
-                if (match.Success)
-                    actualClassName = match.Groups[1].Value;
-
+                actualClassName = declared;
                 var requiredUsings = GetRequiredSnippetUsings(code);
                 return PrependMissingUsings(code, requiredUsings + projectUsings);
             }
@@ -701,26 +698,34 @@ namespace Funplay.Editor.Tools.Builtins
             return WrapCode(code, className, projectUsings);
         }
 
+        // A body (statements, no type): runs as an IFunplayCommand so `ctx` is available and `return expr;` becomes
+        // ctx.ReturnValue. UIElements/Reflection are added unless the snippet names the uGUI namespace, whose
+        // Button/Image/Slider/Toggle would otherwise be ambiguous. The context type is fully qualified because a
+        // user's `using System.Threading;` makes the short name ambiguous.
         private static string WrapCode(string code, string className, string projectUsings)
         {
+            var body = SnippetSyntax.SplitLeadingUsings(code, out var userUsings);
+            var uiElements = code.Contains("UnityEngine.UI") ? string.Empty : "using UnityEngine.UIElements;\n";
             return $@"using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using UnityEngine;
 using UnityEngine.SceneManagement;
-using UnityEditor;
+{uiElements}using UnityEditor;
 using UnityEditor.SceneManagement;
-using {FunplayScriptingNamespace};
-{projectUsings}
-public static class {className}
+{userUsings}{projectUsings}
+public sealed class {className} : {FunplayScriptingNamespace}.IFunplayCommand
 {{
-    public static string Run()
+    public void Execute({FunplayScriptingNamespace}.ExecutionContext ctx) {{ ctx.ReturnValue = Body(ctx); }}
+
+    private object Body({FunplayScriptingNamespace}.ExecutionContext ctx)
     {{
-        {code}
-        return ""OK"";
+        {body}
+        return null;
     }}
 }}";
         }

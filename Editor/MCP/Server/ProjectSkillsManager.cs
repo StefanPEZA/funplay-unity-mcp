@@ -63,7 +63,7 @@ namespace Funplay.Editor.MCP.Server
                     "If Tool Exposure has been customized and a named tool is unavailable, adapt to the exposed tool list and report which expected tool is missing.",
                     "Never edit Unity serialized files (`.unity`, `.prefab`, `.asset`) with shell text tools or patches. Use Unity MCP or Editor APIs for scenes, prefabs, and ScriptableObject assets; shell tools may only inspect or locate these files.",
                     "Choose the correct edit surface: source files with normal repo tools, scene objects through Unity APIs and saved scenes, prefab assets through `PrefabUtility.LoadPrefabContents` and `SaveAsPrefabAsset`.",
-                    "For `execute_code`, prefer the IFunplayCommand template over the legacy `static string Run()`: include `using Funplay.Editor.Tools.Scripting;`, implement `IFunplayCommand`, and use `ctx.RegisterObjectCreation`, `ctx.RegisterObjectModification`, `ctx.DestroyObject` so created/modified objects participate in editor Undo automatically. Use `ctx.Log` / `ctx.LogWarning` / `ctx.LogError` for traceable output that comes back in the response (without polluting the Unity console).",
+                    "For `execute_code`, write plain statements (no class; `ctx` is in scope and `return expr;` sets the return value) rather than the legacy `static string Run()`, and use `ctx.RegisterObjectCreation`, `ctx.RegisterObjectModification`, `ctx.DestroyObject` so created/modified objects participate in editor Undo automatically. Use `ctx.Log` / `ctx.LogWarning` / `ctx.LogError` for traceable output that comes back in the response (without polluting the Unity console).",
                     "Batch related Unity-side changes in one guarded `execute_code` snippet. Null-guard every lookup, return explicit missing path/object/component messages, and include concise before/after values.",
                     "`execute_code` refreshes by default. Use skip_refresh only after independently verifying that the intended assemblies are ready, for example when initiating a test that must not be interrupted by another refresh.",
                     "After source/resource edits use `prepare_editor` with the intended edit/play target and a unique request_key; retain data.task.task_id and use `get_task` with bounded waiting and the last revision. Require operation.status=ready, current_editor.ready=true and the expected current mode before validation.",
@@ -1286,7 +1286,7 @@ $@"{ManagedMarker}
 ## Agent workflow rules
 
 - Prefer project-local Funplay skills: `.codex/skills/` for Codex, `.opencode/skills/` for OpenCode, `.dsh/skills/` for DeepSeek Harness, `.agents/skills/` for Antigravity.
-- Prefer structured MCP tools; use `execute_code` for project-specific gaps. For new snippets, include `using Funplay.Editor.Tools.Scripting;`, implement `IFunplayCommand`, and use `ctx.RegisterObjectCreation` / `RegisterObjectModification` / `DestroyObject` so changes participate in Undo automatically.
+- Prefer structured MCP tools; use `execute_code` for project-specific gaps. For new snippets write plain statements, no class: `ctx` (ExecutionContext) is in scope, `return expr;` sets the return value, and System, Linq, UnityEngine, UnityEditor, UIElements and Reflection usings are included. Use `ctx.RegisterObjectCreation` / `RegisterObjectModification` / `DestroyObject` so changes participate in Undo automatically.
 - Confirm the Unity project root, active scene, and real object/prefab/asset path before edits. Treat user-provided object names as hints, not paths.
 - Inspect Unity objects through MCP before changing user-named scene or prefab targets. Carry the returned `instanceId` into follow-up calls (`find_method=by_id`) instead of re-resolving by name.
 - Tool returns are structured JSON (`{{success, message, data}}` / `{{success: false, code, error, data}}`). Branch on `code`, not free-form text.
@@ -1334,7 +1334,7 @@ $@"{ManagedMarker}
 ## Preferred workflow
 
 - Use Funplay MCP tools for Unity editor state and automation.
-- Prefer structured MCP operations; use `execute_code` only for project-specific orchestration not covered by them. For new snippets, include `using Funplay.Editor.Tools.Scripting;`, implement `IFunplayCommand`, and use `ctx.RegisterObjectCreation` / `RegisterObjectModification` / `DestroyObject` so changes participate in Undo and `ctx.Log` for traceable output.
+- Prefer structured MCP operations; use `execute_code` only for project-specific orchestration not covered by them. For new snippets write plain statements, no class: `ctx` (ExecutionContext) is in scope, `return expr;` sets the return value, and common usings (incl. UIElements, Reflection) are included. Use `ctx.RegisterObjectCreation` / `RegisterObjectModification` / `DestroyObject` so changes participate in Undo and `ctx.Log` for traceable output.
 - Confirm the Unity project root, active scene, and real object/prefab/asset path before edits. Treat user-provided object names as hints, not paths.
 - Inspect Unity objects through MCP before changing user-named scene or prefab targets. Carry the returned `instanceId` into follow-up calls (`find_method=by_id`) instead of re-resolving by name.
 - Tool returns are structured JSON (`{{success, message, data}}` / `{{success: false, code, error, data}}`). Branch on `code`, not free-form text.
@@ -1926,7 +1926,7 @@ NODE
 
 ## Recommended `execute_code` Template
 
-For non-trivial snippets, prefer `IFunplayCommand` over the legacy `public static string Run()` template. `execute_code` auto-adds `using Funplay.Editor.Tools.Scripting;` when `IFunplayCommand` is used, but include it explicitly in generated snippets for readability:
+Prefer a plain statement body, which saves the class boilerplate: `var go = GameObject.Find(""Main Camera""); ctx.Log(go.name); return go.transform.position;` (`ctx` is in scope, `return expr;` sets the return value). For a full class, implement `IFunplayCommand` as below; a `using System.Threading;` makes the short name `ExecutionContext` ambiguous there, so write `Funplay.Editor.Tools.Scripting.ExecutionContext`.
 
 ```csharp
 using Funplay.Editor.Tools.Scripting;
