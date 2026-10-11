@@ -76,7 +76,7 @@ Or add the scoped registry manually in `Packages/manifest.json`:
     }
   ],
   "dependencies": {
-    "com.gamebooom.unity.mcp": "0.9.0"
+    "com.gamebooom.unity.mcp": "0.9.1"
   }
 }
 ```
@@ -444,7 +444,7 @@ Names and argument names must match `[a-z][a-z0-9_-]{0,63}`. Required, unknown, 
 
 ## Built-in Tools
 
-Version 0.9.0 includes **203 tool functions** across 44 modules; `core` exposes 59 core tools plus the detected UI pack (uGUI 4, UI Toolkit 19).
+Version 0.9.1 includes **203 tool functions** across 44 modules; `core` exposes 59 core tools plus the detected UI pack (uGUI 4, UI Toolkit 19).
 
 | Category | Tools |
 |----------|-------|

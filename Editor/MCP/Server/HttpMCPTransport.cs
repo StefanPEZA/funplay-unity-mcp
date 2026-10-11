@@ -336,6 +336,15 @@ namespace Funplay.Editor.MCP.Server
                     if (httpRequest == null)
                         return;
 
+                    // The server has no auth. Answer OAuth discovery/registration paths with a plain 404 so
+                    // clients (e.g. Claude Code's SDK) conclude "no OAuth" instead of parsing a JSON-RPC reply
+                    // as a client registration ("missing redirect_uris/client_id").
+                    if (IsOAuthPath(httpRequest.Path))
+                    {
+                        await SendRawResponseAsync(stream, (int)HttpStatusCode.NotFound, "Not Found", "text/plain", string.Empty, ct);
+                        return;
+                    }
+
                     if (httpRequest.Method == "OPTIONS")
                     {
                         await SendOptionsResponseAsync(stream, ct);
@@ -528,6 +537,7 @@ namespace Funplay.Editor.MCP.Server
             return new HttpRequestData
             {
                 Method = requestLineParts[0],
+                Path = requestLineParts.Length > 1 ? requestLineParts[1] : "/",
                 AcceptsEventStream = acceptsEventStream,
                 Body = Encoding.UTF8.GetString(bodyBytes, 0, copied)
             };
@@ -657,6 +667,19 @@ namespace Funplay.Editor.MCP.Server
                    error == SocketError.Interrupted;
         }
 
+        private static bool IsOAuthPath(string path)
+        {
+            if (string.IsNullOrEmpty(path))
+                return false;
+            var q = path.IndexOf('?');
+            if (q >= 0)
+                path = path.Substring(0, q);
+            return path.StartsWith("/.well-known/", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(path, "/register", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(path, "/authorize", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(path, "/token", StringComparison.OrdinalIgnoreCase);
+        }
+
         private Task SendOptionsResponseAsync(NetworkStream stream, CancellationToken ct)
         {
             return SendRawResponseAsync(stream, (int)HttpStatusCode.NoContent, "No Content", "text/plain", string.Empty, ct);
@@ -755,6 +778,7 @@ namespace Funplay.Editor.MCP.Server
         private sealed class HttpRequestData
         {
             public string Method { get; set; }
+            public string Path { get; set; }
             public bool AcceptsEventStream { get; set; }
             public string Body { get; set; }
         }

@@ -140,13 +140,41 @@ namespace Funplay.Editor.Tests
             return port;
         }
 
-        private static string Post(int port, string body)
+        [UnityTest]
+        public IEnumerator OAuthDiscoveryPathsAnswer404InsteadOfAJsonRpcReply()
+        {
+            var port = GetFreePort();
+            var transport = new HttpMCPTransport(port, "Funplay MCP Server - Test", "oauth-404");
+            var called = false;
+            transport.OnRequestReceived += (request, send) => { called = true; send(Reply("completed")); };
+            try
+            {
+                var start = transport.StartAsync();
+                while (!start.IsCompleted) yield return null;
+                Assert.IsTrue(start.Result);
+
+                var body = "{\"redirect_uris\":[\"http://localhost/cb\"]}";
+                foreach (var path in new[] { "/register", "/token", "/.well-known/oauth-authorization-server" })
+                {
+                    var read = Task.Run(() => Post(port, body, path));
+                    while (!read.IsCompleted) yield return null;
+                    StringAssert.StartsWith("HTTP/1.1 404", read.Result, path);
+                }
+                Assert.IsFalse(called, "OAuth paths never reach the JSON-RPC handler");
+            }
+            finally
+            {
+                transport.Dispose();
+            }
+        }
+
+        private static string Post(int port, string body, string path = "/")
         {
             using (var client = new TcpClient("127.0.0.1", port))
             {
                 var stream = client.GetStream();
                 var bytes = Encoding.UTF8.GetBytes(body);
-                var header = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nContent-Length: " + bytes.Length + "\r\n\r\n";
+                var header = "POST " + path + " HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nContent-Length: " + bytes.Length + "\r\n\r\n";
                 var headerBytes = Encoding.ASCII.GetBytes(header);
                 stream.Write(headerBytes, 0, headerBytes.Length);
                 stream.Write(bytes, 0, bytes.Length);

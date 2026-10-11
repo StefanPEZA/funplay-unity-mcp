@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.9.1] - 2026-10-11
+
+### Fixed
+
+- OAuth discovery and registration paths (`/.well-known/*`, `/register`, `/authorize`, `/token`) now return 404 instead of a JSON-RPC reply. Claude Code's SDK parsed that reply as a client registration and failed with "missing redirect_uris/client_id", leaving the server connected with no tools.
+
 ## [0.9.0] - 2026-10-11
 
 ### Changed
