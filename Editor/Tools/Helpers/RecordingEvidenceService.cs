@@ -55,6 +55,35 @@ namespace Funplay.Editor.Tools.Helpers
             EditorApplication.quitting += () => Finish("interrupted", "editor_quit");
             Save();
         }
+        /// <summary>
+        /// The job as a reply. Compact: frames carry only index, times and path; the size and geometry shared by
+        /// every frame appear once, requested times stay in <c>timestamps</c>, and the fixed policy text is dropped.
+        /// </summary>
+        internal static object View(RecordingFramesJob job, string detail)
+        {
+            if (job == null || !ResponseDetail.IsCompact(detail)) return job;
+            var json = new JObject
+            {
+                ["job_id"] = job.job_id, ["recording_id"] = job.recording_id, ["status"] = job.status,
+                ["complete"] = job.complete, ["decoded_frames"] = job.decoded_frames,
+                ["timestamps"] = new JArray(job.timestamps ?? new double[0])
+            };
+            if (!string.IsNullOrEmpty(job.error)) json["error"] = job.error;
+            if (job.frames.Count > 0)
+            {
+                json["frame_size"] = new JArray(job.frames[0].width, job.frames[0].height);
+                var geometry = job.frames[0].geometry?.ToCompact();
+                geometry?.Remove("capture_id");
+                if (geometry != null) json["geometry"] = geometry;
+            }
+            json["frames"] = new JArray(job.frames.Select(CompactFrame));
+            return json;
+        }
+        private static JObject CompactFrame(RecordingFrame frame) => new JObject
+        {
+            ["index"] = frame.index, ["actual_seconds"] = frame.actual_seconds,
+            ["delta_seconds"] = frame.delta_seconds, ["path"] = frame.path
+        };
         internal static RecordingFramesJob Find(string id) => jobs.FirstOrDefault(x => x.job_id == id);
         internal static double[] ParseTimes(string json, double lastFrame)
         {
@@ -66,7 +95,7 @@ namespace Funplay.Editor.Tools.Helpers
                 throw new ArgumentException("Timestamps must be finite and within 0..last_frame_seconds. Markers after the final frame have no recorded visual evidence.");
             return times.Distinct().OrderBy(x => x).ToArray();
         }
-        internal static object Start(string recordingId, string timestamps)
+        internal static object Start(string recordingId, string timestamps, string detail = null)
         {
             if (active != null) return Response.Error("FRAME_EXTRACTION_ACTIVE", active);
             try
@@ -90,11 +119,11 @@ namespace Funplay.Editor.Tools.Helpers
                 source = recording; jobs.Add(active); while (jobs.Count > 8) jobs.RemoveAt(0);
                 nextRequest = 0; lastTimestamp = -1; deadline = EditorApplication.timeSinceStartup + 120;
                 Save(); EditorApplication.update += Tick;
-                return Response.Success("Frame extraction queued; poll until complete. No scene/Play Mode changes.", active);
+                return Response.Success("Frame extraction queued; poll until complete. No scene/Play Mode changes.", View(active, detail));
             }
             catch (Exception ex) { return Response.Error("INVALID_FRAME_EXTRACTION", new { detail = ex.GetBaseException().Message }); }
         }
-        internal static object Control(string id, string action)
+        internal static object Control(string id, string action, string detail = null)
         {
             var job = Find(id); if (job == null) return Response.Error("FRAME_JOB_NOT_FOUND");
             if (action == "cancel" && active == job) Finish("cancelled", null);
@@ -107,18 +136,21 @@ namespace Funplay.Editor.Tools.Helpers
                 job.status = "cleaned"; job.complete = false; Save();
             }
             else if (action != "status" && action != "cancel") return Response.Error("INVALID_FRAME_ACTION");
-            return Response.Success("Frame extraction status: " + job.status + ".", job);
+            return Response.Success("Frame extraction status: " + job.status + ".", View(job, detail));
         }
-        internal static object ReadFrame(string id, int index, bool inline)
+        internal static object ReadFrame(string id, int index, bool inline, string detail = null)
         {
             var job = Find(id); var frame = job?.frames.FirstOrDefault(x => x.index == index);
             if (frame == null || frame.path != FramePath(job, index) || !File.Exists(frame.path)) return Response.Error("FRAME_NOT_AVAILABLE");
             bool inlineFallback = inline && new FileInfo(frame.path).Length > ScreenshotFunctions.MaxInlineScreenshotBytes;
+            var compact = ResponseDetail.IsCompact(detail);
             var bytes = inline && !inlineFallback ? File.ReadAllBytes(frame.path) : null;
             return Response.Success("Recorded frame; historical evidence, not current clickable geometry.", new
             {
-                job_id = id, recording_id = job.recording_id, frame,
-                geometry = frame.geometry,
+                job_id = id, recording_id = job.recording_id,
+                frame = compact ? CompactFrame(frame) : (object)frame,
+                frame_size = compact ? new[] { frame.width, frame.height } : null,
+                geometry = compact ? frame.geometry?.ToCompact() : (object)frame.geometry,
                 inline_fallback = inlineFallback,
                 inline_image = bytes != null ? "data:image/png;base64," + Convert.ToBase64String(bytes) : null
             }, new { funplay_capture = 1 });

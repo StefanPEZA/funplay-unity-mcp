@@ -26,9 +26,10 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Element path relative to one host: child indices or '/'-separated selectors over direct children", Required = false)] string element_path = null,
             [ToolParam("exists, displayed, hidden, enabled, has_class:<c>, lacks_class:<c>, text:<t> or settled", Required = false)] string state = "displayed",
             [ToolParam("Give up after this many seconds, 0.1..10", Required = false)] float timeout_seconds = 5f,
-            [ToolParam("settled only: consecutive unchanged frames, 2..60", Required = false)] int settle_frames = 3)
+            [ToolParam("settled only: consecutive unchanged frames, 2..60", Required = false)] int settle_frames = 3,
+            [ToolParam("compact (default) or full: full echoes the complete element description", Required = false)] string detail = null)
         {
-            return WaitForElementAsync(target, selector, text, element_path, state, timeout_seconds, settle_frames);
+            return WaitForElementAsync(target, selector, text, element_path, state, timeout_seconds, settle_frames, detail);
         }
 
         /// <summary>A parsed wait state: kind plus the argument after ':' (class name or text).</summary>
@@ -145,7 +146,7 @@ namespace Funplay.Editor.Tools.Builtins
             return true;
         }
 
-        internal static Task<object> WaitForElementAsync(string target, string selector, string text, string elementPath, string state, float timeoutSeconds, int settleFrames)
+        internal static Task<object> WaitForElementAsync(string target, string selector, string text, string elementPath, string state, float timeoutSeconds, int settleFrames, string detail = null)
         {
             WaitState parsed;
             try
@@ -162,7 +163,7 @@ namespace Funplay.Editor.Tools.Builtins
             catch (ArgumentException ex) { return Task.FromResult(Response.Error("INVALID_ARGUMENT", new { detail = ex.Message })); }
 
             var waiter = new ElementWaiter(target, selector, text, elementPath, parsed,
-                Mathf.Clamp(timeoutSeconds, 0.1f, MaxWaitSeconds), Mathf.Clamp(settleFrames, 2, 60));
+                Mathf.Clamp(timeoutSeconds, 0.1f, MaxWaitSeconds), Mathf.Clamp(settleFrames, 2, 60), ResponseDetail.IsCompact(detail));
             return waiter.Run();
         }
 
@@ -194,14 +195,16 @@ namespace Funplay.Editor.Tools.Builtins
             private Component _host;
             private string _path;
             private VisualElement _element;
+            private readonly bool _compact;
 
             // Transition hint: transitions started after the wait began and not yet ended.
             private readonly List<VisualElement> _watched = new List<VisualElement>();
             private readonly HashSet<(VisualElement, string)> _running = new HashSet<(VisualElement, string)>();
             private int _transitionsObserved;
 
-            public ElementWaiter(string target, string selector, string text, string elementPath, WaitState state, float timeout, int settleFrames)
+            public ElementWaiter(string target, string selector, string text, string elementPath, WaitState state, float timeout, int settleFrames, bool compact = false)
             {
+                _compact = compact;
                 _target = target; _selector = selector; _text = text; _elementPath = elementPath;
                 _state = state; _timeout = timeout; _settleFrames = settleFrames;
             }
@@ -389,7 +392,7 @@ namespace Funplay.Editor.Tools.Builtins
                             frames,
                             frame_source = PlayerTicking ? "player" : "editor",
                             host_id = _host != null ? ObjectIdHelper.GetSerializableId(_host.gameObject) : null,
-                            element,
+                            element = _compact && _element != null ? UIToolkitFunctions.EchoElement(_element, _path) : element,
                             transitions_observed = _state.Kind == "settled" ? _transitionsObserved : (int?)null,
                             unbalanced_transitions = _state.Kind == "settled" && _running.Count > 0 ? _running.Count : (int?)null
                         }));

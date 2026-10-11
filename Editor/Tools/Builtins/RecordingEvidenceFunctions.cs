@@ -13,16 +13,18 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Finalized recording ID for start", Required = false)] string recording_id = null,
             [ToolParam("JSON timestamps, e.g. [0,1.5,3]", Required = false)] string timestamps = null,
             [ToolParam("Extraction job ID for status/cancel/cleanup", Required = false)] string job_id = null,
-            [ToolParam("MCP completion wait, 0..30 seconds", Required = false)] int wait_seconds = 2)
+            [ToolParam("MCP completion wait, 0..30 seconds", Required = false)] int wait_seconds = 2,
+            [ToolParam("compact (default) or full: full returns per-frame geometry and requested_seconds", Required = false)] string detail = null)
             => TaskStatusService.ValidateWait(wait_seconds) ?? TaskStatusService.Attach("recording_frames",
-                action == "start" ? RecordingEvidenceService.Start(recording_id, timestamps) : RecordingEvidenceService.Control(job_id, action));
+                action == "start" ? RecordingEvidenceService.Start(recording_id, timestamps, detail) : RecordingEvidenceService.Control(job_id, action, detail));
 
         [Description("Return one extracted video frame as a native MCP image plus timestamp/geometry metadata, or path-only. Historical frames are not valid live click captures. Index is in the extraction job's sorted timestamp list.")]
         [ReadOnlyTool]
         public static object GetRecordingFrame(
             [ToolParam("Extraction job ID")] string job_id,
             [ToolParam("Zero-based frame index")] int index,
-            [ToolParam("Include native image; false returns file receipt only", Required = false)] bool inline = true)
-            => RecordingEvidenceService.ReadFrame(job_id, index, inline);
+            [ToolParam("Include native image; false returns file receipt only", Required = false)] bool inline = true,
+            [ToolParam("compact (default) or full: full returns the complete frame geometry", Required = false)] string detail = null)
+            => RecordingEvidenceService.ReadFrame(job_id, index, inline, detail);
     }
 }

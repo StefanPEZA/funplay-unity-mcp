@@ -412,14 +412,15 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Exact element text, case-insensitive", Required = false)] string text = null,
             [ToolParam("Element path relative to one host: child indices from get_visual_tree (shift when the tree changes) or '/'-separated selectors over direct children, e.g. '#menu/Button:nth-of-type(2)'", Required = false)] string element_path = null,
             [ToolParam("Horizontal scroll in panel pixels; 0 with delta_y 0 scrolls the element into view", Required = false)] float delta_x = 0,
-            [ToolParam("Vertical scroll in panel pixels, positive scrolls down", Required = false)] float delta_y = 0)
+            [ToolParam("Vertical scroll in panel pixels, positive scrolls down", Required = false)] float delta_y = 0,
+            [ToolParam("compact (default) or full: full echoes the complete element description", Required = false)] string detail = null)
         {
-            return ScrollElement(target, selector, text, element_path, delta_x, delta_y);
+            return ScrollElement(target, selector, text, element_path, delta_x, delta_y, detail);
         }
 
         // ---- Shared implementation (also used by tests in Edit Mode) -------------------------
 
-        internal static object ScrollElement(string target, string selector, string text, string elementPath, float deltaX, float deltaY)
+        internal static object ScrollElement(string target, string selector, string text, string elementPath, float deltaX, float deltaY, string detail = null)
         {
             try
             {
@@ -463,7 +464,8 @@ namespace Funplay.Editor.Tools.Builtins
                 return Response.Success(moved ? $"Scrolled {Label(scrolled[0].Key)}." : $"{Label(scrolled[0].Key)} did not move (already in view or at its limit).", new
                 {
                     host_id = ObjectIdHelper.GetSerializableId(matchHost.gameObject),
-                    element = UIToolkitPanels.DescribeElement(element, matchPath, mapping, renderHeight, false),
+                    element = ResponseDetail.IsCompact(detail) ? EchoElement(element, matchPath)
+                        : UIToolkitPanels.DescribeElement(element, matchPath, mapping, renderHeight, false),
                     scroll_views = scrolled.Select(s => new
                     {
                         scroll_view = Label(s.Key),

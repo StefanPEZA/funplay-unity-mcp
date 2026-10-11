@@ -132,5 +132,38 @@ namespace Funplay.Editor.Tests
             }
             finally { Object.DestroyImmediate(texture); }
         }
+
+        private static RecordingFramesJob FramesJob(int count)
+        {
+            var job = new RecordingFramesJob { job_id = "j1", recording_id = "r1", status = "completed", complete = true, timestamps = new[] { 0.0, 1.0, 2.0, 3.0, 4.0, 5.0 } };
+            for (var i = 0; i < count; i++)
+                job.frames.Add(new RecordingFrame
+                {
+                    index = i, requested_seconds = i, actual_seconds = i + 0.01, delta_seconds = 0.01, path = "f" + i + ".png",
+                    width = 1920, height = 1080, geometry = FullView()
+                });
+            return job;
+        }
+
+        [Test]
+        public void RecordingFramesShareOneGeometryAndSizeInCompactDetail()
+        {
+            var job = FramesJob(6);
+            var compact = JObject.FromObject(RecordingEvidenceService.View(job, "compact"));
+            var frame = (JObject)compact["frames"][0];
+            Assert.AreEqual(new[] { "index", "actual_seconds", "delta_seconds", "path" }, frame.Properties().Select(p => p.Name).ToArray());
+            Assert.AreEqual(new[] { 1920, 1080 }, compact["frame_size"].Select(t => (int)t).ToArray());
+            Assert.IsNull(compact["selection_policy"]);
+            Assert.AreEqual("j1", (string)compact["job_id"]);
+            Assert.AreEqual(6, ((JArray)compact["timestamps"]).Count, "requested times stay in timestamps");
+            Assert.Less(compact.ToString(Newtonsoft.Json.Formatting.None).Length, 1500);
+        }
+
+        [Test]
+        public void RecordingFramesFullDetailIsTheJobItself()
+        {
+            var job = FramesJob(2);
+            Assert.AreSame(job, RecordingEvidenceService.View(job, "full"));
+        }
     }
 }
