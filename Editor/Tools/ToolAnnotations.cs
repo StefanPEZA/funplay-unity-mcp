@@ -29,7 +29,7 @@ namespace Funplay.Editor.Tools
         internal static readonly HashSet<string> NonDestructive = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "add_component", "add_component_to_many", "add_layer", "add_tag", "assign_animator", "assign_material",
-            "cancel_editor_operation", "cancel_task", "cancel_test_run", "cancel_ui_audit", "capture_editor_window", "capture_game_view",
+            "cancel_editor_operation", "cancel_task", "cancel_test_run", "cancel_ui_audit", "capture_editor_window", "capture_game_view", "compose_contact_sheet",
             "capture_multiview", "capture_scene_view", "capture_simulator_view", "capture_ui_toolkit_element", "click_ui_toolkit_element",
             "close_prefab_stage", "configure_ui_defaults", "configure_ui_toolkit_panel", "copy_asset", "copy_component",
             "create_animation_clip", "create_animator_controller", "create_button", "create_canvas", "create_game_object",
@@ -47,7 +47,7 @@ namespace Funplay.Editor.Tools
             "set_scriptable_object_properties", "set_selection", "set_tag_and_layer", "set_time_scale", "set_transform",
             "show_dialog", "simulate_key_combo", "simulate_key_press", "simulate_mouse_click", "simulate_mouse_drag",
             "simulate_ui_scroll", "start_ui_preview_session", "wait_for_compilation", "set_ui_toolkit_value",
-            "pointer_ui_toolkit", "navigate_ui_toolkit", "style_ui_toolkit"
+            "pointer_ui_toolkit", "navigate_ui_toolkit", "style_ui_toolkit", "run_ui_steps"
         };
 
         /// <summary>Write tools where repeating the same call has no additional effect.</summary>

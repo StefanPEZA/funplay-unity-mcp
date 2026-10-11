@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Text.RegularExpressions;
 using Funplay.Editor.Tools.Helpers;
 using UnityEngine;
 
@@ -16,6 +17,7 @@ namespace Funplay.Editor.Services.UnityLogs
         private readonly HashSet<string> _schedulerMessages = new HashSet<string>();
         private readonly object _lock = new object();
         private bool _isListening;
+        private int _sequence;
 
         public void StartListening()
         {
@@ -36,17 +38,21 @@ namespace Funplay.Editor.Services.UnityLogs
         }
 
         public string GetRecentLogs(string logType = "all", int count = 30, int sinceSeconds = 0,
-            string filterText = null, bool groupDuplicates = false, bool includeStackTrace = false)
+            string filterText = null, bool groupDuplicates = false, bool includeStackTrace = false, int afterCursor = -1)
         {
             count = Mathf.Clamp(count, 1, 200);
             var filter = (logType ?? "all").ToLowerInvariant();
             var cutoff = sinceSeconds > 0 ? DateTime.Now.AddSeconds(-sinceSeconds) : (DateTime?)null;
 
             List<LogEntry> snapshot;
+            int cursor;
             lock (_lock)
             {
                 snapshot = new List<LogEntry>(_logs);
+                cursor = _sequence;
             }
+            // A cursor beyond the newest entry predates a domain reload (the cache starts over): read everything.
+            if (afterCursor > cursor) afterCursor = -1;
 
             if (snapshot.Count == 0)
                 return null;
@@ -62,12 +68,14 @@ namespace Funplay.Editor.Services.UnityLogs
                 if (!MatchesFilter(entry.Type, filter))
                     continue;
 
-                var firstLine = FirstLine(entry.Message);
-                if (!MatchesTextFilter(firstLine, filterText))
+                if (afterCursor >= 0 && entry.Sequence <= afterCursor)
+                    continue;
+
+                if (!MatchesTextFilter(entry.Message, filterText))
                     continue;
 
                 var stackSuffix = includeStackTrace ? FormatStackTrace(entry.StackTrace) : string.Empty;
-                lines.Add($"[{ToLabel(entry.Type)}] {TruncateLine(firstLine)}{stackSuffix}");
+                lines.Add($"[{ToLabel(entry.Type)}] {FormatMessage(entry.Message)}{stackSuffix}");
             }
 
             if (lines.Count == 0)
@@ -86,7 +94,7 @@ namespace Funplay.Editor.Services.UnityLogs
             var groupSuffix = groupDuplicates && uniqueCount < lines.Count
                 ? $", {uniqueCount} unique"
                 : string.Empty;
-            return $"Console logs ({lines.Count} entries{groupSuffix}, filter: {filter}, source: cache{timeSuffix}{textSuffix}):\n{sb}{SchedulerSummary(filter)}";
+            return $"Console logs ({lines.Count} entries{groupSuffix}, filter: {filter}, source: cache{timeSuffix}{textSuffix}, cursor: {cursor}):\n{sb}{SchedulerSummary(filter)}";
         }
 
         /// <summary>Collapsed UI Toolkit scheduler exceptions (counted, not cached one by one).</summary>
@@ -113,6 +121,40 @@ namespace Funplay.Editor.Services.UnityLogs
         // A single log line can be enormous (e.g. an entire save-file JSON dumped to the console).
         // Cap emitted lines so one such entry cannot blow up the whole tool response.
         private const int MaxEmittedLineLength = 300;
+
+        // A whole message (often several lines) is kept: a one-line cut hides the part that explains the error.
+        private const int MaxMessageLength = 2000;
+        private static readonly Regex StackFrame = new Regex(@"^(\s+at\s|[A-Za-z_][\w.+`<>]*:[\w.<>`]+ \(.*\)\s*$|.*\(at .+:\d+\)\s*$)", RegexOptions.Compiled);
+
+        /// <summary>The whole message, capped, with continuation lines indented so entries stay distinguishable.</summary>
+        internal static string FormatMessage(string message)
+        {
+            if (string.IsNullOrEmpty(message))
+                return string.Empty;
+            var text = message.Replace("\r\n", "\n").Replace('\r', '\n').TrimEnd('\n');
+            if (text.Length > MaxMessageLength)
+                text = text.Substring(0, MaxMessageLength) + $"... (+{text.Length - MaxMessageLength} chars)";
+            return text.Replace("\n", "\n  ");
+        }
+
+        /// <summary>
+        /// Splits the "message\nstack" text the Editor console stores: the stack begins at the first line shaped like a
+        /// frame ("Type:Method () (at File.cs:12)" or "   at ..."); everything before it is the message.
+        /// </summary>
+        internal static void SplitMessageAndStack(string text, out string message, out string stack)
+        {
+            message = text ?? string.Empty;
+            stack = null;
+            var lines = message.Replace("\r\n", "\n").Split('\n');
+            for (var i = 1; i < lines.Length; i++)
+            {
+                if (!StackFrame.IsMatch(lines[i]))
+                    continue;
+                message = string.Join("\n", lines, 0, i);
+                stack = string.Join("\n", lines, i, lines.Length - i);
+                return;
+            }
+        }
 
         internal static string TruncateLine(string line)
         {
@@ -216,7 +258,8 @@ namespace Funplay.Editor.Services.UnityLogs
                     Message = message,
                     StackTrace = stackTrace,
                     Type = type,
-                    Timestamp = DateTime.Now
+                    Timestamp = DateTime.Now,
+                    Sequence = ++_sequence
                 });
 
                 while (_logs.Count > MaxLogs)
@@ -270,6 +313,7 @@ namespace Funplay.Editor.Services.UnityLogs
             public string StackTrace { get; set; }
             public LogType Type { get; set; }
             public DateTime Timestamp { get; set; }
+            public int Sequence { get; set; }
         }
     }
 }

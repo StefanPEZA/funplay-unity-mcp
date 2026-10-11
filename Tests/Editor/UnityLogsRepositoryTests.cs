@@ -12,7 +12,7 @@ namespace Funplay.Editor.Tests
         public void GetRecentLogs_FiltersGroupsAndTruncatesCachedEntries()
         {
             var token = "FunplayConsoleGrouping_" + System.Guid.NewGuid().ToString("N");
-            var longPayload = new string('x', 360);
+            var longPayload = new string('x', 2100);
 
             using (var repository = new UnityLogsRepository())
             {
@@ -35,7 +35,7 @@ namespace Funplay.Editor.Tests
                 Assert.That(grouped, Does.Contain("[LOG] " + token + " duplicate (x2)"));
                 Assert.That(grouped, Does.Contain("[LOG] " + token + " unique"));
                 Assert.That(grouped, Does.Contain("... (+"));
-                Assert.That(grouped.Length, Is.LessThan(1400));
+                Assert.That(grouped.Length, Is.LessThan(2600));
 
                 var filtered = repository.GetRecentLogs(
                     logType: "log",
@@ -58,6 +58,50 @@ namespace Funplay.Editor.Tests
                 Assert.That(ungrouped, Does.Contain("Console logs (2 entries, filter: log, source: cache"));
                 Assert.That(ungrouped, Does.Not.Contain("(x2)"));
             }
+        }
+
+        [Test]
+        public void MultiLineMessagesAreKeptWholeAndCursorReturnsOnlyNewEntries()
+        {
+            var token = "FunplayMultiLine_" + System.Guid.NewGuid().ToString("N");
+            using (var repository = new UnityLogsRepository())
+            {
+                repository.StartListening();
+                repository.Clear();
+                Debug.Log(token + " a\nb\nc");
+                var first = repository.GetRecentLogs("log", 10, 0, token);
+                Assert.That(first, Does.Contain("[LOG] " + token + " a\n  b\n  c"));
+                var cursor = int.Parse(System.Text.RegularExpressions.Regex.Match(first, @"cursor: (\d+)").Groups[1].Value);
+
+                Debug.Log(token + " second");
+                var next = repository.GetRecentLogs("log", 10, 0, token, afterCursor: cursor);
+                Assert.That(next, Does.Contain("second").And.Not.Contain(" a\n"));
+                Assert.That(next, Does.Contain("(1 entries"));
+
+                // A cursor from before a reload (greater than anything cached) reads everything again.
+                Assert.That(repository.GetRecentLogs("log", 10, 0, token, afterCursor: cursor + 1000), Does.Contain("(2 entries"));
+            }
+        }
+
+        [Test]
+        public void ConsoleTextSplitsAtTheFirstStackFrame()
+        {
+            UnityLogsRepository.SplitMessageAndStack("first\nsecond\nUnityEngine.Debug:Log (object)\nFoo:Bar () (at Assets/Foo.cs:12)", out var message, out var stack);
+            Assert.AreEqual("first\nsecond", message);
+            StringAssert.StartsWith("UnityEngine.Debug:Log", stack);
+            UnityLogsRepository.SplitMessageAndStack("only text", out message, out stack);
+            Assert.AreEqual("only text", message);
+            Assert.IsNull(stack);
+        }
+
+        [Test]
+        public void SinceSecondsOnAnEmptyCacheIsZeroEntriesNotAnError()
+        {
+            var repository = Funplay.Editor.DI.RootScopeServices.Services?.GetService(typeof(UnityLogsRepository)) as UnityLogsRepository;
+            repository?.StartListening();
+            var result = Funplay.Editor.Tools.Builtins.VisualFeedbackFunctions.GetConsoleLogs(clear_cache: true, since_seconds: 5);
+            StringAssert.DoesNotContain("INVALID_SINCE_SECONDS", result);
+            StringAssert.Contains("No all entries found", result);
         }
 
         [Test]

@@ -724,6 +724,9 @@ namespace Funplay.Editor.Tools.Builtins
         [Description("Enable the Frame Debugger by opening a Frame Debugger window and driving its internal capture loop " +
                      "(a bare static SetEnabled call does not populate events without a live window instance). " +
                      "Follow with frame_debugger_get_events after a moment, then frame_debugger_disable when done.")]
+        private const string FrameDebuggerWasPausedKey = "Funplay.FrameDebugger.WasPaused";
+        private const string FrameDebuggerWasPausedKeySet = "Funplay.FrameDebugger.WasPausedSet";
+
         public static string FrameDebuggerEnable()
         {
             try
@@ -731,6 +734,12 @@ namespace Funplay.Editor.Tools.Builtins
                 if (!ResolveFrameDebuggerReflection(out var error))
                     return ToolResultFormatter.Exception(new NotSupportedException(error));
 
+                // Enabling pauses Play Mode; remember the state so disable can put it back.
+                if (!SessionState.GetBool(FrameDebuggerWasPausedKeySet, false))
+                {
+                    SessionState.SetBool(FrameDebuggerWasPausedKey, EditorApplication.isPaused);
+                    SessionState.SetBool(FrameDebuggerWasPausedKeySet, true);
+                }
                 var win = _fdWindowOpen.Invoke(null, null);
                 _fdWindowEnable.Invoke(win, null);
                 _fdWindowRepaint?.Invoke(win, null);
@@ -761,6 +770,12 @@ namespace Funplay.Editor.Tools.Builtins
                 {
                     _fdWindowDisable.Invoke(win, null);
                     _fdWindowClose?.Invoke(win, null);
+                }
+                if (SessionState.GetBool(FrameDebuggerWasPausedKeySet, false))
+                {
+                    if (EditorApplication.isPlaying) EditorApplication.isPaused = SessionState.GetBool(FrameDebuggerWasPausedKey, false);
+                    SessionState.EraseBool(FrameDebuggerWasPausedKeySet);
+                    SessionState.EraseBool(FrameDebuggerWasPausedKey);
                 }
                 return "Frame Debugger disabled and window closed.";
             }

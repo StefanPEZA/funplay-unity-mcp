@@ -1,0 +1,1 @@
+{"tool":"click_ui_toolkit_element","result":{"success":true,"message":"Pointer sequence sent, but no ClickEvent reached it.","data":{"element":{"path":"0/1","label":"Button#play"},"clicked":false,"covered":true,"receiver_disabled":true}}}

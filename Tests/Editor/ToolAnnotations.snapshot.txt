@@ -21,6 +21,7 @@ capture_ui_toolkit_element
 clear_execute_code_history destructive
 click_ui_toolkit_element
 close_prefab_stage idempotent
+compose_contact_sheet
 configure_ui_defaults idempotent
 configure_ui_toolkit_panel idempotent
 copy_asset
@@ -157,6 +158,7 @@ rename_game_object
 replay_execute_code destructive openworld
 request_recompile
 run_tests
+run_ui_steps
 save_all_scenes destructive idempotent
 save_prefab_stage destructive idempotent
 save_scene destructive idempotent

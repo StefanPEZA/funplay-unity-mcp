@@ -143,6 +143,14 @@ namespace Funplay.Editor.MCP.Server
             transportModeDropdown.style.marginBottom = 4;
             parent.Add(transportModeDropdown);
 
+            var compactToggle = new Toggle("Compact tool responses");
+            compactToggle.tooltip =
+                "On (default): receipts, captures and UI action replies leave out fields that carry no information. " +
+                "Off: the 0.8.6 reply shapes. A tool's own detail argument (compact or full) overrides this per call.";
+            compactToggle.SetValueWithoutNotify(_settings.MCPCompactResponses);
+            compactToggle.RegisterValueChangedCallback(evt => _settings.MCPCompactResponses = evt.newValue);
+            parent.Add(compactToggle);
+
             _brokerMonoPathField = new TextField("Broker Mono Path");
             _brokerMonoPathField.SetValueWithoutNotify(_settings.MCPBrokerMonoPath);
             _brokerMonoPathField.RegisterValueChangedCallback(evt =>

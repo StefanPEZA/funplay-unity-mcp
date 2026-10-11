@@ -402,7 +402,8 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("drag: selector of the element to drop on (same host)", Required = false)] string to = null,
             [ToolParam("drag: offset in panel pixels 'dx,dy' (instead of to)", Required = false)] string delta = null,
             [ToolParam("drag/long_press duration in milliseconds, 0..5000", Required = false)] int duration_ms = -1,
-            [ToolParam("mouse or touch", Required = false)] string pointer_type = "mouse")
+            [ToolParam("mouse or touch", Required = false)] string pointer_type = "mouse",
+            [ToolParam("compact (default) or full: full echoes the complete element description", Required = false)] string detail = null)
         {
             try
             {
@@ -446,7 +447,7 @@ namespace Funplay.Editor.Tools.Builtins
                     }
                 }
                 var duration = duration_ms >= 0 ? Mathf.Clamp(duration_ms, 0, MaxPointerDurationMs) : verb == "drag" ? 300 : verb == "long_press" ? 800 : 0;
-                var gesture = new PointerGesture(host, path, element, panel, verb, type, start, end, duration);
+                var gesture = new PointerGesture(host, path, element, panel, verb, type, start, end, duration, ResponseDetail.IsCompact(detail));
                 return gesture.Run();
             }
             catch (UIToolkitException ex) { return Task.FromResult(Response.Error(ex.Code, new { detail = ex.Message, details = ex.Details })); }
@@ -473,9 +474,11 @@ namespace Funplay.Editor.Tools.Builtins
             private Vector2? _lastPosition;
             private EventCallback<ClickEvent> _onClick;
             private bool _clickEvent;
+            private readonly bool _compact;
 
-            public PointerGesture(Component host, string path, VisualElement element, IPanel panel, string verb, UnityEngine.PointerType type, Vector2 start, Vector2? end, int durationMs)
+            public PointerGesture(Component host, string path, VisualElement element, IPanel panel, string verb, UnityEngine.PointerType type, Vector2 start, Vector2? end, int durationMs, bool compact = false)
             {
+                _compact = compact;
                 _host = host; _path = path; _element = element; _panel = panel; _verb = verb; _type = type; _start = start; _end = end; _durationMs = durationMs;
                 _steps = verb == "drag" ? Mathf.Clamp(durationMs / 16, 4, 60) : 0;
             }
@@ -585,7 +588,7 @@ namespace Funplay.Editor.Tools.Builtins
                     {
                         action = _verb,
                         host_id = ObjectIdHelper.GetSerializableId(_host.gameObject),
-                        element = _element.panel != null ? UIToolkitPanels.DescribeElement(_element, _path, mapping, renderHeight, false) : null,
+                        element = _element.panel == null ? null : _compact ? UIToolkitFunctions.EchoElement(_element, _path) : UIToolkitPanels.DescribeElement(_element, _path, mapping, renderHeight, false),
                         pointer_type = _type.ToString().ToLowerInvariant(),
                         pointer_id = _pointerId,
                         pseudo_states = pseudo,

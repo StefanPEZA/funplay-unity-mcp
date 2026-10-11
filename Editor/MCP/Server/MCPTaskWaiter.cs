@@ -24,7 +24,7 @@ namespace Funplay.Editor.MCP.Server
 
         internal static int QueryBudget(Dictionary<string, object> arguments)
             => arguments.TryGetValue("wait_seconds", out var value) && int.TryParse(Convert.ToString(value, CultureInfo.InvariantCulture), out var seconds)
-                ? Math.Max(0, Math.Min(30, seconds)) : 20;
+                ? Math.Max(0, Math.Min(TaskStatusService.LongMaxWaitSeconds, seconds)) : 20;
 
         internal static async Task<string> InitialReadAsync(Task<string> read, int budgetMilliseconds, CancellationToken cancellation)
         {
@@ -56,7 +56,7 @@ namespace Funplay.Editor.MCP.Server
             if (task == null || response.Value<bool?>("success") != true) return initial;
             int seconds = arguments.TryGetValue("wait_seconds", out var supplied) ? Convert.ToInt32(supplied, CultureInfo.InvariantCulture) : tool == "get_task" ? 20 : 2;
             // Inputs were validated before the side effect. Keep a defensive transport bound.
-            seconds = Math.Max(0, Math.Min(30, seconds));
+            seconds = Math.Max(0, Math.Min(TaskStatusService.MaxWaitSeconds(TaskStatusService.KindOf(null, (string)task["task_id"])), seconds));
             string action = arguments.TryGetValue("action", out var a) ? Convert.ToString(a)?.Trim().ToLowerInvariant() : "start";
             bool keyMissing = !arguments.TryGetValue("request_key", out var key) || string.IsNullOrWhiteSpace(Convert.ToString(key));
             bool receiptFirst = tool == "prepare_editor" && keyMissing || tool == "start_ui_preview_session" && keyMissing ||
@@ -91,7 +91,7 @@ namespace Funplay.Editor.MCP.Server
         internal static async Task<JObject> WaitAsync(JObject initial, double seconds, string after,
             Func<Task<JObject>> read, Func<double> now, Func<int, CancellationToken, Task> delay, CancellationToken cancellation)
         {
-            double start = now(), deadline = start + Math.Max(0, Math.Min(30, seconds));
+            double start = now(), deadline = start + Math.Max(0, Math.Min(TaskStatusService.LongMaxWaitSeconds, seconds));
             var result = initial;
             while (true)
             {
@@ -99,7 +99,7 @@ namespace Funplay.Editor.MCP.Server
                 var task = result["data"]?["task"];
                 if (result.Value<bool?>("success") != true || task == null) return result;
                 bool complete = task.Value<bool>("wait_complete");
-                bool changed = after != null && (string)task["revision"] != after;
+                bool changed = after != null && !ReceiptCompactor.SameRevision((string)task["revision"], after);
                 string reason = complete ? "completed" : changed ? "changed" : seconds <= 0 ? "immediate" : now() >= deadline ? "timeout" : null;
                 if (reason != null)
                 {

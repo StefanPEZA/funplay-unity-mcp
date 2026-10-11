@@ -274,7 +274,8 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Omit null/empty fields, duplicate bounds and most host details", Required = false)] bool compact = false,
             [ToolParam("Skip hidden elements (e.g. closed dialogs)", Required = false)] bool displayed_only = false,
             [ToolParam("Also store the hosts' whole trees (regardless of selector/max_depth) and return snapshot_id for diff_visual_tree", Required = false)] bool snapshot = false,
-            [ToolParam("Element path relative to one host (as for clicks): read only that element's subtree", Required = false)] string element_path = null)
+            [ToolParam("Element path relative to one host (as for clicks): read only that element's subtree", Required = false)] string element_path = null,
+            [ToolParam("Revision from a previous reply: if the result is unchanged, only {unchanged:true, revision} returns. Replies of 1 KB or more carry a revision.", Required = false)] string if_revision = null)
         {
             try
             {
@@ -397,11 +398,12 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Element path relative to one host: child indices from get_visual_tree (shift when the tree changes) or '/'-separated selectors over direct children, e.g. '#menu/Button:nth-of-type(2)'", Required = false)] string element_path = null,
             [ToolParam("left, right or middle", Required = false)] string button = "left",
             [ToolParam("Click even when another element covers the center", Required = false)] bool allow_covered = false,
-            [ToolParam("Scroll enclosing ScrollViews so a clipped element is in view before clicking", Required = false)] bool scroll_into_view = false)
+            [ToolParam("Scroll enclosing ScrollViews so a clipped element is in view before clicking", Required = false)] bool scroll_into_view = false,
+            [ToolParam("compact (default) or full: full echoes the complete element description", Required = false)] string detail = null)
         {
             if (!EditorApplication.isPlaying)
                 return Response.Error("PLAY_MODE_REQUIRED", new { hint = "UI callbacks are registered by runtime scripts; enter Play Mode first." });
-            return ClickElement(target, selector, text, element_path, button, allow_covered, scroll_into_view);
+            return ClickElement(target, selector, text, element_path, button, allow_covered, scroll_into_view, detail);
         }
 
         [Description("Scroll a UI Toolkit ScrollView (Edit or Play Mode; scroll state is not saved). Without deltas, scrolls every ScrollView around the matched element until it is in view (ScrollView.ScrollTo): the fix for ELEMENT_CLIPPED from click_ui_toolkit_element. With delta_x/delta_y (panel pixels; positive scrolls right/down), offsets the matched ScrollView, or the nearest one around the matched element; the ScrollView clamps the offset. Match by selector (Type#name.class), exact text and/or element_path as for clicks. Reports offsets and the element's visible_fraction afterwards.")]
@@ -411,14 +413,15 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Exact element text, case-insensitive", Required = false)] string text = null,
             [ToolParam("Element path relative to one host: child indices from get_visual_tree (shift when the tree changes) or '/'-separated selectors over direct children, e.g. '#menu/Button:nth-of-type(2)'", Required = false)] string element_path = null,
             [ToolParam("Horizontal scroll in panel pixels; 0 with delta_y 0 scrolls the element into view", Required = false)] float delta_x = 0,
-            [ToolParam("Vertical scroll in panel pixels, positive scrolls down", Required = false)] float delta_y = 0)
+            [ToolParam("Vertical scroll in panel pixels, positive scrolls down", Required = false)] float delta_y = 0,
+            [ToolParam("compact (default) or full: full echoes the complete element description", Required = false)] string detail = null)
         {
-            return ScrollElement(target, selector, text, element_path, delta_x, delta_y);
+            return ScrollElement(target, selector, text, element_path, delta_x, delta_y, detail);
         }
 
         // ---- Shared implementation (also used by tests in Edit Mode) -------------------------
 
-        internal static object ScrollElement(string target, string selector, string text, string elementPath, float deltaX, float deltaY)
+        internal static object ScrollElement(string target, string selector, string text, string elementPath, float deltaX, float deltaY, string detail = null)
         {
             try
             {
@@ -462,7 +465,8 @@ namespace Funplay.Editor.Tools.Builtins
                 return Response.Success(moved ? $"Scrolled {Label(scrolled[0].Key)}." : $"{Label(scrolled[0].Key)} did not move (already in view or at its limit).", new
                 {
                     host_id = ObjectIdHelper.GetSerializableId(matchHost.gameObject),
-                    element = UIToolkitPanels.DescribeElement(element, matchPath, mapping, renderHeight, false),
+                    element = ResponseDetail.IsCompact(detail) ? EchoElement(element, matchPath)
+                        : UIToolkitPanels.DescribeElement(element, matchPath, mapping, renderHeight, false),
                     scroll_views = scrolled.Select(s => new
                     {
                         scroll_view = Label(s.Key),
@@ -478,7 +482,7 @@ namespace Funplay.Editor.Tools.Builtins
             catch (Exception ex) { return Response.Error("UI_TOOLKIT_SCROLL_FAILED", new { detail = ex.Message }); }
         }
 
-        internal static object ClickElement(string target, string selector, string text, string elementPath, string button, bool allowCovered, bool scrollIntoView = false)
+        internal static object ClickElement(string target, string selector, string text, string elementPath, string button, bool allowCovered, bool scrollIntoView = false, string detail = null)
         {
             try
             {
@@ -539,6 +543,7 @@ namespace Funplay.Editor.Tools.Builtins
                 var result = UIToolkitPanels.DispatchClick(panel, dispatchTarget, point, (int)inputButton);
                 var scheduler = result.Activated ? null : SchedulerStallMonitor.Report(UIToolkitPanels.GetRoot(matchHost));
                 var who = receiver is Button ? "the button" : "the receiver";
+                var compactEcho = ResponseDetail.IsCompact(detail);
                 var message = !result.Activated ? $"Pointer sequence sent to {Label(matched)}, but no ClickEvent or click handler reached it."
                     : result.ReceiverDetached ? $"Clicked {Label(matched)}; {who} was removed from its panel."
                     : result.ReceiverDisabled ? $"Clicked {Label(matched)}; {who} disabled itself."
@@ -546,9 +551,10 @@ namespace Funplay.Editor.Tools.Builtins
                 return Response.Success(message, new
                 {
                     host_id = ObjectIdHelper.GetSerializableId(matchHost.gameObject),
-                    element = UIToolkitPanels.DescribeElement(matched, matchPath, mapping, renderHeight, false),
-                    dispatched_to = Label(dispatchTarget),
-                    click_receiver = receiver != null ? Label(receiver) : null,
+                    element = compactEcho ? EchoElement(matched, matchPath)
+                        : UIToolkitPanels.DescribeElement(matched, matchPath, mapping, renderHeight, false),
+                    dispatched_to = compactEcho && ReferenceEquals(dispatchTarget, matched) ? null : Label(dispatchTarget),
+                    click_receiver = receiver != null && !(compactEcho && ReferenceEquals(receiver, matched)) ? Label(receiver) : null,
                     clicked = result.Activated,
                     handler_invoked = result.HandlerInvoked,
                     click_event_received = result.ClickEventReceived,
@@ -606,11 +612,42 @@ namespace Funplay.Editor.Tools.Builtins
                 }
             }
 
-            if (matches.Count == 0) throw new UIToolkitException("ELEMENT_NOT_FOUND", "No element matches; inspect get_visual_tree.");
+            if (matches.Count == 0)
+                throw new UIToolkitException("ELEMENT_NOT_FOUND",
+                    "No element matches. If the UI is still building, wait_for_ui_toolkit(state=exists) first; otherwise pick one of the candidates or inspect get_visual_tree.",
+                    NearMisses(hosts, filter));
             if (matches.Count > 1)
                 throw new UIToolkitException("AMBIGUOUS_ELEMENT", $"{matches.Count} elements match; narrow the selector or pass element_path.",
                     matches.Take(10).Select(m => new { host_id = ObjectIdHelper.GetSerializableId(m.host.gameObject), element_path = m.path, element = Label(m.element) }).ToArray());
             return matches[0];
+        }
+
+        /// <summary>Up to five elements whose name, text or type resembles an unmatched query, so a miss can be corrected without a tree read.</summary>
+        private static object NearMisses(List<Component> hosts, UIToolkitPanels.Selector filter)
+        {
+            bool Like(string value, string wanted) => !string.IsNullOrEmpty(value) && !string.IsNullOrEmpty(wanted) &&
+                (value.IndexOf(wanted, StringComparison.OrdinalIgnoreCase) >= 0 || wanted.IndexOf(value, StringComparison.OrdinalIgnoreCase) >= 0);
+            var found = new List<object>();
+            try
+            {
+                var hostRoots = UIToolkitPanels.HostRoots(hosts);
+                foreach (var host in hosts)
+                {
+                    var root = UIToolkitPanels.GetRoot(host);
+                    if (root == null) continue;
+                    foreach (var entry in UIToolkitPanels.Walk(root, exclude: hostRoots))
+                    {
+                        var element = entry.Value;
+                        var similar = Like(element.name, filter.Name) || Like(UIToolkitPanels.GetText(element), filter.Text) ||
+                            (filter.Name == null && filter.Text == null && filter.Type != null && element.GetType().Name == filter.Type);
+                        if (!similar) continue;
+                        found.Add(new { host_id = ObjectIdHelper.GetSerializableId(host.gameObject), element_path = entry.Key, element = Label(element) });
+                        if (found.Count == 5) return found.ToArray();
+                    }
+                }
+            }
+            catch (Exception) { /* candidates are a courtesy; the miss itself is the answer */ }
+            return found.ToArray();
         }
 
         // ---- Helpers -----------------------------------------------------------------------
@@ -662,6 +699,9 @@ namespace Funplay.Editor.Tools.Builtins
         /// get_visual_tree's compact element: no null/empty fields, and panel_bounds/render_bottom_left
         /// dropped when screen bounds exist (image_top_left and center_render_pixels carry the same rect).
         /// </summary>
+        /// <summary>The compact echo of an element an action touched: where it is and what it is called.</summary>
+        internal static object EchoElement(VisualElement element, string path) => new { path, label = Label(element) };
+
         internal static JObject CompactElement(object described)
         {
             var json = JObject.FromObject(described);

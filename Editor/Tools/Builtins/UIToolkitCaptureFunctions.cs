@@ -22,7 +22,8 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Render pixels added around the element, 0..256", Required = false)] int padding = 8,
             [ToolParam("Integer upscale, 1..4 (nearest neighbour)", Required = false)] int scale = 1,
             [ToolParam("Save the PNG to disk and return its path instead of inline image data", Required = false)] bool save_to_file = false,
-            [ToolParam("Optional output .png path under the project root; only with save_to_file", Required = false)] string output_path = null)
+            [ToolParam("Optional output .png path under the project root; only with save_to_file", Required = false)] string output_path = null,
+            [ToolParam("compact (default) or full: full returns the complete capture geometry; the full contract is also available from get_visual_coordinates(capture_id)", Required = false)] string detail = null)
         {
             Component host; string path; VisualElement element; RectInt crop; object described;
             int renderWidth, renderHeight;
@@ -68,7 +69,7 @@ namespace Funplay.Editor.Tools.Builtins
                         padding,
                         scale
                     }
-                });
+                }, detail);
             }
             catch (Exception ex) { return ToolResultFormatter.Error("SCREENSHOT_CAPTURE_FAILED", new { message = ex.Message }); }
             finally

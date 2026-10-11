@@ -257,14 +257,16 @@ namespace Funplay.Editor
             });
 
             Assert.AreEqual("req-8", response.Id);
-            Assert.AreEqual(-32001, response.Error.Code);
-            var data = (Dictionary<string, object>)response.Error.Data;
-            Assert.AreEqual("RELOAD_IN_PROGRESS", data["code"]);
-            Assert.AreEqual(true, data["retryable"]);
-            Assert.AreEqual("editor", data["kind"]);
-            Assert.AreEqual("prep-1", data["request_key"]);
-            StringAssert.Contains("get_task(kind=\"editor\", request_key=\"prep-1\")", (string)data["hint"]);
-            StringAssert.Contains("never started", (string)data["hint"]);
+            Assert.IsNull(response.Error, "a keyed start survives the reload, so it is a running receipt, not an error");
+            var content = (List<Dictionary<string, object>>)((Dictionary<string, object>)response.Result)["content"];
+            var receipt = Newtonsoft.Json.Linq.JObject.Parse((string)content[0]["text"]);
+            Assert.IsTrue((bool)receipt["success"]);
+            Assert.AreEqual("running", (string)receipt["data"]["task"]["status"]);
+            Assert.AreEqual("reloading", (string)receipt["data"]["task"]["phase"]);
+            Assert.AreEqual("editor", (string)receipt["data"]["kind"]);
+            Assert.AreEqual("prep-1", (string)receipt["data"]["request_key"]);
+            StringAssert.Contains("get_task(kind=\"editor\", request_key=\"prep-1\"", (string)receipt["data"]["hint"]);
+            StringAssert.Contains("never started", (string)receipt["data"]["hint"]);
 
             var unkeyed = MCPServerService.CreateInterruptedByReloadResponse(new MCPRequest
             {

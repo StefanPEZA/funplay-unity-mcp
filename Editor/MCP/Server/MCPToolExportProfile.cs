@@ -29,7 +29,9 @@ namespace Funplay.Editor.MCP.Server
             "raycast_at_point",
             "capture_scene_view",
             "capture_game_view",
+            "compose_contact_sheet",
             "record_game_view",
+            "mark_recording",
             "extract_recording_frames",
             "get_recording_frame",
             "get_visual_coordinates",
@@ -102,7 +104,7 @@ namespace Funplay.Editor.MCP.Server
             "scroll_ui_toolkit", "pick_ui_toolkit_element", "configure_ui_toolkit_panel", "create_panel_settings",
             "wait_for_ui_toolkit", "capture_ui_toolkit_element", "preview_ui_toolkit",
             "explain_style", "audit_ui_toolkit", "diff_visual_tree", "set_ui_toolkit_value",
-            "pointer_ui_toolkit", "navigate_ui_toolkit", "style_ui_toolkit"
+            "pointer_ui_toolkit", "navigate_ui_toolkit", "style_ui_toolkit", "run_ui_steps"
         };
 
         /// <summary>Packs a user can add to Core (Tool Exposure window).</summary>
@@ -120,6 +122,11 @@ namespace Funplay.Editor.MCP.Server
                     "get_performance_snapshot", "get_object_memory", "get_top_memory_objects", "analyze_scene_complexity",
                     "frame_debugger_enable", "frame_debugger_disable", "frame_debugger_get_events", "memory_take_snapshot",
                     "memory_list_snapshots", "memory_compare_snapshots", "memory_query_top_objects", "memory_query_references"
+                },
+                ["render"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "get_material_properties", "set_material_property", "get_lighting_settings", "set_lighting_settings",
+                    "get_frame_timing", "get_counters"
                 },
                 ["lighting"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 {

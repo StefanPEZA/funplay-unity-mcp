@@ -306,6 +306,8 @@ namespace Funplay.Editor.Tests
             Assert.IsTrue((bool)click["success"], click.ToString());
             Assert.IsTrue((bool)click["data"]["click_event_received"], click.ToString());
             Assert.AreEqual(1, clicks, "Button.clicked runs through the panel's Clickable manipulator");
+            var wire = ResponsePruner.Prune("click_ui_toolkit_element", click.ToString(Newtonsoft.Json.Formatting.None), "compact");
+            Assert.Less(wire.Length, 400, "a plain click costs a few hundred bytes, not the full element description: " + wire);
 
             if (UIToolkitPanels.TryGetScreenMapping(root.panel, out var mapping))
             {
@@ -358,7 +360,7 @@ namespace Funplay.Editor.Tests
             Assert.IsTrue((bool)click["success"], click.ToString());
             Assert.AreEqual(UIToolkitPanels.PathOf(liveRoot, custom), (string)click["data"]["element"]["path"], click.ToString());
             Assert.AreEqual(1, clicks);
-            var labelOnly = JObject.FromObject(UIToolkitFunctions.ClickElement(id, "Label", "Klotski", null, "left", false));
+            var labelOnly = JObject.FromObject(UIToolkitFunctions.ClickElement(id, "Label", "Klotski", null, "left", false, false, "full"));
             Assert.IsTrue((bool)labelOnly["success"], "an explicit Label selector keeps the label: " + labelOnly);
             Assert.AreEqual("Label", (string)labelOnly["data"]["element"]["type"]);
         }
@@ -754,8 +756,43 @@ namespace Funplay.Editor.Tests
 
             var missing = JObject.FromObject(UIToolkitFunctions.GetVisualTree(id, element_path: "99/99"));
             Assert.AreEqual("ELEMENT_NOT_FOUND", (string)missing["code"], missing.ToString());
+            var near = JObject.FromObject(UIToolkitFunctions.ClickElement(id, "#pla", null, null, "left", false));
+            Assert.AreEqual("ELEMENT_NOT_FOUND", (string)near["code"], near.ToString());
+            var candidates = (JArray)near["data"]["details"];
+            Assert.IsTrue(candidates.Any(c => (string)c["element_path"] == playPath), "a near miss names the likely element: " + near);
+            Assert.LessOrEqual(candidates.Count, 5);
             var snapshot = Data(UIToolkitFunctions.GetVisualTree(id, max_depth: 0, snapshot: true));
             Assert.AreEqual("whole_tree", (string)snapshot["snapshot_scope"]);
+        }
+
+        [UnityTest]
+        public IEnumerator RunUiStepsRunsInOrderAndReportsTheFirstFailure()
+        {
+            yield return BuildLivePanel("UitkSteps");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var ok = UIToolkitFunctions.RunUiSteps("[{\"op\":\"wait\",\"target\":\"" + id + "\",\"selector\":\"#play\",\"state\":\"exists\"},{\"op\":\"sleep\",\"ms\":50}]");
+            yield return Await(ok);
+            var done = JObject.FromObject(ok.Result);
+            Assert.IsTrue((bool)done["success"], done.ToString());
+            Assert.AreEqual(2, (int)done["data"]["completed"]);
+
+            var bad = UIToolkitFunctions.RunUiSteps("[{\"op\":\"sleep\",\"ms\":10},{\"op\":\"wait\",\"target\":\"" + id + "\",\"selector\":\"#missing\",\"state\":\"exists\",\"timeout_seconds\":0.2},{\"op\":\"sleep\",\"ms\":10}]");
+            yield return Await(bad);
+            var failed = JObject.FromObject(bad.Result);
+            Assert.AreEqual("STEP_FAILED", (string)failed["code"], failed.ToString());
+            Assert.AreEqual(1, (int)failed["data"]["completed"]);
+            Assert.AreEqual(1, (int)failed["data"]["failed"]["index"]);
+            Assert.AreEqual("wait", (string)failed["data"]["failed"]["op"]);
+            Assert.AreEqual("WAIT_TIMEOUT", (string)failed["data"]["failed"]["code"]);
+        }
+
+        [Test]
+        public void RunUiStepsRejectsBadInput()
+        {
+            Assert.AreEqual("INVALID_STEPS", (string)JObject.FromObject(UIToolkitFunctions.RunUiSteps("not json").Result)["code"]);
+            Assert.AreEqual("INVALID_STEPS", (string)JObject.FromObject(UIToolkitFunctions.RunUiSteps("[]").Result)["code"]);
+            var unknown = JObject.FromObject(UIToolkitFunctions.RunUiSteps("[{\"op\":\"fly\"}]").Result);
+            Assert.AreEqual("INVALID_STEP", (string)unknown["data"]["failed"]["code"], unknown.ToString());
         }
 
         private static IEnumerator Await(System.Threading.Tasks.Task task)

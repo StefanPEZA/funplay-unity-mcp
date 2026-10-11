@@ -21,6 +21,21 @@ namespace Funplay.Editor.Tools.Helpers
         public VisualRect viewport;
         public float output_to_render_x, output_to_render_y;
         public bool interactive, is_playing;
+        /// <summary>
+        /// The part of the geometry a caller needs after a capture: the id (the full contract stays registered for
+        /// get_visual_coordinates), the image size, and only what differs from the plain full-view case.
+        /// </summary>
+        internal JObject ToCompact()
+        {
+            var compact = new JObject { ["capture_id"] = capture_id, ["size"] = new JArray(output_width, output_height) };
+            if (render_width != output_width || render_height != output_height)
+                compact["render"] = new JArray(render_width, render_height);
+            if (surface != "game_view") compact["surface"] = surface;
+            if (!interactive) compact["interactive"] = false;
+            if (viewport != null && (viewport.x != 0 || viewport.y != 0 || viewport.width != output_width || viewport.height != output_height))
+                compact["viewport"] = new JObject { ["x"] = viewport.x, ["y"] = viewport.y, ["width"] = viewport.width, ["height"] = viewport.height };
+            return compact;
+        }
         public string note = "Render framebuffer coordinates, not desktop/editor-window coordinates. Image viewport excludes editor chrome. Camera letterboxing remains part of the framebuffer. Geometry freshness does not prove that animated UI contents are unchanged.";
     }
 

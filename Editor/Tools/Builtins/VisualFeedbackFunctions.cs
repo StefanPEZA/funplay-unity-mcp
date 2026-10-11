@@ -95,7 +95,9 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Only include cached log entries from the last N seconds (cache/auto only)", Required = false)] int since_seconds = 0,
             [ToolParam("Only include entries whose message contains this text (case-insensitive)", Required = false)] string filter_text = null,
             [ToolParam("Collapse repeated identical messages into one line with a (xN) count", Required = false)] bool group_duplicates = false,
-            [ToolParam("Include each entry's stack trace, indented below the message (its own truncation cap, separate from the message's).", Required = false)] bool include_stack_trace = false)
+            [ToolParam("Include each entry's stack trace, indented below the message (its own truncation cap, separate from the message's).", Required = false)] bool include_stack_trace = false,
+            [ToolParam("Cache only: return entries newer than this cursor (the cursor in the previous reply header); a cursor from before a domain reload reads everything", Required = false)] int after_cursor = -1,
+            [ToolParam("Revision from a previous reply: if the result is unchanged, only {unchanged:true, revision} returns. Replies of 1 KB or more carry a revision.", Required = false)] string if_revision = null)
         {
             count = Mathf.Clamp(count, 1, 200);
             since_seconds = Mathf.Clamp(since_seconds, 0, 86400);
@@ -112,7 +114,7 @@ namespace Funplay.Editor.Tools.Builtins
 
             if (source == "cache" || source == "auto")
             {
-                var cachedLogs = logsRepository?.GetRecentLogs(log_type, count, since_seconds, filter_text, group_duplicates, include_stack_trace);
+                var cachedLogs = logsRepository?.GetRecentLogs(log_type, count, since_seconds, filter_text, group_duplicates, include_stack_trace, after_cursor);
                 if (!string.IsNullOrEmpty(cachedLogs))
                     return cachedLogs;
 
@@ -122,8 +124,9 @@ namespace Funplay.Editor.Tools.Builtins
                         : $"No {log_type} entries found in cached logs";
             }
 
+            // An empty cache (e.g. right after a domain reload) is a valid answer for a time window: zero entries.
             if (since_seconds > 0)
-                return ToolResultFormatter.Error("INVALID_SINCE_SECONDS", new { since_seconds, hint = "since_seconds is only supported when reading from cache or auto mode with cached results." });
+                return $"No {log_type} entries found in cached logs from the last {since_seconds} second(s)";
 
             var logEntriesType = Type.GetType("UnityEditor.LogEntries, UnityEditor");
             if (logEntriesType == null)
@@ -191,17 +194,13 @@ namespace Funplay.Editor.Tools.Builtins
                     // LogEntries concatenates "message\nstackTrace" into a single string;
                     // split it once so the primary line and the (optional) trace get their
                     // own truncation caps instead of the trace silently disappearing.
-                    var newlineIndex = message?.IndexOf('\n') ?? -1;
-                    var firstLine = message == null ? string.Empty
-                        : newlineIndex >= 0 ? message.Substring(0, newlineIndex) : message;
-                    if (!UnityLogsRepository.MatchesTextFilter(firstLine, filter_text))
+                    UnityLogsRepository.SplitMessageAndStack(message, out var body, out var stack);
+                    if (!UnityLogsRepository.MatchesTextFilter(body, filter_text))
                         continue;
 
-                    var stackSuffix = string.Empty;
-                    if (include_stack_trace && newlineIndex >= 0)
-                        stackSuffix = UnityLogsRepository.FormatStackTrace(message.Substring(newlineIndex + 1));
+                    var stackSuffix = include_stack_trace ? UnityLogsRepository.FormatStackTrace(stack) : string.Empty;
 
-                    lines.Add($"[{typeLabel}] {UnityLogsRepository.TruncateLine(firstLine)}{stackSuffix}");
+                    lines.Add($"[{typeLabel}] {UnityLogsRepository.FormatMessage(body)}{stackSuffix}");
                 }
 
                 if (lines.Count == 0)

@@ -109,7 +109,12 @@ namespace Funplay.Editor.Tools.Builtins
 
             var storedId = job.Value<string>("jobId");
             if (!string.IsNullOrEmpty(job_id) && !string.Equals(job_id, storedId, StringComparison.Ordinal))
-                return Response.Error("JOB_NOT_FOUND", new { job_id, activeJobId = storedId, hint = "Only the most recent run is tracked." });
+            {
+                var archived = LoadArchivedJob(job_id);
+                if (archived == null)
+                    return Response.Error("JOB_NOT_FOUND", new { job_id, activeJobId = storedId, hint = "The latest " + MaxArchivedJobs + " finished runs are kept besides the current one." });
+                return Response.Success($"Test job {archived.Value<string>("status")}.", archived);
+            }
 
             AnnotateIfPossiblyStuck(job);
             return Response.Success($"Test job {job.Value<string>("status")}.", job);
@@ -258,10 +263,34 @@ namespace Funplay.Editor.Tools.Builtins
             catch { return null; }
         }
 
+        private const string ArchiveKey = "Funplay.TestRunner.ArchivedJobs";
+        internal const int MaxArchivedJobs = 7;
+
         internal static void SaveJob(JObject job)
         {
+            // A new run replaces the current job; keep the previous one so a late status read by its id still resolves.
+            var previous = LoadJob();
+            if (previous != null && previous.Value<string>("jobId") != job.Value<string>("jobId"))
+                Archive(previous);
             SessionState.SetString(ActiveJobKey, job.ToString(Newtonsoft.Json.Formatting.None));
         }
+
+        private static JArray LoadArchive()
+        {
+            try { return JArray.Parse(SessionState.GetString(ArchiveKey, "[]")); }
+            catch { return new JArray(); }
+        }
+
+        private static void Archive(JObject job)
+        {
+            var archive = LoadArchive();
+            archive.Add(job);
+            while (archive.Count > MaxArchivedJobs) archive.RemoveAt(0);
+            SessionState.SetString(ArchiveKey, archive.ToString(Newtonsoft.Json.Formatting.None));
+        }
+
+        internal static JObject LoadArchivedJob(string jobId)
+            => LoadArchive().OfType<JObject>().LastOrDefault(j => j.Value<string>("jobId") == jobId);
 
         private static string[] SplitList(string csv)
         {

@@ -17,6 +17,30 @@ namespace Funplay.Editor.Tests
         private static readonly DateTime Now = new DateTime(2026, 7, 13, 12, 0, 0);
 
         [Test]
+        public void FinishedJobsStayReadableByIdAfterANewRunStarts()
+        {
+            var savedCurrent = UnityEditor.SessionState.GetString("Funplay.TestRunner.ActiveJob", "");
+            var savedArchive = UnityEditor.SessionState.GetString("Funplay.TestRunner.ArchivedJobs", "");
+            try
+            {
+                for (var i = 0; i < TestRunnerFunctions.MaxArchivedJobs + 2; i++)
+                    TestRunnerFunctions.SaveJob(new JObject { ["jobId"] = "job" + i, ["status"] = "finished" });
+
+                var old = JObject.FromObject(TestRunnerFunctions.GetTestJob("job2"));
+                Assert.IsTrue((bool)old["success"], old.ToString());
+                Assert.AreEqual("job2", (string)old["data"]["jobId"]);
+                var current = JObject.FromObject(TestRunnerFunctions.GetTestJob());
+                Assert.AreEqual("job" + (TestRunnerFunctions.MaxArchivedJobs + 1), (string)current["data"]["jobId"]);
+                Assert.AreEqual("JOB_NOT_FOUND", (string)JObject.FromObject(TestRunnerFunctions.GetTestJob("job0"))["code"], "older than the retained window");
+            }
+            finally
+            {
+                UnityEditor.SessionState.SetString("Funplay.TestRunner.ActiveJob", savedCurrent);
+                UnityEditor.SessionState.SetString("Funplay.TestRunner.ArchivedJobs", savedArchive);
+            }
+        }
+
+        [Test]
         public void StuckAssessment_FlagsRunnerStartAtThirtySeconds()
         {
             Assert.IsNull(TestRunnerFunctions.AssessStuckState(Now.AddSeconds(-29), null, Now));

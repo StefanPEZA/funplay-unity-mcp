@@ -23,8 +23,24 @@ namespace Funplay.Editor.State
         private sealed class Observation { internal string revision; internal double changedAt, seenAt; }
         private static readonly Dictionary<string, Observation> observations = new Dictionary<string, Observation>();
 
-        internal static object ValidateWait(int seconds) => seconds < 0 || seconds > 30
-            ? Response.Error("INVALID_WAIT", new { wait_seconds = "0..30; zero returns immediately" }) : null;
+        internal const int DefaultMaxWaitSeconds = 30, LongMaxWaitSeconds = 55;
+
+        /// <summary>
+        /// Longest MCP wait per task kind. Editor and test tasks may wait 55 s: the longest a call can last under the
+        /// 60 s limits of the direct transport and of Claude Code's tool timeout. Other kinds keep 30 s.
+        /// </summary>
+        internal static int MaxWaitSeconds(string kind) => kind == "editor" || kind == "tests" ? LongMaxWaitSeconds : DefaultMaxWaitSeconds;
+
+        /// <summary>The kind a wait applies to: the explicit kind, else the prefix of a namespaced task id.</summary>
+        internal static string KindOf(string kind, string taskId)
+            => !string.IsNullOrEmpty(kind) ? kind : taskId != null && taskId.IndexOf(':') > 0 ? taskId.Substring(0, taskId.IndexOf(':')) : null;
+
+        internal static object ValidateWait(int seconds, string kind = null, string taskId = null)
+        {
+            var max = MaxWaitSeconds(KindOf(kind, taskId));
+            return seconds < 0 || seconds > max
+                ? Response.Error("INVALID_WAIT", new { wait_seconds = "0.." + max + "; zero returns immediately" }) : null;
+        }
 
         internal static string[] AccessTools(string kind)
         {
@@ -51,7 +67,7 @@ namespace Funplay.Editor.State
         {
             var problem = Resolve(ref taskId, ref kind, key);
             if (problem != null) return JObject.FromObject(problem);
-            if (afterRevision != null && (afterRevision.Length != 64 || afterRevision.Any(c => !"0123456789abcdef".Contains(c))))
+            if (afterRevision != null && ((afterRevision.Length != 64 && afterRevision.Length != ReceiptCompactor.RevisionLength) || afterRevision.Any(c => !"0123456789abcdef".Contains(c))))
                 return JObject.FromObject(Response.Error("INVALID_TASK_REVISION"));
             if (offset < 0 || limit < 1 || limit > 500) return JObject.FromObject(Response.Error("INVALID_PAGE"));
             if (!CanRead(kind, Allowed)) return JObject.FromObject(Response.Error("TASK_KIND_NOT_EXPOSED", new
@@ -133,6 +149,13 @@ namespace Funplay.Editor.State
             observation.seenAt = now;
             task["poll_after_ms"] = (bool)task["wait_complete"] ? 0 : PollDelay(now - observation.changedAt);
             AlignPollingHint(result);
+            if (ResponseDetail.IsCompact())
+            {
+                // An unchanged poll repeats nothing the caller already holds: only the task block returns.
+                if (afterRevision != null && result["data"] is JObject all && !(bool)task["changed"])
+                    foreach (var name in all.Properties().Where(p => p.Name != "task").Select(p => p.Name).ToList()) all.Remove(name);
+                ReceiptCompactor.Compact(kind, result);
+            }
             return result;
         }
 
@@ -184,7 +207,7 @@ namespace Funplay.Editor.State
             data["task"] = new JObject
             {
                 ["task_id"] = kind + ":" + id, ["kind"] = kind, ["id"] = id, ["status"] = status, ["phase"] = phase,
-                ["revision"] = revision, ["changed"] = afterRevision == null || revision != afterRevision,
+                ["revision"] = revision, ["changed"] = afterRevision == null || !ReceiptCompactor.SameRevision(revision, afterRevision),
                 ["wait_complete"] = !pending, ["poll_after_ms"] = pending ? 1000 : 0, ["wait_reason"] = "snapshot", ["waited_ms"] = 0,
                 ["snapshot_at"] = DateTime.UtcNow.ToString("O")
             };

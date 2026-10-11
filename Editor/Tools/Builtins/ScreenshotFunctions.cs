@@ -48,9 +48,9 @@ namespace Funplay.Editor.Tools.Builtins
         /// payload is too large to send inline, in which case it auto-falls back to a file).
         /// </summary>
         /// <param name="extra">Extra fields merged into the response data (e.g. the captured element).</param>
-        internal static string FinishCapture(byte[] pngBytes, bool saveToFile, string outputPath, string defaultBaseName, VisualGeometry geometry = null, IDictionary<string, object> extra = null)
+        internal static string FinishCapture(byte[] pngBytes, bool saveToFile, string outputPath, string defaultBaseName, VisualGeometry geometry = null, IDictionary<string, object> extra = null, string detail = null)
         {
-            var result = FinishCaptureCore(pngBytes, saveToFile, outputPath, defaultBaseName, geometry);
+            var result = FinishCaptureCore(pngBytes, saveToFile, outputPath, defaultBaseName, geometry, detail);
             if (extra == null || extra.Count == 0) return result;
             var json = JsonParse.ParseObject(result);
             if (json["data"] is Newtonsoft.Json.Linq.JObject data)
@@ -59,17 +59,19 @@ namespace Funplay.Editor.Tools.Builtins
             return json.ToString(Formatting.None);
         }
 
-        private static string FinishCaptureCore(byte[] pngBytes, bool saveToFile, string outputPath, string defaultBaseName, VisualGeometry geometry)
+        private static string FinishCaptureCore(byte[] pngBytes, bool saveToFile, string outputPath, string defaultBaseName, VisualGeometry geometry, string detail)
         {
             var pngSize = VisualCoordinates.PngSize(pngBytes);
             geometry = geometry ?? VisualCoordinates.Create(defaultBaseName.Replace('-', '_'), pngSize.x, pngSize.y, pngSize.x, pngSize.y, false);
             VisualCoordinates.Register(geometry);
+            // The full contract stays registered for get_visual_coordinates(capture_id); the reply carries only what a caller needs.
+            object geometryOut = ResponseDetail.IsCompact(detail) ? geometry.ToCompact() : (object)geometry;
             var spillToFile = ShouldSpillScreenshotToFile(pngBytes.Length, saveToFile);
             var autoFallback = spillToFile && !saveToFile;
 
             if (!spillToFile)
                 return JsonConvert.SerializeObject(Response.Success("Screenshot captured.",
-                    new { bytes = pngBytes.Length, geometry, inline_image = ImagePrefix + Convert.ToBase64String(pngBytes) }, new { funplay_capture = 1 }));
+                    new { bytes = pngBytes.Length, geometry = geometryOut, inline_image = ImagePrefix + Convert.ToBase64String(pngBytes) }, new { funplay_capture = 1 }));
 
             if (!TrySaveScreenshotBytes(pngBytes, outputPath, defaultBaseName, out var savedPath, out var error))
                 return ToolResultFormatter.Error("SCREENSHOT_SAVE_FAILED", error);
@@ -78,7 +80,7 @@ namespace Funplay.Editor.Tools.Builtins
                 autoFallback
                     ? $"Screenshot ({pngBytes.Length} bytes) exceeded the inline transport limit and was saved to a file instead. Read the file to view it."
                     : "Screenshot saved to file.",
-                new { path = savedPath, bytes = pngBytes.Length, fell_back_to_file = autoFallback, geometry }));
+                new { path = savedPath, bytes = pngBytes.Length, fell_back_to_file = autoFallback, geometry = geometryOut }));
         }
 
         private static bool TrySaveScreenshotBytes(byte[] pngBytes, string outputPath, string baseName, out string savedPath, out object error)
@@ -185,9 +187,23 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Width of the screenshot in pixels", Required = false)] int width = 0,
             [ToolParam("Height of the screenshot in pixels", Required = false)] int height = 0,
             [ToolParam(SaveToFileParamDescription, Required = false)] bool save_to_file = false,
-            [ToolParam(OutputPathParamDescription, Required = false)] string output_path = null)
+            [ToolParam(OutputPathParamDescription, Required = false)] string output_path = null,
+            [ToolParam("compact (default) or full: full returns the complete capture geometry; the full contract is also available from get_visual_coordinates(capture_id)", Required = false)] string detail = null,
+            [ToolParam("Return only this part of the screenshot: 'x,y,width,height' in image pixels, top-left origin. The result is for viewing only (its capture_id cannot be used for clicks)", Required = false)] string region = null,
+            [ToolParam("Downscale so the long edge is at most this many pixels (fewer image tokens). View-only like region. 1-2 px defects can vanish; use region for detail", Required = false)] int max_size = 0,
+            [ToolParam("While Play Mode is paused the Game View does not advance, so a capture shows the last rendered frame, not later UI changes. true (default) advances one frame first; false captures the stale frame (reply carries paused/may_be_stale)", Required = false)] bool step_if_paused = true)
         {
             var playModeView = GetMainPlayModeView();
+            IDictionary<string, object> pausedInfo = null;
+            if (EditorApplication.isPlaying && EditorApplication.isPaused)
+            {
+                if (step_if_paused)
+                {
+                    EditorApplication.Step();
+                    await WaitForEditorFramesAsync(2);
+                }
+                pausedInfo = new Dictionary<string, object> { ["paused"] = true, [step_if_paused ? "stepped" : "may_be_stale"] = true };
+            }
             await RefreshGameViewBeforeCaptureAsync(playModeView);
 
             if (!TryResolveGameViewSize(playModeView, ref width, ref height))
@@ -197,14 +213,32 @@ namespace Funplay.Editor.Tools.Builtins
             }
 
             var playModePng = TryCapturePlayModeViewPngBytes(playModeView, width, height);
+            RectInt? cropRegion = null;
+            if (!string.IsNullOrEmpty(region))
+            {
+                if (!ImageCompose.TryParseRegion(region, out var parsed))
+                    return ToolResultFormatter.Error("INVALID_REGION", new { region, expected = "x,y,width,height in image pixels (top-left origin), width and height >= 1" });
+                cropRegion = parsed;
+            }
+            var reduce = cropRegion.HasValue || max_size > 0;
             if (playModePng != null)
             {
                 var dimensions = VisualCoordinates.PngSize(playModePng);
                 var sourceWidth = width; var sourceHeight = height;
                 bool actualRender = TryGetPlayModeViewRenderTexture(playModeView, out var sourceTexture);
                 if (actualRender) { sourceWidth = sourceTexture.width; sourceHeight = sourceTexture.height; }
-                var geometry = VisualCoordinates.Create("game_view", sourceWidth, sourceHeight, dimensions.x, dimensions.y, actualRender);
-                return FinishCapture(playModePng, save_to_file, output_path, "game-view", geometry);
+                if (reduce)
+                {
+                    try
+                    {
+                        playModePng = ImageCompose.CropAndFit(playModePng, cropRegion, max_size, out var reducedSize);
+                        dimensions = new Vector2Int(reducedSize.x, reducedSize.y);
+                        actualRender = false;
+                    }
+                    catch (ArgumentException ex) { return ToolResultFormatter.Error("INVALID_REGION", new { detail = ex.Message }); }
+                }
+                var geometry = VisualCoordinates.Create(reduce ? "game_view_reduced" : "game_view", sourceWidth, sourceHeight, dimensions.x, dimensions.y, actualRender);
+                return FinishCapture(playModePng, save_to_file, output_path, "game-view", geometry, pausedInfo, detail);
             }
 
             var camera = Camera.main;
@@ -219,12 +253,47 @@ namespace Funplay.Editor.Tools.Builtins
                 // Camera fallback is a separately rendered image; do not map clicks as if it were
                 // the live Game View framebuffer (especially with camera viewport/overlay changes).
                 return FinishCapture(CaptureWithUIPngBytes(camera, width, height), save_to_file, output_path, "game-view",
-                    VisualCoordinates.Create("camera_fallback", width, height, width, height, false));
+                    VisualCoordinates.Create("camera_fallback", width, height, width, height, false), pausedInfo, detail);
             }
             catch (Exception ex)
             {
                 return ToolResultFormatter.Error("SCREENSHOT_CAPTURE_FAILED", new { message = ex.Message });
             }
+        }
+
+        [Description("Arrange up to 16 PNG files (paths under the project, e.g. from save_to_file captures) into one grid image so several states or sizes are viewed in one image. Cells are row by row, each fitted into cell_max pixels. Returns the sheet and the cell order.")]
+        public static string ComposeContactSheet(
+            [ToolParam("JSON array of PNG paths under the project root, e.g. [\"Library/a.png\",\"Library/b.png\"]")] string paths,
+            [ToolParam("Columns, 1..8", Required = false)] int columns = 4,
+            [ToolParam("Longest edge of each cell in pixels, 64..1024", Required = false)] int cell_max = 480,
+            [ToolParam(SaveToFileParamDescription, Required = false)] bool save_to_file = false,
+            [ToolParam(OutputPathParamDescription, Required = false)] string output_path = null)
+        {
+            List<string> files;
+            try { files = JsonParse.ParseArray(paths).Select(t => (string)t).ToList(); }
+            catch (Exception) { return ToolResultFormatter.Error("INVALID_PATHS", new { expected = "JSON array of PNG paths" }); }
+            if (files.Count < 1 || files.Count > 16) return ToolResultFormatter.Error("INVALID_PATHS", new { detail = "Pass 1..16 paths." });
+
+            var projectRoot = Path.GetFullPath(Directory.GetParent(Application.dataPath)?.FullName ?? Directory.GetCurrentDirectory());
+            var images = new List<byte[]>();
+            foreach (var file in files)
+            {
+                string full;
+                try { full = Path.GetFullPath(Path.Combine(projectRoot, file ?? "")); }
+                catch (Exception) { return ToolResultFormatter.Error("INVALID_PATHS", new { path = file }); }
+                if (!full.StartsWith(projectRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !full.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+                    return ToolResultFormatter.Error("PATH_NOT_ALLOWED", new { path = file, hint = "Only .png files under the project root." });
+                if (!File.Exists(full)) return ToolResultFormatter.Error("FILE_NOT_FOUND", new { path = file });
+                images.Add(File.ReadAllBytes(full));
+            }
+
+            try
+            {
+                var sheet = ImageCompose.ContactSheet(images, Mathf.Clamp(columns, 1, 8), Mathf.Clamp(cell_max, 64, 1024), out _);
+                return FinishCapture(sheet, save_to_file, output_path, "contact-sheet", null,
+                    new Dictionary<string, object> { ["cells"] = files.Select((path, index) => new { index, path }).ToArray() });
+            }
+            catch (ArgumentException ex) { return ToolResultFormatter.Error("INVALID_IMAGE", new { detail = ex.Message }); }
         }
 
         [Description("Capture the Unity Device Simulator screen. Optionally selects a Simulator device and draws a Safe Area outline over the captured image. " +

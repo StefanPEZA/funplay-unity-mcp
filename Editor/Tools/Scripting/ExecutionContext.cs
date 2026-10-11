@@ -37,6 +37,9 @@ namespace Funplay.Editor.Tools.Scripting
         public IReadOnlyList<object> ModifiedInstanceIds => _modified;
         public IReadOnlyList<object> DestroyedInstanceIds => _destroyed;
 
+        /// <summary>Arguments passed with <c>execute_code(snippet=..., args=...)</c>; empty otherwise.</summary>
+        public IDictionary<string, object> Args { get; set; } = new Dictionary<string, object>();
+
         /// <summary>Object that the snippet returns explicitly (optional). Serialized into the response.</summary>
         public object ReturnValue { get; set; }
 

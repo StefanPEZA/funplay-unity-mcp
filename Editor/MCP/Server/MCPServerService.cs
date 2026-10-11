@@ -573,6 +573,36 @@ namespace Funplay.Editor.MCP.Server
         /// </summary>
         internal static MCPResponse CreateInterruptedByReloadResponse(MCPRequest request)
         {
+            var recoverable = GetRecoverableTaskKind(request, out var recoverableKey);
+            if (recoverable != null)
+            {
+                // A keyed start survives the reload (the journal owns it), so the caller gets a running receipt,
+                // not an error: nothing failed, and the next get_task(kind, request_key) reports the outcome.
+                var receipt = new
+                {
+                    success = true,
+                    message = "Unity is reloading; the " + recoverable + " task continues.",
+                    data = new
+                    {
+                        task = new { status = "running", phase = "reloading", wait_complete = false, poll_after_ms = 5000, wait_reason = "reload" },
+                        kind = recoverable,
+                        request_key = recoverableKey,
+                        hint = $"Call get_task(kind=\"{recoverable}\", request_key=\"{recoverableKey}\", wait_seconds=55) once the server is back. OPERATION_NOT_FOUND means the request never started; repeating it with the same request_key is safe."
+                    }
+                };
+                return new MCPResponse
+                {
+                    Id = request?.Id,
+                    Result = new Dictionary<string, object>
+                    {
+                        ["content"] = new List<Dictionary<string, object>>
+                        {
+                            new Dictionary<string, object> { ["type"] = "text", ["text"] = Newtonsoft.Json.JsonConvert.SerializeObject(receipt) }
+                        }
+                    }
+                };
+            }
+
             var response = CreateBackendUnavailableResponse(request?.Id);
             var data = (Dictionary<string, object>)response.Error.Data;
             response.Error.Message = "A Unity domain reload (or MCP server stop) interrupted this request before it responded (RELOAD_IN_PROGRESS).";
@@ -709,6 +739,11 @@ namespace Funplay.Editor.MCP.Server
 
             var toolName = GetToolName(request);
             if (string.Equals(toolName, "get_reload_recovery_status", StringComparison.OrdinalIgnoreCase) || IsBoundedStatusRequest(request))
+                return null;
+
+            // A keyed prepare_editor is idempotent (Start returns the operation already running for that
+            // key), so running it again after the reload just rejoins it: one call lasts across the compile.
+            if (GetRecoverableTaskKind(request, out _) == "editor")
                 return null;
 
             var recovery = DomainReloadHandler.GetLastRecoveryInfo(false);

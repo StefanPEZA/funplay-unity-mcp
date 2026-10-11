@@ -25,6 +25,21 @@ namespace Funplay.Editor.Tools
 
         public async Task<string> InvokeAsync(FunctionCall functionCall)
         {
+            var result = await InvokeCoreAsync(functionCall);
+            // Only names that resolve to a tool are counted, so arbitrary client strings cannot grow the file.
+            var name = functionCall?.FunctionName;
+            if (!string.IsNullOrWhiteSpace(name) && (ToolRegistry.ManualTools.ContainsKey(name) || ToolRegistry.GetMethod(name) != null))
+                ToolUsageCounter.Record(name, result);
+            if (Array.IndexOf(ResponseRevision.Tools, name) >= 0 && !ToolUsageCounter.IsErrorResult(result))
+            {
+                functionCall.Parameters.TryGetValue("if_revision", out var ifRevision);
+                result = ResponseRevision.Apply(result, ifRevision);
+            }
+            return result;
+        }
+
+        private async Task<string> InvokeCoreAsync(FunctionCall functionCall)
+        {
             if (functionCall == null)
                 return ToolResultFormatter.Error("NULL_FUNCTION_CALL");
             if (string.IsNullOrWhiteSpace(functionCall.FunctionName))

@@ -26,6 +26,7 @@ namespace Funplay.Editor.Settings
         private const bool DefaultPluginDebugLoggingEnabled = false;
         private const bool DefaultMCPRecentActivityExpandedByDefault = true;
         private const bool DefaultMCPBrokerModeEnabled = false;
+        private const bool DefaultMCPCompactResponses = true;
 
         private readonly string _settingsPath;
         private readonly object _lock = new object();
@@ -334,6 +335,19 @@ namespace Funplay.Editor.Settings
             }
         }
 
+        public bool MCPCompactResponses
+        {
+            get
+            {
+                lock (_lock)
+                    return _settings.mcpCompactResponses;
+            }
+            set
+            {
+                UpdateSettings(data => data.mcpCompactResponses = value);
+            }
+        }
+
         public string MCPBrokerMonoPath
         {
             get
@@ -483,6 +497,7 @@ namespace Funplay.Editor.Settings
                 mcpRecentActivityExpandedByDefault = DefaultMCPRecentActivityExpandedByDefault,
                 mcpRecentActivityExpansionConfigured = true,
                 mcpBrokerModeEnabled = DefaultMCPBrokerModeEnabled,
+                mcpCompactResponses = DefaultMCPCompactResponses,
                 mcpBrokerMonoPath = string.Empty
             };
         }
@@ -642,6 +657,7 @@ namespace Funplay.Editor.Settings
             public bool mcpRecentActivityExpandedByDefault = DefaultMCPRecentActivityExpandedByDefault;
             public bool mcpRecentActivityExpansionConfigured = false;
             public bool mcpBrokerModeEnabled = DefaultMCPBrokerModeEnabled;
+            public bool mcpCompactResponses = DefaultMCPCompactResponses;
             public string mcpBrokerMonoPath = string.Empty;
             public List<string> mcpLastClientConfigKeys;
         }

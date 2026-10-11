@@ -14,10 +14,10 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("For request-key lookup: editor or ui_preview. Bare IDs additionally support ui_audit, recording, recording_frames, tests.", Required = false)] string kind = null,
             [ToolParam("Original preparation/preview request key", Required = false)] string request_key = null,
             [ToolParam("Last data.task.revision; waits for a meaningful state change, not each progress counter", Required = false)] string after_revision = null,
-            [ToolParam("MCP bounded wait, 0..30 seconds; zero returns immediately", Required = false)] int wait_seconds = 20,
+            [ToolParam("MCP bounded wait, 0..55 seconds for editor/tests tasks (55 is the longest that fits client timeouts), 0..30 otherwise; zero returns immediately. On the direct HTTP transport a client that sends a progress token may use up to 120 for editor/tests (progress is streamed while waiting)", Required = false)] int wait_seconds = 20,
             [ToolParam("UI audit finding offset", Required = false)] int offset = 0,
             [ToolParam("UI audit finding page size, 1..500", Required = false)] int limit = 100)
-            => TaskStatusService.ValidateWait(wait_seconds) ?? TaskStatusService.Query(task_id, kind, request_key, after_revision, offset, limit);
+            => TaskStatusService.ValidateWait(wait_seconds, kind, task_id) ?? TaskStatusService.Query(task_id, kind, request_key, after_revision, offset, limit);
 
         [Description("Cancel an async task by the task_id get_task uses (editor preparation, UI audit, recording, recording frame extraction, tests). Repeating is safe. Already-started native work (imports, compilation, Play transitions) is not rolled back. UI preview sessions are ended with end_ui_preview_session instead.")]
         public static object CancelTask(

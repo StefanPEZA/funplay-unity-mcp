@@ -1,0 +1,1 @@
+{"tool":"click_ui_toolkit_element","result":{"success":true,"message":"Clicked Button#play.","data":{"host_id":"h1","element":{"path":"0/1","label":"Button#play"},"clicked":true,"handler_invoked":true,"click_event_received":false,"receiver_disabled":false,"receiver_detached":false,"visible_fraction":1.0,"scrolled_into_view":false,"covered":false,"scheduler":null}}}

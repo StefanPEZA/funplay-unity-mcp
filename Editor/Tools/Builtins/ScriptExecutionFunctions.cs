@@ -26,34 +26,33 @@ namespace Funplay.Editor.Tools.Builtins
         private const int HistoryMaxEntries = 50;
         private const string FunplayScriptingNamespace = "Funplay.Editor.Tools.Scripting";
 
-        [Description("Fallback for project-specific operations. Prefer structured tools when available. Compiles a C# snippet with Unity's Roslyn csc first " +
-                     "while preserving the in-memory compilation/execution flow, then runs the compiled assembly on the editor thread. " +
-                     "Two templates are supported:\n" +
-                     "  1) Recommended: implement IFunplayCommand on a class — receives an ExecutionContext (ctx) " +
-                     "with RegisterObjectCreation/RegisterObjectModification/DestroyObject (auto-Undo + tracked) and " +
-                     "Log/LogWarning/LogError (returned in the response).\n" +
-                     "  2) Legacy: any class with `public static string Run()` — return value becomes the response message.\n" +
-                     "Before compiling, the editor's AssetDatabase is refreshed and pending compilation is awaited, " +
-                     "so external file edits are picked up automatically without a separate request_recompile " +
-                     "(pass skip_refresh=true to bypass this for read-only snippets or a live Play Mode session you must not disturb). " +
-                     "In Play Mode, script changes that Unity recompiles only after Play ends don't block the call: it runs against the loaded scripts and the response carries a warning. " +
-                     "When a full-class snippet implements IFunplayCommand, the required Funplay.Editor.Tools.Scripting using is added automatically if omitted. " +
-                     "The snippet is compiled into a SEPARATE assembly, so funplay package internal types (e.g. ToolRegistry) cannot be referenced directly from the snippet -- reach them via reflection. " +
-                     "safety_checks blocks a small set of obviously dangerous patterns " +
-                     "(File.Delete, Process.Start, while(true), Environment.Exit, AssetDatabase.DeleteAsset, etc) " +
-                     "and, when strict filesystem safety is enabled, broad System.IO writes (except to paths that statically resolve under the project's Library/ or Temp/, e.g. \"Library/FunplayMcp/crop.png\") plus obvious absolute/system/traversal paths. " +
-                     "This is a defensive layer, not a full sandbox. If omitted, the MCP Settings window's default safety-check setting is used " +
-                     "(enabled by default); explicitly passing true or false overrides that default. Project namespaces are not auto-injected " +
-                     "by default; add `using` directives in the snippet, or enable the ScriptAssemblies-based convenience toggle in the MCP Settings window. " +
-                     "If a compile fails with CS0104 (a type name ambiguous between two imported namespaces, e.g. System.Random vs UnityEngine.Random) or CS0433 (a type provided by multiple loaded assemblies) the error carries a structured `ambiguous` list; for CS0104 pass preferred_namespaces (comma-separated) to auto-insert a using-alias binding the name to that namespace and recompile once. CS0433 (same fully-qualified type in two assemblies) can't be fixed by an alias — use extern alias / drop a reference / reflection. " +
-                     "Every invocation is appended to a session-scoped history (see get_execute_code_history / replay_execute_code).")]
+        [Description("Fallback for project-specific operations; prefer structured tools. Compiles a C# snippet and runs it on the editor thread. " +
+                     "Write plain statements (no class): `ctx` is in scope (ctx.Log/LogWarning/LogError, RegisterObjectCreation/RegisterObjectModification/DestroyObject for Undo), " +
+                     "`return expr;` sets returnValue, and System, Linq, UnityEngine, UnityEditor, UIElements and Reflection usings are included. " +
+                     "A full class implementing IFunplayCommand (Execute(ExecutionContext ctx)) or with `public static string Run()` also works. " +
+                     "AssetDatabase is refreshed first (skip_refresh=true to skip, e.g. in a live Play Mode session). " +
+                     "The snippet is a separate assembly: reach package internals by reflection. " +
+                     "safety_checks blocks obviously dangerous patterns (File.Delete, Process.Start, while(true), AssetDatabase.DeleteAsset ...) and, when strict, System.IO writes outside Library/ or Temp/; it is not a sandbox. " +
+                     "Repeated snippet: save_as=<name> on a successful run, then execute_code(snippet=<name>, args={...}) reads ctx.Args[\"k\"] and skips recompiling. "
+                     + "CS0104 (ambiguous name): pass preferred_namespaces. Every call is kept in get_execute_code_history / replay_execute_code.")]
         [SceneEditingTool]
         public static async Task<object> ExecuteCode(
-            [ToolParam("C# code to execute. See description for IFunplayCommand vs legacy Run() templates.")] string code,
+            [ToolParam("C# code to execute (statements, or a class). Omit when running a saved snippet.", Required = false)] string code = null,
             [ToolParam("If true, reject the call before compile when the code contains obviously dangerous patterns. If omitted, uses the MCP Settings window default.", Required = false)] bool? safety_checks = null,
             [ToolParam("If true, skip the pre-compile AssetDatabase.Refresh + wait-for-ready. Use only when the editor is already up to date -- e.g. a read-only inspection snippet, or during a live Play Mode session you must not disturb. The default refresh can trigger an import/domain reload (from your own OR another actor's pending changes in a shared editor) that wipes Play Mode runtime state. When skipped, external file edits made since the last compile are NOT picked up.", Required = false)] bool skip_refresh = false,
-            [ToolParam("Optional comma-separated namespaces used to auto-resolve CS0104 ambiguity: when an unqualified type name is ambiguous between two imported namespaces, a using-alias binding that name to the candidate in the listed (winning) namespace is inserted and the snippet is recompiled once. Does NOT fix CS0433 (same fully-qualified type in two assemblies). If it stays ambiguous, a structured COMPILATION_FAILED error with an `ambiguous` array is returned.", Required = false)] string preferred_namespaces = null)
+            [ToolParam("Optional comma-separated namespaces used to auto-resolve CS0104 ambiguity: when an unqualified type name is ambiguous between two imported namespaces, a using-alias binding that name to the candidate in the listed (winning) namespace is inserted and the snippet is recompiled once. Does NOT fix CS0433 (same fully-qualified type in two assemblies). If it stays ambiguous, a structured COMPILATION_FAILED error with an `ambiguous` array is returned.", Required = false)] string preferred_namespaces = null,
+            [ToolParam("Save the code as a named snippet (Library/FunplayMcp/Snippets/<name>.cs) after it runs successfully; rerun it with snippet=<name>", Required = false)] string save_as = null,
+            [ToolParam("Run a saved snippet by name instead of passing code", Required = false)] string snippet = null,
+            [ToolParam("JSON object of arguments for the snippet, read as ctx.Args[\"name\"]", Required = false)] string args = null)
         {
+            if (!string.IsNullOrEmpty(snippet))
+            {
+                if (!string.IsNullOrEmpty(code)) return Response.Error("INVALID_ARGUMENT", new { detail = "Pass code or snippet, not both." });
+                code = SnippetStore.Load(snippet);
+                if (code == null) return Response.Error("SNIPPET_NOT_FOUND", new { snippet, available = SnippetStore.Names() });
+            }
+            if (string.IsNullOrWhiteSpace(code)) return Response.Error("INVALID_ARGUMENT", new { detail = "Pass code or snippet." });
+            if (!SnippetStore.TryParseArgs(args, out var parsedArgs, out var argsError)) return Response.Error("INVALID_ARGS", new { detail = argsError });
             var effectiveSafetyChecks = ResolveSafetyChecks(safety_checks);
             if (effectiveSafetyChecks)
             {
@@ -63,7 +62,8 @@ namespace Funplay.Editor.Tools.Builtins
                     var blocked = Response.Error("SAFETY_CHECK_BLOCKED",
                         new
                         {
-                            pattern,
+                            // The matched code, not the ~300-byte regex: it names the offending text and costs a fraction.
+                            matched = MatchedText(code, pattern),
                             reason,
                             strict_filesystem_checks = strictFilesystemChecks,
                             hint = "Strict filesystem safety allows writes to project-relative paths under Library/ or Temp/ (e.g. \"Library/FunplayMcp/crop.png\" or Path.Combine(\"Temp\", \"out.txt\")). Otherwise disable the strict filesystem guard in the MCP Settings window or pass safety_checks=false only for trusted local calls."
@@ -102,7 +102,8 @@ namespace Funplay.Editor.Tools.Builtins
                 }
             }
 
-            var className = "TempScript_" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            // Same text, same class name: an unchanged snippet then hits the compile cache.
+            var className = "TempScript_" + SnippetStore.Hash(code);
             var fullCode = BuildCodeForCompilation(
                 code,
                 className,
@@ -111,8 +112,11 @@ namespace Funplay.Editor.Tools.Builtins
 
             try
             {
-                var result = await CompileAndExecuteAsync(fullCode, actualClassName, preferred_namespaces);
-                AppendHistory(code, IsSuccess(result), SummarizeResult(result), preferred_namespaces);
+                var result = await CompileAndExecuteAsync(fullCode, actualClassName, preferred_namespaces, parsedArgs);
+                var succeeded = IsSuccess(result);
+                AppendHistory(code, succeeded, SummarizeResult(result), preferred_namespaces);
+                if (succeeded && !string.IsNullOrEmpty(save_as))
+                    result = SnippetStore.Save(save_as, code) is string saveError ? WithWarning(result, saveError) : result;
                 return WithWarning(result, staleScriptsWarning);
             }
             catch (Exception ex)
@@ -129,6 +133,12 @@ namespace Funplay.Editor.Tools.Builtins
                     outer_message = ReferenceEquals(root, ex) ? null : ex.Message
                 });
             }
+        }
+
+        internal static string MatchedText(string code, string pattern)
+        {
+            var value = Regex.Match(code ?? string.Empty, pattern).Value.Trim();
+            return value.Length > 80 ? value.Substring(0, 80) + "..." : value;
         }
 
         internal static Exception UnwrapTargetInvocationException(Exception exception)
@@ -326,9 +336,22 @@ namespace Funplay.Editor.Tools.Builtins
             return s.Substring(0, max) + "…";
         }
 
-        private static async Task<object> CompileAndExecuteAsync(string code, string className, string preferredNamespaces)
+        // Compiled snippets by source text. Static, so a domain reload (project scripts changed) clears it.
+        private static readonly Dictionary<string, ScriptCompilationResult> CompileCache = new Dictionary<string, ScriptCompilationResult>();
+        private const int CompileCacheMax = 32;
+        private static IDictionary<string, object> executionArgs;
+
+        private static async Task<object> CompileAndExecuteAsync(string code, string className, string preferredNamespaces, IDictionary<string, object> args = null)
         {
-            var compilation = await ScriptCompilerPipeline.CompileAsync(code);
+            if (!CompileCache.TryGetValue(code, out var compilation))
+            {
+                compilation = await ScriptCompilerPipeline.CompileAsync(code);
+                if (compilation.Status == ScriptCompilationStatus.Success && compilation.Assembly != null)
+                {
+                    if (CompileCache.Count >= CompileCacheMax) CompileCache.Clear();
+                    CompileCache[code] = compilation;
+                }
+            }
 
             if (compilation.Status == ScriptCompilationStatus.CompilationFailed)
             {
@@ -344,7 +367,10 @@ namespace Funplay.Editor.Tools.Builtins
                         {
                             var retry = await ScriptCompilerPipeline.CompileAsync(BuildAliasRetryCode(aliasBlock, code));
                             if (retry.Status == ScriptCompilationStatus.Success && retry.Assembly != null)
+                            {
+                                executionArgs = args;
                                 return ExecuteCompiledAssembly(retry.Assembly, className, retry.CompilerName, retry.Attempts);
+                            }
 
                             if (retry.Status == ScriptCompilationStatus.CompilationFailed)
                             {
@@ -384,7 +410,7 @@ namespace Funplay.Editor.Tools.Builtins
                     compiler = compilation.CompilerName,
                     errors = compilation.Errors,
                     compiler_attempts = compilation.Attempts,
-                    hint = "Roslyn is tried first for modern C# syntax while preserving execute_code's in-memory compilation/execution flow."
+                    fix = FixFor(compilation.Errors)
                 });
             }
 
@@ -398,6 +424,7 @@ namespace Funplay.Editor.Tools.Builtins
                 });
             }
 
+            executionArgs = args;
             return ExecuteCompiledAssembly(compilation.Assembly, className, compilation.CompilerName, compilation.Attempts);
         }
 
@@ -525,6 +552,19 @@ namespace Funplay.Editor.Tools.Builtins
             return sb.ToString();
         }
 
+        /// <summary>A one-line correction for the compile errors agents hit most; null when there is none.</summary>
+        internal static string FixFor(IEnumerable<ScriptCompilationError> errors)
+        {
+            var list = errors?.ToList() ?? new List<ScriptCompilationError>();
+            if (list.Any(e => e.code == "CS0535" || e.code == "CS0738"))
+                return "IFunplayCommand needs `public void Execute(ExecutionContext ctx)`. Or drop the class and write statements: `ctx` is available and `return expr;` sets the return value.";
+            if (list.Any(e => e.code == "CS1061" && e.text != null && (e.text.Contains("'Q'") || e.text.Contains("'Query'"))))
+                return "Q/Query are VisualElement extension methods: add `using UnityEngine.UIElements;`.";
+            if (list.Any(e => e.code == "CS0619"))
+                return "That API is obsolete in this Unity version; the error text names its replacement.";
+            return null;
+        }
+
         private static string BuildAliasRetryCode(string aliasBlock, string code)
         {
             // Preserve the line mapping from the initial compile even though aliases are prepended.
@@ -637,6 +677,8 @@ namespace Funplay.Editor.Tools.Builtins
             }
 
             var ctx = new ExecutionContext();
+            if (executionArgs != null) ctx.Args = executionArgs;
+            executionArgs = null;
             try
             {
                 instance.Execute(ctx);
@@ -688,12 +730,9 @@ namespace Funplay.Editor.Tools.Builtins
             actualClassName = className;
             var projectUsings = injectProjectNamespaces ? GetReachableProjectNamespaceUsings() : string.Empty;
 
-            if (code.Contains("class "))
+            if (SnippetSyntax.TryFindTypeDeclaration(code, out var declared))
             {
-                var match = Regex.Match(code, @"class\s+(\w+)");
-                if (match.Success)
-                    actualClassName = match.Groups[1].Value;
-
+                actualClassName = declared;
                 var requiredUsings = GetRequiredSnippetUsings(code);
                 return PrependMissingUsings(code, requiredUsings + projectUsings);
             }
@@ -701,26 +740,34 @@ namespace Funplay.Editor.Tools.Builtins
             return WrapCode(code, className, projectUsings);
         }
 
+        // A body (statements, no type): runs as an IFunplayCommand so `ctx` is available and `return expr;` becomes
+        // ctx.ReturnValue. UIElements/Reflection are added unless the snippet names the uGUI namespace, whose
+        // Button/Image/Slider/Toggle would otherwise be ambiguous. The context type is fully qualified because a
+        // user's `using System.Threading;` makes the short name ambiguous.
         private static string WrapCode(string code, string className, string projectUsings)
         {
+            var body = SnippetSyntax.SplitLeadingUsings(code, out var userUsings);
+            var uiElements = code.Contains("UnityEngine.UI") ? string.Empty : "using UnityEngine.UIElements;\n";
             return $@"using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using UnityEngine;
 using UnityEngine.SceneManagement;
-using UnityEditor;
+{uiElements}using UnityEditor;
 using UnityEditor.SceneManagement;
-using {FunplayScriptingNamespace};
-{projectUsings}
-public static class {className}
+{userUsings}{projectUsings}
+public sealed class {className} : {FunplayScriptingNamespace}.IFunplayCommand
 {{
-    public static string Run()
+    public void Execute({FunplayScriptingNamespace}.ExecutionContext ctx) {{ ctx.ReturnValue = Body(ctx); }}
+
+    private object Body({FunplayScriptingNamespace}.ExecutionContext ctx)
     {{
-        {code}
-        return ""OK"";
+        {body}
+        return null;
     }}
 }}";
         }

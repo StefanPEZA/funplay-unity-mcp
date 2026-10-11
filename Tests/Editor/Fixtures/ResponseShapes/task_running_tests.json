@@ -1,0 +1,1 @@
+{"tool":"get_task","result":{"success":true,"message":"Test job running.","data":{"task":{"task_id":"tests:0123456789abcdef0123456789abcdef","status":"running","phase":"running","revision":"cccccccccccccccc","wait_complete":false,"poll_after_ms":2000,"wait_reason":"timeout"},"status":"running","testsCompleted":10,"totalTests":629,"currentTest":null}}}
