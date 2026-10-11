@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.9.4] - 2026-10-12
 
 ### Fixed
 
@@ -13,12 +13,14 @@
 - `compose_contact_sheet`: cells take the images' shape (the largest fitted width and height) with a 4 px gutter instead of `cell_max` squares, so 16:9 captures no longer leave about 44% of the sheet as bars.
 - `SAFETY_CHECK_BLOCKED` no longer suggests Library/ or Temp/ paths for calls blocked on any path (File.Delete, Process.Start ...).
 - `get_console_logs`: "No log entries found" instead of "No all entries found" (also from the log cache).
+- `get_task` waits interrupted by a domain reload or server stop no longer log "[Funplay MCP Server] Error executing tool: A task was canceled."; the cancellation reaches the server, which answers with the retryable interrupted-by-reload reply.
 - Recordings declare BT.709 colour (a `colr` box in the H.264 sample entry, added after encoding), so decoding them, e.g. in `extract_recording_frames`, no longer logs "Color primaries 0 is unknown or unsupported by WindowsMediaFoundation".
 
 ### Changed
 
 - `record_game_view` (and its `get_task`) replies are compact: `size: [w, h]`, rounded times, compact `geometry`, no `mime_type`, `has_audio`, `started_at`, zero `bytes` or `dropped_markers`. `detail="full"` returns the previous receipt.
 - `get_visual_tree(compact=true)` also drops null host fields (`nested_hosts`, `scheduler`, `findings_omitted`), empty findings, `truncated: false` and null envelope fields; an empty `elements` list stays.
+- `simulate_key_press` replies are pruned like other echo tools (no `null` `frames_stuck`, `note`, `hint`).
 - Compact task receipts drop the legacy top-level `poll_after_ms` when it equals `task.poll_after_ms`; recording frames round times to 4 decimals and drop `geometry.size` (it is `frame_size`).
 
 ## [0.9.3] - 2026-10-12
