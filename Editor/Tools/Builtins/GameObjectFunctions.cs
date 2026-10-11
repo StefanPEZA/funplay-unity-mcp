@@ -331,7 +331,7 @@ namespace Funplay.Editor.Tools.Builtins
                 new { instanceId = ObjectIdHelper.GetSerializableId(go), activeSelf = go.activeSelf });
         }
 
-        [Description("Find GameObjects by id/name/path/tag/layer/component. Returns full structured results so the agent can chain by_id calls.")]
+        [Description("Find GameObjects by id/name/path/tag/layer/component. Each hit has instanceId, path, active state, component names and child count (non-default tag/layer/static too) so the agent can chain by_id calls; get_game_object_info has the transform and component ids.")]
         [ReadOnlyTool]
         public static object FindGameObjects(
             [ToolParam("Search query; omit for a structured filter-only scan", Required = false)] string query = null,

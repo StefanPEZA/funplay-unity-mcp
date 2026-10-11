@@ -137,7 +137,6 @@ namespace Funplay.Editor.Tools.Builtins
                     center = new { x = b.center.x, y = b.center.y, z = b.center.z },
                     size = new { x = b.size.x, y = b.size.y, z = b.size.z }
                 },
-                uvChannels,
                 populatedUVChannels,
                 hasNormals = mesh.HasVertexAttribute(VertexAttribute.Normal),
                 hasTangents = mesh.HasVertexAttribute(VertexAttribute.Tangent),

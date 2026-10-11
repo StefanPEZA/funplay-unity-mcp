@@ -87,14 +87,83 @@ namespace Funplay.Editor.Tools.Builtins
             {
                 for (int i = 0; i < t.childCount; i++)
                 {
+                    // A run of look-alike siblings (Cubie (0, 1, 0), Cubie (1, 1, 0) ...) at the depth limit, or without
+                    // children, would print one identical line each; print the run once.
+                    var run = LookAlikeRun(t, i, includeComponents, includeInactive, leavesOnly: indent + 1 < maxDepth);
+                    if (run >= MinCollapsedRun)
+                    {
+                        PrintRun(sb, t, i, run, indent + 1, includeComponents, includeInactive);
+                        i += run - 1;
+                        continue;
+                    }
                     PrintNode(sb, t.GetChild(i), indent + 1, maxDepth, includeComponents, includeInactive);
                 }
             }
             else if (t.childCount > 0)
             {
                 string childPrefix = new string(' ', (indent + 1) * 2) + "|- ";
-                sb.AppendLine($"{childPrefix}... ({t.childCount} children)");
+                sb.AppendLine($"{childPrefix}... ({Children(t.childCount)})");
             }
+        }
+
+        private const int MinCollapsedRun = 3;
+
+        private static string Children(int count) => count == 1 ? "1 child" : $"{count} children";
+
+        /// <summary>
+        /// How many siblings from <paramref name="start"/> on share a name stem, active state, tag and components
+        /// (inactive siblings that would not be printed end the run; with <paramref name="leavesOnly"/>, so does a
+        /// sibling with children, whose subtree would be printed).
+        /// </summary>
+        private static int LookAlikeRun(Transform parent, int start, bool includeComponents, bool includeInactive, bool leavesOnly)
+        {
+            var first = parent.GetChild(start);
+            if (!includeInactive && !first.gameObject.activeSelf) return 1;
+            if (leavesOnly && first.childCount > 0) return 1;
+            var key = LookAlikeKey(first, includeComponents);
+            var run = 1;
+            for (int i = start + 1; i < parent.childCount; i++)
+            {
+                var sibling = parent.GetChild(i);
+                if (!includeInactive && !sibling.gameObject.activeSelf) break;
+                if (leavesOnly && sibling.childCount > 0) break;
+                if (LookAlikeKey(sibling, includeComponents) != key) break;
+                run++;
+            }
+            return run;
+        }
+
+        private static string LookAlikeKey(Transform t, bool includeComponents)
+            => NameStem(t.name) + "|" + t.gameObject.activeSelf + "|" + t.tag + "|" + (includeComponents ? GetComponentSummary(t.gameObject) : "");
+
+        /// <summary>The name without a trailing " (...)", number or "_number": "Cubie (1, 0, -1)" and "Tile_12" give "Cubie" and "Tile".</summary>
+        internal static string NameStem(string name)
+        {
+            var stem = name.TrimEnd();
+            if (stem.EndsWith(")"))
+            {
+                var open = stem.LastIndexOf('(');
+                if (open > 0) stem = stem.Substring(0, open);
+            }
+            stem = stem.TrimEnd('0', '1', '2', '3', '4', '5', '6', '7', '8', '9').TrimEnd(' ', '_', '-', '.');
+            return stem.Length > 0 ? stem : name;
+        }
+
+        private static void PrintRun(StringBuilder sb, Transform parent, int start, int count, int indent,
+            bool includeComponents, bool includeInactive)
+        {
+            var first = parent.GetChild(start);
+            var last = parent.GetChild(start + count - 1);
+            var grandchildren = 0;
+            for (int i = start; i < start + count; i++) grandchildren += parent.GetChild(i).childCount;
+
+            string prefix = new string(' ', indent * 2) + "|- ";
+            string active = first.gameObject.activeSelf ? "" : " [INACTIVE]";
+            string tag = first.tag != "Untagged" ? $" tag={first.tag}" : "";
+            string comps = includeComponents ? $" [{GetComponentSummary(first.gameObject)}]" : "";
+            sb.AppendLine($"{prefix}{count}x {first.name} .. {last.name}{active}{tag}{comps}");
+            if (grandchildren > 0)
+                sb.AppendLine($"{new string(' ', (indent + 1) * 2)}|- ... ({Children(grandchildren)} in total)");
         }
 
         private static string GetComponentSummary(GameObject go)

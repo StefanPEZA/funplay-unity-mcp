@@ -21,7 +21,10 @@ namespace Funplay.Editor.Tools.Helpers
             "get_task", "prepare_editor", "run_tests", "enter_play_mode", "exit_play_mode", "request_recompile",
             "click_ui_toolkit_element", "wait_for_ui_toolkit", "scroll_ui_toolkit", "pointer_ui_toolkit", "navigate_ui_toolkit",
             "capture_game_view", "extract_recording_frames", "record_game_view", "set_game_view_size", "open_scene",
-            "simulate_key_press"
+            "simulate_key_press",
+            // The other captures, and diff_visual_tree, whose counts stay when its empty lists go.
+            "capture_ui_toolkit_element", "capture_scene_view", "capture_simulator_view", "capture_editor_window",
+            "diff_visual_tree"
         };
 
         /// <summary>Keys whose <c>false</c> is the default and is dropped; absent means false.</summary>
@@ -29,7 +32,8 @@ namespace Funplay.Editor.Tools.Helpers
         {
             "fell_back_to_file", "is_changing_play_mode", "compilation_failed", "refresh_pending", "is_compiling",
             "is_updating", "domain_reload_expected", "scrolled_into_view", "receiver_detached", "focusable",
-            "hasFilters", "read_only", "covered", "exposed", "click_event_received", "receiver_disabled"
+            "hasFilters", "read_only", "covered", "exposed", "click_event_received", "receiver_disabled",
+            "truncated", "snapshot_updated"
         };
 
         /// <summary>Returns <paramref name="json"/> unchanged unless the tool is on the allowlist and compact mode is on.</summary>

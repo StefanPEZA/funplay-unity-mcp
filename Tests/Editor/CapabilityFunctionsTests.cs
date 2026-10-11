@@ -143,6 +143,10 @@ namespace Funplay.Editor.Tests
             }
             finally
             {
+                // The paste and the added Rigidbody are on the undo stack; a later undo would bring the
+                // destroyed target back into the user's scene.
+                foreach (var created in new UnityEngine.Object[] { source, target, sourceCollider, targetCollider, target.GetComponent<Rigidbody>() })
+                    if (created != null) Undo.ClearUndo(created);
                 UnityEngine.Object.DestroyImmediate(source);
                 UnityEngine.Object.DestroyImmediate(target);
                 RestoreSceneDirtiness(scene, wasDirty);

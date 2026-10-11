@@ -84,6 +84,16 @@ namespace Funplay.Editor.Tests
                 Assert.IsFalse(ResponsePruner.Tools.Contains(reader), reader + " returns data where empty values are answers");
         }
 
+        [Test]
+        public void DiffDropsEmptyListsButKeepsCounts()
+        {
+            const string json = "{\"success\":true,\"data\":{\"changed\":[{\"element\":\"Panel\",\"changes\":{\"classes\":{\"added\":[\"open\"],\"removed\":[]}}}]," +
+                                "\"added\":[],\"removed\":[],\"counts\":{\"changed\":1,\"added\":0,\"removed\":0},\"truncated\":false,\"snapshot_truncated\":null,\"snapshot_updated\":false}}";
+            var data = (JObject)JObject.Parse(ResponsePruner.Prune("diff_visual_tree", json, "compact"))["data"];
+            Assert.AreEqual("{\"changed\":[{\"element\":\"Panel\",\"changes\":{\"classes\":{\"added\":[\"open\"]}}}],\"counts\":{\"changed\":1,\"added\":0,\"removed\":0}}",
+                data.ToString(Newtonsoft.Json.Formatting.None));
+        }
+
         private static VisualGeometry FullView() => new VisualGeometry
         {
             capture_id = "c1", surface = "game_view", interactive = true, render_width = 1920, render_height = 1080,

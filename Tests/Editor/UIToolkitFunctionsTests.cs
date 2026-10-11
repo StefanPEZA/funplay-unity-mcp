@@ -578,6 +578,9 @@ namespace Funplay.Editor.Tests
             Assert.AreEqual((string)full["hosts"][0]["elements"][0]["path"], (string)element["path"]);
             Assert.IsNull(element["styles"], "null fields are dropped: " + element);
             Assert.IsNull(element["value"], element.ToString());
+            Assert.IsNull(element["displayed"], "usual values are dropped: " + element);
+            Assert.IsNull(element["enabled"], element.ToString());
+            Assert.AreEqual(true, (bool)element["interactive"], "a Button is interactive: " + element);
             if (element["screen_bounds"] != null)
             {
                 Assert.IsNull(element["panel_bounds"], element.ToString());

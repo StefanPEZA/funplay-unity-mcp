@@ -58,18 +58,22 @@ namespace Funplay.Editor.Tools.Builtins
 
                 cropped = CropAndScale(frame, crop, scale);
                 var geometry = VisualCoordinates.CreateCrop(renderWidth, renderHeight, crop, scale);
-                return ScreenshotFunctions.FinishCapture(cropped.EncodeToPNG(), save_to_file, output_path, "ui-element", geometry, new Dictionary<string, object>
+                // Compact: the element's path and label, since the geometry's viewport already places the crop.
+                var compact = ResponseDetail.IsCompact(detail);
+                var extra = new Dictionary<string, object>
                 {
                     ["host_id"] = ObjectIdHelper.GetSerializableId(host.gameObject),
-                    ["element"] = described,
-                    ["crop"] = new
+                    ["element"] = compact ? EchoElement(element, path) : described
+                };
+                if (!compact)
+                    extra["crop"] = new
                     {
                         render_bottom_left = new { x = crop.x, y = crop.y, width = crop.width, height = crop.height },
                         render_top_left = new { x = crop.x, y = renderHeight - crop.yMax, width = crop.width, height = crop.height },
                         padding,
                         scale
-                    }
-                }, detail);
+                    };
+                return ScreenshotFunctions.FinishCapture(cropped.EncodeToPNG(), save_to_file, output_path, "ui-element", geometry, extra, detail);
             }
             catch (Exception ex) { return ToolResultFormatter.Error("SCREENSHOT_CAPTURE_FAILED", new { message = ex.Message }); }
             finally

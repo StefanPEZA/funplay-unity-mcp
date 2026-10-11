@@ -271,7 +271,7 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Maximum elements returned across hosts, 1..2000", Required = false)] int max_elements = 300,
             [ToolParam("Include resolved styles per element", Required = false)] bool include_styles = false,
             [ToolParam("Report findings for the whole tree, uncapped, instead of the matched subtrees (at most 50 per host)", Required = false)] bool all_findings = false,
-            [ToolParam("Omit null/empty fields, duplicate bounds and most host details", Required = false)] bool compact = false,
+            [ToolParam("Omit null/empty fields, usual values (absent displayed/enabled = true, focusable/interactive = false, visible_fraction = 1), duplicate bounds and most host details", Required = false)] bool compact = false,
             [ToolParam("Skip hidden elements (e.g. closed dialogs)", Required = false)] bool displayed_only = false,
             [ToolParam("Also store the hosts' whole trees (regardless of selector/max_depth) and return snapshot_id for diff_visual_tree", Required = false)] bool snapshot = false,
             [ToolParam("Element path relative to one host (as for clicks): read only that element's subtree", Required = false)] string element_path = null,
@@ -706,6 +706,8 @@ namespace Funplay.Editor.Tools.Builtins
         /// <summary>
         /// get_visual_tree's compact element: no null/empty fields, and panel_bounds/render_bottom_left
         /// dropped when screen bounds exist (image_top_left and center_render_pixels carry the same rect).
+        /// The usual values are left out too: absent displayed/enabled mean true, absent visible_fraction
+        /// means 1 (fully visible), absent focusable/interactive mean false, absent text/child_count mean ""/0.
         /// </summary>
         internal static JObject CompactElement(object described)
         {
@@ -715,8 +717,21 @@ namespace Funplay.Editor.Tools.Builtins
                 json.Remove("panel_bounds");
                 screen.Remove("render_bottom_left");
             }
+            RemoveIf(json, "displayed", true);
+            RemoveIf(json, "enabled", true);
+            RemoveIf(json, "focusable", false);
+            RemoveIf(json, "interactive", false);
+            RemoveIf(json, "child_count", 0);
+            RemoveIf(json, "text", "");
+            if (json["visible_fraction"] is JValue fraction && fraction.Type == JTokenType.Float && (double)fraction >= 1.0)
+                json.Remove("visible_fraction");
             PruneEmpty(json);
             return json;
+        }
+
+        private static void RemoveIf(JObject json, string name, JToken usual)
+        {
+            if (json[name] is JValue value && JToken.DeepEquals(value, usual)) json.Remove(name);
         }
 
         private static JObject CompactHost(object described)

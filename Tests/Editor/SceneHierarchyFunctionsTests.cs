@@ -71,6 +71,44 @@ namespace Funplay.Editor.Tests
         }
 
         [Test]
+        public void Hierarchy_PrintsARunOfLookAlikeSiblingsOnce()
+        {
+            var scene = SceneManager.GetActiveScene();
+            var wasDirty = scene.isDirty;
+            var root = new GameObject("RunRoot_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                for (var i = 0; i < 4; i++)
+                    new GameObject($"Cell ({i}, 0)", typeof(BoxCollider)).transform.SetParent(root.transform);
+                new GameObject("Cell (9, 9)").transform.SetParent(root.transform); // different components: not in the run
+                var parent = new GameObject("Group 1");
+                parent.transform.SetParent(root.transform);
+                for (var i = 0; i < 3; i++)
+                    new GameObject("Leaf_" + i).transform.SetParent(parent.transform);
+
+                var deep = HierarchyFunctions.GetHierarchy(root_name: root.name, depth: 3);
+                Assert.That(deep, Does.Contain("|- 4x Cell (0, 0) .. Cell (3, 0) [BoxCollider]"), deep);
+                Assert.That(deep, Does.Contain("|- Cell (9, 9) [-]"), deep);
+                Assert.That(deep, Does.Contain("|- 3x Leaf_0 .. Leaf_2 [-]"), deep);
+
+                var shallow = HierarchyFunctions.GetHierarchy(root_name: root.name, depth: 1);
+                Assert.That(shallow, Does.Contain("|- Group 1 [-]"), shallow);
+                Assert.That(shallow, Does.Contain("|- ... (3 children)"), shallow);
+                Assert.AreEqual("Ab", HierarchyFunctions.NameStem("Ab (1, 2)"));
+                Assert.AreEqual("Tile", HierarchyFunctions.NameStem("Tile_12"));
+                Assert.AreEqual("42", HierarchyFunctions.NameStem("42"));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+                if (!wasDirty)
+                    typeof(EditorSceneManager).GetMethod("ClearSceneDirtiness",
+                            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)
+                        ?.Invoke(null, new object[] { scene });
+            }
+        }
+
+        [Test]
         public void HierarchyAndSceneInfo_IncludeLoadedAdditiveScenes()
         {
             var originalSetup = EditorSceneManager.GetSceneManagerSetup();

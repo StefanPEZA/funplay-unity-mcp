@@ -119,16 +119,18 @@ namespace Funplay.Editor.Tools.Builtins
                 profile = MCPToolExportPolicy.ToSettingValue(profile),
                 core_customized = settings?.MCPCoreToolsConfigured ?? false,
                 full_customized = settings?.MCPFullToolsConfigured ?? false,
+                tool_defaults = "Every listed tool is implemented. Absent enabled/exposed = true, read_only = false, role = structured.",
                 tools = names.Select(name =>
                 {
-                    // calls/errors only appear once a tool has been used, so unused tools cost no extra bytes.
-                    var tool = new Dictionary<string, object>
-                    {
-                        ["name"] = name, ["implemented"] = true, ["enabled"] = ToolRegistry.IsEnabled(name),
-                        ["exposed"] = ToolRegistry.IsEnabled(name) && MCPToolExportPolicy.IsToolAllowed(name, settings),
-                        ["read_only"] = ToolRegistry.GetMethod(name) != null && ToolRegistry.IsReadOnly(ToolRegistry.GetMethod(name)),
-                        ["role"] = name == "execute_code" ? "fallback" : "structured"
-                    };
+                    // Every listed tool is implemented; only the exceptions are spelled out (see tool_defaults),
+                    // and calls/errors only appear once a tool has been used, so the usual tool costs no extra bytes.
+                    var enabled = ToolRegistry.IsEnabled(name);
+                    var exposed = enabled && MCPToolExportPolicy.IsToolAllowed(name, settings);
+                    var tool = new Dictionary<string, object> { ["name"] = name };
+                    if (!enabled) tool["enabled"] = false;
+                    if (!exposed) tool["exposed"] = false;
+                    if (ToolRegistry.GetMethod(name) != null && ToolRegistry.IsReadOnly(ToolRegistry.GetMethod(name))) tool["read_only"] = true;
+                    if (name == "execute_code") tool["role"] = "fallback";
                     if (usage.TryGetValue(name, out var used)) { tool["calls"] = used.calls; if (used.errors > 0) tool["errors"] = used.errors; }
                     return tool;
                 }).ToArray(),

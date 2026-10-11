@@ -56,12 +56,15 @@ namespace Funplay.Editor.Tools.Builtins
             if (files.Length == 0)
                 return $"No files matching '{pattern}' in {directory}";
 
+            // Directory.GetFiles mixes separators on Windows; compare with forward slashes on both sides.
+            var projectRoot = Path.GetDirectoryName(UnityEngine.Application.dataPath).Replace('\\', '/') + "/";
             var results = new List<string>();
             int count = 0;
             foreach (var file in files)
             {
-                var relative = file.Replace(Path.GetDirectoryName(UnityEngine.Application.dataPath) + "/", "")
-                    .Replace('\\', '/');
+                var relative = file.Replace('\\', '/');
+                if (relative.StartsWith(projectRoot, System.StringComparison.OrdinalIgnoreCase))
+                    relative = relative.Substring(projectRoot.Length);
                 results.Add($"  - {relative}");
                 count++;
                 if (count >= 100) break;

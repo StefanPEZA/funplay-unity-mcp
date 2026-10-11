@@ -24,6 +24,7 @@ namespace Funplay.Editor.Tools.Builtins
         public static object GetEditorState()
         {
             var sinceLastFrame = Funplay.Editor.State.PlayModeFrameMonitor.SecondsSinceLastFrame;
+            var readiness = Funplay.Editor.State.EditorOperationService.Snapshot();
             return Response.Success("Editor state", new
             {
                 editor_focused = Funplay.Editor.State.PlayModeFrameMonitor.EditorFocused,
@@ -40,7 +41,8 @@ namespace Funplay.Editor.Tools.Builtins
                 applicationPath = EditorApplication.applicationPath,
                 timeSinceStartup = EditorApplication.timeSinceStartup,
                 unityVersion = Application.unityVersion,
-                readiness = Funplay.Editor.State.EditorOperationService.CurrentEditor()
+                // When ready, every other readiness field is false/null and repeats the flags above.
+                readiness = readiness.ready ? new { ready = true } : (object)readiness
             });
         }
 

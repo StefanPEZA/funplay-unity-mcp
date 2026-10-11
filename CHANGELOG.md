@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- `search_files` returned absolute paths on Windows (the project-root prefix was never stripped because of mixed separators); paths are project-relative, like `find_assets`.
+- `find_game_objects` listed `components: null` for every hit, even for `by_component` searches.
+- `capture_ui_toolkit_element` echoed the full element description (nulls included) and two copies of the crop rect although its default detail is compact; compact now echoes `{path, label}` like the other UI tools, `detail="full"` keeps both.
+- Fork test `ComponentBatchTools_CopyPasteAndAddWithUndoTracking` could leave a `CapabilityTarget_<guid>` object in the user's open scene; it clears the undo records of the objects it creates before destroying them.
+
+### Changed
+
+- `get_scene_info` lists each scene's root objects (components, `childCount`, `active`) instead of three levels of children, which ran to several KB for a scene with a 26-piece puzzle; `get_hierarchy` shows the tree.
+- `get_hierarchy` prints a run of three or more look-alike siblings (same name stem, components, tag and active state) once, as `26x Cubie (-1, 1, 1) .. Cubie (1, -1, -1) [MeshFilter, MeshRenderer]`, when they are at the depth limit or have no children; "1 child" instead of "1 children".
+- `find_game_objects` hits carry `instanceId`, `name`, `path`, `active`, `scene`, component names and `childCount`; `activeSelf`, `tag`, `layer` and `isStatic` only when they differ from the default. The transform moved to `get_game_object_info`.
+- `get_visual_tree(compact=true)` also leaves out the usual values: absent `displayed`/`enabled` mean true, `focusable`/`interactive` false, `visible_fraction` 1, `text` "" and `child_count` 0.
+- `get_tool_capabilities` lists only the exceptions per tool (`enabled`/`exposed: false`, `read_only: true`, `role: fallback`) and explains them once in `tool_defaults`; every entry used to repeat `implemented`, `enabled` and `exposed: true`.
+- `get_editor_state` reports `readiness: {ready: true}` when the editor is ready instead of repeating the play/compile flags.
+- `get_mesh_info` drops the `uvChannels` map (`populatedUVChannels` lists the same channels).
+- Compact pruning also covers `capture_ui_toolkit_element`, `capture_scene_view`, `capture_simulator_view`, `capture_editor_window` and `diff_visual_tree` (its counts stay), and drops `truncated`/`snapshot_updated` when false.
+
 ## [0.9.4] - 2026-10-12
 
 ### Fixed

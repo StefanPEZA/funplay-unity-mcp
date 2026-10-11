@@ -202,7 +202,8 @@ namespace Funplay.Editor.Tools.Builtins
         }
 
         [Description("Get information about every loaded scene (the active scene plus any additively loaded ones), " +
-                     "including path, dirty state, and a shallow root-object hierarchy per scene.")]
+                     "including path, dirty state and each root object with its components and child count " +
+                     "(get_hierarchy shows the tree below them).")]
         [ReadOnlyTool]
         public static object GetSceneInfo(
             [ToolParam("Revision from a previous reply: if the result is unchanged, only {unchanged:true, revision} returns. Replies of 1 KB or more carry a revision.", Required = false)] string if_revision = null)
@@ -219,7 +220,7 @@ namespace Funplay.Editor.Tools.Builtins
                 var rootTree = new List<object>();
                 foreach (var go in rootObjects)
                 {
-                    rootTree.Add(BuildHierarchy(go.transform, 1, 3));
+                    rootTree.Add(DescribeRoot(go.transform));
                 }
 
                 scenes.Add(new
@@ -813,26 +814,17 @@ namespace Funplay.Editor.Tools.Builtins
             };
         }
 
-        private static object BuildHierarchy(Transform t, int depth, int maxDepth)
+        // Roots only: three levels of a scene like a 26-piece puzzle came to several KB per call.
+        private static object DescribeRoot(Transform t)
         {
-            var components = t.GetComponents<Component>();
             var compNames = new List<string>();
-            foreach (var c in components)
+            foreach (var c in t.GetComponents<Component>())
             {
                 if (c != null && !(c is Transform))
                     compNames.Add(c.GetType().Name);
             }
 
-            var children = new List<object>();
-            if (depth < maxDepth)
-            {
-                for (int i = 0; i < t.childCount; i++)
-                {
-                    children.Add(BuildHierarchy(t.GetChild(i), depth + 1, maxDepth));
-                }
-            }
-
-            return new { name = t.name, instanceId = ObjectIdHelper.GetSerializableId(t.gameObject), components = compNames, children };
+            return new { name = t.name, instanceId = ObjectIdHelper.GetSerializableId(t.gameObject), active = t.gameObject.activeSelf, components = compNames, childCount = t.childCount };
         }
     }
 }
