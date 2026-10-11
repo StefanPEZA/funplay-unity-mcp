@@ -20,7 +20,8 @@ namespace Funplay.Editor.Tools.Helpers
         {
             "get_task", "prepare_editor", "run_tests", "enter_play_mode", "exit_play_mode", "request_recompile",
             "click_ui_toolkit_element", "wait_for_ui_toolkit", "scroll_ui_toolkit", "pointer_ui_toolkit", "navigate_ui_toolkit",
-            "capture_game_view", "extract_recording_frames", "record_game_view", "set_game_view_size", "open_scene"
+            "capture_game_view", "extract_recording_frames", "record_game_view", "set_game_view_size", "open_scene",
+            "simulate_key_press"
         };
 
         /// <summary>Keys whose <c>false</c> is the default and is dropped; absent means false.</summary>

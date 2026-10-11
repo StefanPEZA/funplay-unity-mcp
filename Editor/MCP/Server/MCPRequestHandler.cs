@@ -82,7 +82,7 @@ namespace Funplay.Editor.MCP.Server
                     _ => CreateErrorResponse(request.Id, -32601, $"Method not found: {request.Method}")
                 };
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!MCPServerService.IsShutdownCancellation(ex))
             {
                 Debug.LogError($"[Funplay MCP Server] Error handling request: {ex.Message}\n{ex.StackTrace}");
                 return CreateErrorResponse(request?.Id, -32603, $"Internal error: {ex.Message}");
@@ -179,11 +179,14 @@ namespace Funplay.Editor.MCP.Server
                     }
                 };
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!MCPServerService.IsShutdownCancellation(ex))
             {
                 Debug.LogError($"[Funplay MCP Server] Error executing tool: {ex.Message}");
                 return CreateErrorResponse(request.Id, -32603, $"Tool execution failed: {ex.Message}");
             }
+            // A cancellation (the Editor-thread pump disposed by a domain reload or server stop, e.g. during a
+            // get_task wait) propagates to MCPServerService, which answers with the retryable interrupted-by-reload
+            // response instead of logging "Error executing tool: A task was canceled."
         }
 
         private MCPResponse HandlePromptsList(MCPRequest request)
