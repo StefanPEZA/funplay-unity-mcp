@@ -741,6 +741,11 @@ namespace Funplay.Editor.MCP.Server
             if (string.Equals(toolName, "get_reload_recovery_status", StringComparison.OrdinalIgnoreCase) || IsBoundedStatusRequest(request))
                 return null;
 
+            // A keyed prepare_editor is idempotent (Start returns the operation already running for that
+            // key), so running it again after the reload just rejoins it: one call lasts across the compile.
+            if (GetRecoverableTaskKind(request, out _) == "editor")
+                return null;
+
             var recovery = DomainReloadHandler.GetLastRecoveryInfo(false);
             string summary;
             bool isError;

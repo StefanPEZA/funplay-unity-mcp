@@ -269,6 +269,21 @@ namespace Funplay.Editor.Tests
                 Params = new Dictionary<string, object> { ["name"] = "get_task" } };
             Assert.IsNull(MCPServerService.TryCreateBrokerRedeliveryResponse(request));
         }
+        [Test] public void BrokerRerunsOnlyAKeyedPrepareEditorBecauseItRejoinsTheRunningOperation()
+        {
+            MCPRequest Redelivered(string tool, string key) => new MCPRequest
+            {
+                JsonRpc = "2.0", Method = "tools/call", IsBrokerRedelivery = true,
+                Params = new Dictionary<string, object>
+                {
+                    ["name"] = tool,
+                    ["arguments"] = key == null ? new Dictionary<string, object>() : new Dictionary<string, object> { ["request_key"] = key }
+                }
+            };
+            Assert.IsNull(MCPServerService.TryCreateBrokerRedeliveryResponse(Redelivered("prepare_editor", "k1")), "keyed: runs again, idempotent by key");
+            Assert.IsNotNull(MCPServerService.TryCreateBrokerRedeliveryResponse(Redelivered("prepare_editor", null)), "unkeyed: never repeated");
+            Assert.IsNotNull(MCPServerService.TryCreateBrokerRedeliveryResponse(Redelivered("execute_code", "k1")), "other mutations are never repeated");
+        }
         [TestCase(-1)][TestCase(56)]
         public void InvalidWaitIsRejectedBeforeStartingAnyJob(int seconds)
         {
