@@ -289,16 +289,16 @@ namespace Funplay.Editor.Tests
         }
         [Test] public void FocusedCoreRetainsDailyWorkAndSafeCancellationWhileFullKeepsManagement()
         {
-            // Base (58) + uGUI pack (4) + UI Toolkit pack (18).
-            Assert.AreEqual(58, MCPToolExportPolicy.BaseCoreToolList.Count);
-            Assert.AreEqual(80, MCPToolExportPolicy.DefaultCoreTools.Count);
+            // Base (59) + uGUI pack (4) + UI Toolkit pack (18).
+            Assert.AreEqual(59, MCPToolExportPolicy.BaseCoreToolList.Count);
+            Assert.AreEqual(81, MCPToolExportPolicy.DefaultCoreTools.Count);
             foreach (var name in new[] { "get_task", "cancel_task", "prepare_editor", "audit_ui", "record_game_view", "set_prefab_properties", "find_game_objects",
                 "open_scene", "save_scene", "run_tests", "delete_asset", "open_prefab_stage", "get_scriptable_object",
                 "get_ui_toolkit_info", "create_ui_toolkit_panel", "get_visual_tree", "click_ui_toolkit_element", "configure_ui_toolkit_panel", "pick_ui_toolkit_element",
-                "set_game_view_size", "wait_for_ui_toolkit", "capture_ui_toolkit_element", "preview_ui_toolkit", "explain_style", "audit_ui_toolkit" })
+                "set_game_view_size", "mark_recording", "wait_for_ui_toolkit", "capture_ui_toolkit_element", "preview_ui_toolkit", "explain_style", "audit_ui_toolkit" })
                 Assert.Contains(name, MCPToolExportPolicy.DefaultCoreTools.ToArray());
             foreach (var name in new[] { "get_editor_operation", "list_editor_operations", "get_ui_audit", "get_ui_preview_session",
-                "start_ui_preview_session", "end_ui_preview_session", "configure_ui_defaults", "mark_recording", "get_performance_snapshot",
+                "start_ui_preview_session", "end_ui_preview_session", "configure_ui_defaults", "get_performance_snapshot",
                 "capture_simulator_view", "capture_editor_window", "request_recompile", "wait_for_compilation", "enter_play_mode", "exit_play_mode",
                 "cancel_editor_operation", "cancel_ui_audit", "simulate_key_combo", "get_test_job", "write_file", "read_file" })
             {

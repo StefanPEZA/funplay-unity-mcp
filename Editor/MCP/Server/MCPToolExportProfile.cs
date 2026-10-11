@@ -31,6 +31,7 @@ namespace Funplay.Editor.MCP.Server
             "capture_game_view",
             "compose_contact_sheet",
             "record_game_view",
+            "mark_recording",
             "extract_recording_frames",
             "get_recording_frame",
             "get_visual_coordinates",
@@ -121,6 +122,11 @@ namespace Funplay.Editor.MCP.Server
                     "get_performance_snapshot", "get_object_memory", "get_top_memory_objects", "analyze_scene_complexity",
                     "frame_debugger_enable", "frame_debugger_disable", "frame_debugger_get_events", "memory_take_snapshot",
                     "memory_list_snapshots", "memory_compare_snapshots", "memory_query_top_objects", "memory_query_references"
+                },
+                ["render"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "get_material_properties", "set_material_property", "get_lighting_settings", "set_lighting_settings",
+                    "get_frame_timing", "get_counters"
                 },
                 ["lighting"] = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 {
