@@ -289,9 +289,9 @@ namespace Funplay.Editor.Tests
         }
         [Test] public void FocusedCoreRetainsDailyWorkAndSafeCancellationWhileFullKeepsManagement()
         {
-            // Base (57) + uGUI pack (4) + UI Toolkit pack (18).
-            Assert.AreEqual(57, MCPToolExportPolicy.BaseCoreToolList.Count);
-            Assert.AreEqual(79, MCPToolExportPolicy.DefaultCoreTools.Count);
+            // Base (58) + uGUI pack (4) + UI Toolkit pack (18).
+            Assert.AreEqual(58, MCPToolExportPolicy.BaseCoreToolList.Count);
+            Assert.AreEqual(80, MCPToolExportPolicy.DefaultCoreTools.Count);
             foreach (var name in new[] { "get_task", "cancel_task", "prepare_editor", "audit_ui", "record_game_view", "set_prefab_properties", "find_game_objects",
                 "open_scene", "save_scene", "run_tests", "delete_asset", "open_prefab_stage", "get_scriptable_object",
                 "get_ui_toolkit_info", "create_ui_toolkit_panel", "get_visual_tree", "click_ui_toolkit_element", "configure_ui_toolkit_panel", "pick_ui_toolkit_element",

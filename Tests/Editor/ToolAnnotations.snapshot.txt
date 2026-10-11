@@ -21,6 +21,7 @@ capture_ui_toolkit_element
 clear_execute_code_history destructive
 click_ui_toolkit_element
 close_prefab_stage idempotent
+compose_contact_sheet
 configure_ui_defaults idempotent
 configure_ui_toolkit_panel idempotent
 copy_asset

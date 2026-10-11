@@ -29,6 +29,7 @@ namespace Funplay.Editor.MCP.Server
             "raycast_at_point",
             "capture_scene_view",
             "capture_game_view",
+            "compose_contact_sheet",
             "record_game_view",
             "extract_recording_frames",
             "get_recording_frame",

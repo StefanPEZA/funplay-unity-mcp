@@ -29,7 +29,7 @@ namespace Funplay.Editor.Tools
         internal static readonly HashSet<string> NonDestructive = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "add_component", "add_component_to_many", "add_layer", "add_tag", "assign_animator", "assign_material",
-            "cancel_editor_operation", "cancel_task", "cancel_test_run", "cancel_ui_audit", "capture_editor_window", "capture_game_view",
+            "cancel_editor_operation", "cancel_task", "cancel_test_run", "cancel_ui_audit", "capture_editor_window", "capture_game_view", "compose_contact_sheet",
             "capture_multiview", "capture_scene_view", "capture_simulator_view", "capture_ui_toolkit_element", "click_ui_toolkit_element",
             "close_prefab_stage", "configure_ui_defaults", "configure_ui_toolkit_panel", "copy_asset", "copy_component",
             "create_animation_clip", "create_animator_controller", "create_button", "create_canvas", "create_game_object",
