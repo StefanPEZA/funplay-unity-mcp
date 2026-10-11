@@ -204,7 +204,8 @@ namespace Funplay.Editor.Tools.Builtins
         [Description("Get information about every loaded scene (the active scene plus any additively loaded ones), " +
                      "including path, dirty state, and a shallow root-object hierarchy per scene.")]
         [ReadOnlyTool]
-        public static object GetSceneInfo()
+        public static object GetSceneInfo(
+            [ToolParam("Revision from a previous reply: if the result is unchanged, only {unchanged:true, revision} returns. Replies of 1 KB or more carry a revision.", Required = false)] string if_revision = null)
         {
             var activeScene = EditorSceneManager.GetActiveScene();
             var scenes = new List<object>();

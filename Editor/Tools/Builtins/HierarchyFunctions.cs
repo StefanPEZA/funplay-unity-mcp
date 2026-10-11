@@ -19,7 +19,8 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Root object name, hierarchy path, or instance ID to start from (empty = entire scene). Finds inactive objects too.", Required = false)] string root_name = "",
             [ToolParam("Maximum depth to traverse (1-10)", Required = false)] int depth = 3,
             [ToolParam("Include component names on each object", Required = false)] bool include_components = true,
-            [ToolParam("Include inactive objects", Required = false)] bool include_inactive = true)
+            [ToolParam("Include inactive objects", Required = false)] bool include_inactive = true,
+            [ToolParam("Revision from a previous reply: if the result is unchanged, only {unchanged:true, revision} returns. Replies of 1 KB or more carry a revision.", Required = false)] string if_revision = null)
         {
             try
             {

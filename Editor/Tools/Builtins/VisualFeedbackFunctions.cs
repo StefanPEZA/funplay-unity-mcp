@@ -96,7 +96,8 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Only include entries whose message contains this text (case-insensitive)", Required = false)] string filter_text = null,
             [ToolParam("Collapse repeated identical messages into one line with a (xN) count", Required = false)] bool group_duplicates = false,
             [ToolParam("Include each entry's stack trace, indented below the message (its own truncation cap, separate from the message's).", Required = false)] bool include_stack_trace = false,
-            [ToolParam("Cache only: return entries newer than this cursor (the cursor in the previous reply header); a cursor from before a domain reload reads everything", Required = false)] int after_cursor = -1)
+            [ToolParam("Cache only: return entries newer than this cursor (the cursor in the previous reply header); a cursor from before a domain reload reads everything", Required = false)] int after_cursor = -1,
+            [ToolParam("Revision from a previous reply: if the result is unchanged, only {unchanged:true, revision} returns. Replies of 1 KB or more carry a revision.", Required = false)] string if_revision = null)
         {
             count = Mathf.Clamp(count, 1, 200);
             since_seconds = Mathf.Clamp(since_seconds, 0, 86400);

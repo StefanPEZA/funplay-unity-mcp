@@ -30,6 +30,11 @@ namespace Funplay.Editor.Tools
             var name = functionCall?.FunctionName;
             if (!string.IsNullOrWhiteSpace(name) && (ToolRegistry.ManualTools.ContainsKey(name) || ToolRegistry.GetMethod(name) != null))
                 ToolUsageCounter.Record(name, result);
+            if (Array.IndexOf(ResponseRevision.Tools, name) >= 0 && !ToolUsageCounter.IsErrorResult(result))
+            {
+                functionCall.Parameters.TryGetValue("if_revision", out var ifRevision);
+                result = ResponseRevision.Apply(result, ifRevision);
+            }
             return result;
         }
 

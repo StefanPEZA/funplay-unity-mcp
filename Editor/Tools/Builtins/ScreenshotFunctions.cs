@@ -188,9 +188,20 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Height of the screenshot in pixels", Required = false)] int height = 0,
             [ToolParam(SaveToFileParamDescription, Required = false)] bool save_to_file = false,
             [ToolParam(OutputPathParamDescription, Required = false)] string output_path = null,
-            [ToolParam("compact (default) or full: full returns the complete capture geometry; the full contract is also available from get_visual_coordinates(capture_id)", Required = false)] string detail = null)
+            [ToolParam("compact (default) or full: full returns the complete capture geometry; the full contract is also available from get_visual_coordinates(capture_id)", Required = false)] string detail = null,
+            [ToolParam("While Play Mode is paused the Game View does not advance, so a capture shows the last rendered frame, not later UI changes. true (default) advances one frame first; false captures the stale frame (reply carries paused/may_be_stale)", Required = false)] bool step_if_paused = true)
         {
             var playModeView = GetMainPlayModeView();
+            IDictionary<string, object> pausedInfo = null;
+            if (EditorApplication.isPlaying && EditorApplication.isPaused)
+            {
+                if (step_if_paused)
+                {
+                    EditorApplication.Step();
+                    await WaitForEditorFramesAsync(2);
+                }
+                pausedInfo = new Dictionary<string, object> { ["paused"] = true, [step_if_paused ? "stepped" : "may_be_stale"] = true };
+            }
             await RefreshGameViewBeforeCaptureAsync(playModeView);
 
             if (!TryResolveGameViewSize(playModeView, ref width, ref height))
@@ -207,7 +218,7 @@ namespace Funplay.Editor.Tools.Builtins
                 bool actualRender = TryGetPlayModeViewRenderTexture(playModeView, out var sourceTexture);
                 if (actualRender) { sourceWidth = sourceTexture.width; sourceHeight = sourceTexture.height; }
                 var geometry = VisualCoordinates.Create("game_view", sourceWidth, sourceHeight, dimensions.x, dimensions.y, actualRender);
-                return FinishCapture(playModePng, save_to_file, output_path, "game-view", geometry, null, detail);
+                return FinishCapture(playModePng, save_to_file, output_path, "game-view", geometry, pausedInfo, detail);
             }
 
             var camera = Camera.main;
@@ -222,7 +233,7 @@ namespace Funplay.Editor.Tools.Builtins
                 // Camera fallback is a separately rendered image; do not map clicks as if it were
                 // the live Game View framebuffer (especially with camera viewport/overlay changes).
                 return FinishCapture(CaptureWithUIPngBytes(camera, width, height), save_to_file, output_path, "game-view",
-                    VisualCoordinates.Create("camera_fallback", width, height, width, height, false), null, detail);
+                    VisualCoordinates.Create("camera_fallback", width, height, width, height, false), pausedInfo, detail);
             }
             catch (Exception ex)
             {

@@ -274,7 +274,8 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Omit null/empty fields, duplicate bounds and most host details", Required = false)] bool compact = false,
             [ToolParam("Skip hidden elements (e.g. closed dialogs)", Required = false)] bool displayed_only = false,
             [ToolParam("Also store the hosts' whole trees (regardless of selector/max_depth) and return snapshot_id for diff_visual_tree", Required = false)] bool snapshot = false,
-            [ToolParam("Element path relative to one host (as for clicks): read only that element's subtree", Required = false)] string element_path = null)
+            [ToolParam("Element path relative to one host (as for clicks): read only that element's subtree", Required = false)] string element_path = null,
+            [ToolParam("Revision from a previous reply: if the result is unchanged, only {unchanged:true, revision} returns. Replies of 1 KB or more carry a revision.", Required = false)] string if_revision = null)
         {
             try
             {

@@ -51,7 +51,8 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("GameObject identifier (omit if using component_instance_id)", Required = false)] string target = null,
             [ToolParam("Component type name (e.g. 'Rigidbody'). Omit if using component_instance_id.", Required = false)] string component = null,
             [ToolParam("Component instanceId (alternative to target+component)", Required = false)] string component_instance_id = null,
-            [ToolParam("How to resolve target", Required = false)] string find_method = null)
+            [ToolParam("How to resolve target", Required = false)] string find_method = null,
+            [ToolParam("Revision from a previous reply: if the result is unchanged, only {unchanged:true, revision} returns. Replies of 1 KB or more carry a revision.", Required = false)] string if_revision = null)
         {
             var resolved = ResolveComponent(target, component, component_instance_id, find_method);
             if (resolved.Error != null) return resolved.Error;
