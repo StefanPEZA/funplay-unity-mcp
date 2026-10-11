@@ -1,10 +1,16 @@
 # Changelog
 
+## [0.9.2] - 2026-10-11
+
+### Fixed
+
+- Broker mode: the keep-alive broker process answered OAuth discovery and registration paths with a JSON-RPC reply too, so 0.9.1 did not fix broker setups. It now returns 404 for them as well. The broker protocol is bumped to 5, so a running older broker is replaced automatically.
+
 ## [0.9.1] - 2026-10-11
 
 ### Fixed
 
-- OAuth discovery and registration paths (`/.well-known/*`, `/register`, `/authorize`, `/token`) now return 404 instead of a JSON-RPC reply. Claude Code's SDK parsed that reply as a client registration and failed with "missing redirect_uris/client_id", leaving the server connected with no tools.
+- OAuth discovery and registration paths (`/.well-known/*`, `/register`, `/authorize`, `/token`) now return 404 instead of a JSON-RPC reply on the direct HTTP transport. Claude Code's SDK parsed that reply as a client registration and failed with "missing redirect_uris/client_id", leaving the server connected with no tools.
 
 ## [0.9.0] - 2026-10-11
 

@@ -19,7 +19,7 @@ namespace Funplay.UnityMcp.Broker
     {
         // v4 acknowledges empty backend pushes with HTTP 202 and no body. Older brokers
         // are replaced on package upgrade. Keep in sync with MCPBrokerProtocol.Version.
-        private const int ProtocolVersion = 4;
+        private const int ProtocolVersion = 5;
         private const int PullTimeoutMs = 25000;
         private const long HoldDeadlineMs = 300000;
         private const int MaxHeaderBytes = 64 * 1024;
@@ -284,6 +284,22 @@ namespace Funplay.UnityMcp.Broker
                 headers.TryGetValue(SessionHeader.ToLowerInvariant(), out session);
                 HandleDetach(session);
                 WriteResponse(stream, 200, "OK", "application/json", BrokerHeaderLine(), "{\"ok\":true}");
+                SafeClose(client);
+                return;
+            }
+
+            // No auth here: answer OAuth discovery/registration with a plain 404 so clients skip OAuth
+            // instead of parsing a JSON-RPC reply as a client registration.
+            var oauthPath = path;
+            var queryAt = oauthPath.IndexOf('?');
+            if (queryAt >= 0)
+                oauthPath = oauthPath.Substring(0, queryAt);
+            if (oauthPath.StartsWith("/.well-known/", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(oauthPath, "/register", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(oauthPath, "/authorize", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(oauthPath, "/token", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteResponse(stream, 404, "Not Found", "text/plain", null, "");
                 SafeClose(client);
                 return;
             }

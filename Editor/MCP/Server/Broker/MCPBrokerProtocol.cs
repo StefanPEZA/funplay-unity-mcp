@@ -13,7 +13,9 @@ namespace Funplay.Editor.MCP.Server
         //     (see MCPBrokerProcessManager.EnsureRunning's upgrade-cleanup path).
         // v4: an empty backend push acknowledges a notification with HTTP 202 and no
         //     body. Replaces older brokers that returned a JSON-RPC reply with id:null.
-        public const int Version = 4;
+        // v5: OAuth discovery/registration paths (/.well-known/*, /register, /authorize, /token)
+        //     answer 404 instead of being treated as JSON-RPC, so MCP clients skip OAuth.
+        public const int Version = 5;
         public const string Name = "funplay-unity-mcp-broker";
         public const string HealthPath = "/_funplay/broker/health";
         public const string AttachPath = "/_funplay/broker/attach";

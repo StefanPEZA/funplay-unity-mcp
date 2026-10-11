@@ -365,6 +365,32 @@ namespace Funplay.Editor
         }
 
         [UnityTest]
+        public IEnumerator BrokerProcess_AnswersOAuthDiscoveryPathsWith404()
+        {
+            var root = CreateTempRoot();
+            var paths = CreateBrokerPaths(root);
+            var port = GetFreeTcpPort();
+            try
+            {
+                var mono = MCPBrokerProcessManager.ResolveMono(string.Empty);
+                Assume.That(!string.IsNullOrEmpty(mono), "Unity-bundled Mono is required for broker process tests.");
+                yield return AssertOffMainThread(() => MCPBrokerProcessManager.EnsureRunning(port, mono, paths));
+
+                foreach (var path in new[] { "/register", "/token", "/.well-known/oauth-authorization-server" })
+                {
+                    var post = SendRpcAsync(port, "{\"redirect_uris\":[\"http://localhost/cb\"]}", false, path);
+                    yield return WaitForTask(post);
+                    Assert.AreEqual(HttpStatusCode.NotFound, post.Result.Status, path);
+                }
+            }
+            finally
+            {
+                MCPBrokerProcessManager.Stop(paths);
+                DeleteTempRoot(root);
+            }
+        }
+
+        [UnityTest]
         public IEnumerator BrokerTransport_LongRunningRequestIsNotRedeliveredWithinSameSession()
         {
             var root = CreateTempRoot();
@@ -740,10 +766,10 @@ namespace Funplay.Editor
 
         private const string SessionStaleEnvVar = "FUNPLAY_BROKER_SESSION_STALE_MS";
 
-        private static async Task<(HttpStatusCode Status, string Body, string ContentType)> SendRpcAsync(int port, string body, bool acceptsSse)
+        private static async Task<(HttpStatusCode Status, string Body, string ContentType)> SendRpcAsync(int port, string body, bool acceptsSse, string path = "/")
         {
             using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) })
-            using (var request = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:" + port + "/"))
+            using (var request = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:" + port + path))
             {
                 request.Headers.TryAddWithoutValidation("Accept", acceptsSse ? "application/json, text/event-stream" : "application/json");
                 request.Content = new StringContent(body, Encoding.UTF8, "application/json");
