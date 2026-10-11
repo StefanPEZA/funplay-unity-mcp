@@ -47,7 +47,7 @@ namespace Funplay.Editor.Tools
             "set_scriptable_object_properties", "set_selection", "set_tag_and_layer", "set_time_scale", "set_transform",
             "show_dialog", "simulate_key_combo", "simulate_key_press", "simulate_mouse_click", "simulate_mouse_drag",
             "simulate_ui_scroll", "start_ui_preview_session", "wait_for_compilation", "set_ui_toolkit_value",
-            "pointer_ui_toolkit", "navigate_ui_toolkit", "style_ui_toolkit"
+            "pointer_ui_toolkit", "navigate_ui_toolkit", "style_ui_toolkit", "run_ui_steps"
         };
 
         /// <summary>Write tools where repeating the same call has no additional effect.</summary>

@@ -763,6 +763,36 @@ namespace Funplay.Editor.Tests
             Assert.AreEqual("whole_tree", (string)snapshot["snapshot_scope"]);
         }
 
+        [UnityTest]
+        public IEnumerator RunUiStepsRunsInOrderAndReportsTheFirstFailure()
+        {
+            yield return BuildLivePanel("UitkSteps");
+            var id = ObjectIdHelper.GetSerializableId(created);
+            var ok = UIToolkitFunctions.RunUiSteps("[{\"op\":\"wait\",\"target\":\"" + id + "\",\"selector\":\"#play\",\"state\":\"exists\"},{\"op\":\"sleep\",\"ms\":50}]");
+            yield return Await(ok);
+            var done = JObject.FromObject(ok.Result);
+            Assert.IsTrue((bool)done["success"], done.ToString());
+            Assert.AreEqual(2, (int)done["data"]["completed"]);
+
+            var bad = UIToolkitFunctions.RunUiSteps("[{\"op\":\"sleep\",\"ms\":10},{\"op\":\"wait\",\"target\":\"" + id + "\",\"selector\":\"#missing\",\"state\":\"exists\",\"timeout_seconds\":0.2},{\"op\":\"sleep\",\"ms\":10}]");
+            yield return Await(bad);
+            var failed = JObject.FromObject(bad.Result);
+            Assert.AreEqual("STEP_FAILED", (string)failed["code"], failed.ToString());
+            Assert.AreEqual(1, (int)failed["data"]["completed"]);
+            Assert.AreEqual(1, (int)failed["data"]["failed"]["index"]);
+            Assert.AreEqual("wait", (string)failed["data"]["failed"]["op"]);
+            Assert.AreEqual("WAIT_TIMEOUT", (string)failed["data"]["failed"]["code"]);
+        }
+
+        [Test]
+        public void RunUiStepsRejectsBadInput()
+        {
+            Assert.AreEqual("INVALID_STEPS", (string)JObject.FromObject(UIToolkitFunctions.RunUiSteps("not json").Result)["code"]);
+            Assert.AreEqual("INVALID_STEPS", (string)JObject.FromObject(UIToolkitFunctions.RunUiSteps("[]").Result)["code"]);
+            var unknown = JObject.FromObject(UIToolkitFunctions.RunUiSteps("[{\"op\":\"fly\"}]").Result);
+            Assert.AreEqual("INVALID_STEP", (string)unknown["data"]["failed"]["code"], unknown.ToString());
+        }
+
         private static IEnumerator Await(System.Threading.Tasks.Task task)
         {
             // Time-based: batch-mode frames are fast, and .Result on an unfinished wait would deadlock.

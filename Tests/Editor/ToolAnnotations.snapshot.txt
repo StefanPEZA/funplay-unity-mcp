@@ -158,6 +158,7 @@ rename_game_object
 replay_execute_code destructive openworld
 request_recompile
 run_tests
+run_ui_steps
 save_all_scenes destructive idempotent
 save_prefab_stage destructive idempotent
 save_scene destructive idempotent
