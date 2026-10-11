@@ -131,13 +131,13 @@ namespace Funplay.Editor.Tests
                 () => throw new Exception("Must not read again"), () => 0, (ms, ct) => throw new Exception("Must not delay"), CancellationToken.None).GetAwaiter().GetResult();
             Assert.AreEqual("changed", (string)result["data"]["task"]["wait_reason"]);
         }
-        [TestCase(0)][TestCase(2)][TestCase(30)][TestCase(100)]
+        [TestCase(0)][TestCase(2)][TestCase(30)][TestCase(55)][TestCase(100)]
         public void WaitHasAHardTransportBoundWithoutCancellingTheTask(int seconds)
         {
             double now = 0;
             var result = MCPTaskWaiter.WaitAsync(Audit(), seconds, null, () => Task.FromResult(Audit()), () => now,
                 (ms, ct) => { now += ms / 1000d; return Task.CompletedTask; }, CancellationToken.None).GetAwaiter().GetResult();
-            Assert.AreEqual(Math.Min(30, seconds), now, .002);
+            Assert.AreEqual(Math.Min(55, seconds), now, .002);
             Assert.AreEqual("running", (string)result["data"]["task"]["status"]);
             Assert.AreEqual(seconds == 0 ? "immediate" : "timeout", (string)result["data"]["task"]["wait_reason"]);
         }
@@ -269,12 +269,22 @@ namespace Funplay.Editor.Tests
                 Params = new Dictionary<string, object> { ["name"] = "get_task" } };
             Assert.IsNull(MCPServerService.TryCreateBrokerRedeliveryResponse(request));
         }
-        [TestCase(-1)][TestCase(31)]
+        [TestCase(-1)][TestCase(56)]
         public void InvalidWaitIsRejectedBeforeStartingAnyJob(int seconds)
         {
             foreach (var response in new[] { EditorOperationFunctions.PrepareEditor(wait_seconds: seconds),
                 UIAuditFunctions.AuditUi(wait_seconds: seconds), UIPreviewFunctions.StartUiPreviewSession(wait_seconds: seconds),
                 RecordingEvidenceFunctions.ExtractRecordingFrames(wait_seconds: seconds) })
+                Assert.AreEqual("INVALID_WAIT", (string)JObject.FromObject(response)["code"]);
+        }
+        [Test] public void OnlyEditorAndTestTasksMayWaitPastThirtySeconds()
+        {
+            foreach (var kind in new[] { "editor", "tests" }) Assert.IsNull(TaskStatusService.ValidateWait(55, kind), kind);
+            foreach (var kind in new[] { "ui_audit", "ui_preview", "recording", "recording_frames" })
+                Assert.AreEqual("INVALID_WAIT", (string)JObject.FromObject(TaskStatusService.ValidateWait(31, kind))["code"], kind);
+            Assert.IsNull(TaskStatusService.ValidateWait(55, null, "tests:" + System.Guid.NewGuid().ToString("N")), "the kind comes from the task id prefix");
+            Assert.IsNotNull(TaskStatusService.ValidateWait(31), "an unknown kind keeps the 30 s cap");
+            foreach (var response in new[] { UIAuditFunctions.AuditUi(wait_seconds: 31), RecordingEvidenceFunctions.ExtractRecordingFrames(wait_seconds: 31) })
                 Assert.AreEqual("INVALID_WAIT", (string)JObject.FromObject(response)["code"]);
         }
         [Test] public void FocusedCoreRetainsDailyWorkAndSafeCancellationWhileFullKeepsManagement()

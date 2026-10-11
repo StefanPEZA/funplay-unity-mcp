@@ -106,8 +106,11 @@ namespace Funplay.Editor.Tools.Builtins
 
         [Description("Discover implemented tools versus tools currently exposed by the active Core/Full configuration, including disabled tools. This is read-only; it never enables tools. Prefer structured tools for supported tasks; execute_code is a fallback for project-specific gaps.")]
         [ReadOnlyTool]
-        public static object GetToolCapabilities([ToolParam("Optional name substring", Required = false)] string query = null)
+        public static object GetToolCapabilities([ToolParam("Optional name substring", Required = false)] string query = null,
+            [ToolParam("Reset the local per-tool usage counters (Library/FunplayMcp/usage.json) after reading them", Required = false)] bool reset_usage = false)
         {
+            var usage = ToolUsageCounter.Snapshot();
+            if (reset_usage) ToolUsageCounter.Reset();
             var settings = RootScopeServices.Services?.GetService(typeof(ISettingsController)) as ISettingsController;
             var profile = MCPToolExportPolicy.Parse(settings?.MCPToolExportProfile);
             var names = ToolRegistry.MethodCache.Keys.Concat(ToolRegistry.ManualTools.Keys).Distinct().OrderBy(x => x).Where(x => string.IsNullOrEmpty(query) || x.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0);
@@ -116,12 +119,18 @@ namespace Funplay.Editor.Tools.Builtins
                 profile = MCPToolExportPolicy.ToSettingValue(profile),
                 core_customized = settings?.MCPCoreToolsConfigured ?? false,
                 full_customized = settings?.MCPFullToolsConfigured ?? false,
-                tools = names.Select(name => new
+                tools = names.Select(name =>
                 {
-                    name, implemented = true, enabled = ToolRegistry.IsEnabled(name),
-                    exposed = ToolRegistry.IsEnabled(name) && MCPToolExportPolicy.IsToolAllowed(name, settings),
-                    read_only = ToolRegistry.GetMethod(name) != null && ToolRegistry.IsReadOnly(ToolRegistry.GetMethod(name)),
-                    role = name == "execute_code" ? "fallback" : "structured"
+                    // calls/errors only appear once a tool has been used, so unused tools cost no extra bytes.
+                    var tool = new Dictionary<string, object>
+                    {
+                        ["name"] = name, ["implemented"] = true, ["enabled"] = ToolRegistry.IsEnabled(name),
+                        ["exposed"] = ToolRegistry.IsEnabled(name) && MCPToolExportPolicy.IsToolAllowed(name, settings),
+                        ["read_only"] = ToolRegistry.GetMethod(name) != null && ToolRegistry.IsReadOnly(ToolRegistry.GetMethod(name)),
+                        ["role"] = name == "execute_code" ? "fallback" : "structured"
+                    };
+                    if (usage.TryGetValue(name, out var used)) { tool["calls"] = used.calls; if (used.errors > 0) tool["errors"] = used.errors; }
+                    return tool;
                 }).ToArray(),
                 schemas = MCPToolListChangeNotifier.SchemaStatus(),
                 hint = "If implemented but unexposed, adjust MCP Server tool exposure deliberately; do not assume the plugin lacks the capability."

@@ -13,8 +13,8 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Import external changes and verify scripts before readiness", Required = false)] bool refresh_assets = true,
             [ToolParam("Total deadline, 5..900 seconds", Required = false)] int timeout_seconds = 120,
             [ToolParam("Caller-chosen idempotency key, up to 128 characters; recommended", Required = false)] string request_key = null,
-            [ToolParam("MCP completion wait, 0..30 seconds; requires request_key for reload recovery", Required = false)] int wait_seconds = 2)
-            => TaskStatusService.ValidateWait(wait_seconds) ?? TaskStatusService.Attach("editor", EditorOperationService.Start(target, refresh_assets, timeout_seconds, request_key));
+            [ToolParam("MCP completion wait, 0..55 seconds; requires request_key for reload recovery", Required = false)] int wait_seconds = 2)
+            => TaskStatusService.ValidateWait(wait_seconds, "editor") ?? TaskStatusService.Attach("editor", EditorOperationService.Start(target, refresh_assets, timeout_seconds, request_key));
 
         [Description("Read an editor preparation by operation_id or request_key. Same ID survives domain reload. A historical ready result is separate from current_editor.ready. During HTTP reconnection retry this read, not the original mutation. Local clients can also inspect the returned journal_path while the Editor is offline.")]
         [ReadOnlyTool]
