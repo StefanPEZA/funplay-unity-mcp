@@ -80,10 +80,11 @@ namespace Funplay.Editor.Services.UnityLogs
 
             if (lines.Count == 0)
             {
+                var none = string.Equals(filter, "all", StringComparison.OrdinalIgnoreCase) ? "No log entries" : $"No {filter} entries";
                 if (sinceSeconds > 0)
-                    return $"No {filter} entries found in cached logs from the last {sinceSeconds} second(s)";
+                    return $"{none} found in cached logs from the last {sinceSeconds} second(s)";
 
-                return $"No {filter} entries found in cached logs";
+                return $"{none} found in cached logs";
             }
 
             var sb = new StringBuilder();

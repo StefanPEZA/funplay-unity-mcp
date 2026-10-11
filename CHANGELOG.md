@@ -12,7 +12,8 @@
 - `ELEMENT_NOT_FOUND` names the near-miss list (`details`) and no longer asks to pick from candidates when there are none.
 - `compose_contact_sheet`: cells take the images' shape (the largest fitted width and height) with a 4 px gutter instead of `cell_max` squares, so 16:9 captures no longer leave about 44% of the sheet as bars.
 - `SAFETY_CHECK_BLOCKED` no longer suggests Library/ or Temp/ paths for calls blocked on any path (File.Delete, Process.Start ...).
-- `get_console_logs`: "No log entries found" instead of "No all entries found".
+- `get_console_logs`: "No log entries found" instead of "No all entries found" (also from the log cache).
+- Recordings declare BT.709 colour (a `colr` box in the H.264 sample entry, added after encoding), so decoding them, e.g. in `extract_recording_frames`, no longer logs "Color primaries 0 is unknown or unsupported by WindowsMediaFoundation".
 
 ### Changed
 

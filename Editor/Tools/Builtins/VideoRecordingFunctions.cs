@@ -485,7 +485,11 @@ namespace Funplay.Editor.Tools.Builtins
                 var encoder = _encoder;
                 _encoder = null;
                 encoder?.Dispose();
-                return File.Exists(_state.path) ? new FileInfo(_state.path).Length : 0;
+                if (!File.Exists(_state.path)) return 0;
+                // Declares BT.709 so decoding (extract_recording_frames) does not warn about unknown colour primaries.
+                try { Mp4ColorTag.TryTagBt709(_state.path); }
+                catch (Exception ex) { _state.receipt_warning = "Colour tag not written: " + ex.Message; }
+                return new FileInfo(_state.path).Length;
             }
 
             public void Dispose()
