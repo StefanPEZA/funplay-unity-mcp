@@ -20,6 +20,33 @@ namespace Funplay.Editor.Tests
     public sealed class StructuredToolReturnsTests
     {
         [Test]
+        public void GetComponentProperties_ExpandsArraysAndNestedStructs()
+        {
+            var go = new GameObject("__FunplayNestedProperties", typeof(LineRenderer));
+            try
+            {
+                var line = go.GetComponent<LineRenderer>();
+                line.sharedMaterials = new Material[2];
+                var id = ObjectIdHelper.GetSerializableId(line);
+                var data = Newtonsoft.Json.Linq.JObject.FromObject(ComponentPropertyFunctions.GetComponentProperties(component_instance_id: id))["data"];
+                var properties = (Newtonsoft.Json.Linq.JArray)data["properties"];
+
+                var materials = properties.Single(p => (string)p["Name"] == "m_Materials");
+                Assert.AreEqual(Newtonsoft.Json.Linq.JTokenType.Array, materials["Value"].Type, materials.ToString());
+                Assert.AreEqual(2, ((Newtonsoft.Json.Linq.JArray)materials["Value"]).Count, materials.ToString());
+                Assert.IsNull(materials["DisplayName"], "a DisplayName that is just the nicified name is left out: " + materials);
+
+                var nested = properties.Where(p => (string)p["Type"] == "Generic" && p["Value"].Type == Newtonsoft.Json.Linq.JTokenType.Object).ToList();
+                Assert.IsNotEmpty(nested, "a serialized struct reads as {field: value}: " + properties);
+                Assert.IsFalse(properties.Any(p => (string)p["Type"] == "Generic" && p["Value"].Type == Newtonsoft.Json.Linq.JTokenType.String && (string)p["Value"] == "Generic"), properties.ToString());
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+            }
+        }
+
+        [Test]
         public void GetCameraProperties_ReturnsStructuredValues()
         {
             var cameraObject = new GameObject(

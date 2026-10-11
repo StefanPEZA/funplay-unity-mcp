@@ -126,21 +126,26 @@ namespace Funplay.Editor.Tools.Builtins
                         try
                         {
                             var report = AuditHosts(panels.SelectMany(p => p.Hosts).Distinct().ToList(), new AuditOptions { MinTouchSize = min_touch_size > 0 ? min_touch_size : 44f });
-                            audited = report.ToResponse();
+                            audited = report.ToResponse(includeNotes: false);
                         }
                         catch (Exception ex) { audited = new { audit_error = ex.Message }; }
                     }
 
                     previewed++;
-                    results.Add(new
+                    // Null fields (no capture error, no modal, nothing omitted) are left out of each size; the render
+                    // size is only given when it differs from the requested one.
+                    var sizeResult = JObject.FromObject(new
                     {
                         name = size.Name, width = size.Width, height = size.Height, dp_scale = size.DpScale,
-                        render_width = reached.width, render_height = reached.height, size_matched = reached.matched,
+                        render_width = reached.matched ? (int?)null : reached.width, render_height = reached.matched ? (int?)null : reached.height,
+                        size_matched = reached.matched,
                         settled = settle.settled, settle_frames = settle.frames,
-                        capture_path = path, capture_error = captureError,
+                        capture_path = ProjectRelative(path), capture_error = captureError,
                         audit = audited,
                         elapsed_ms = (int)sizeClock.Elapsed.TotalMilliseconds
                     });
+                    RemoveNulls(sizeResult);
+                    results.Add(sizeResult);
                 }
             }
             catch (Exception ex)
@@ -173,12 +178,38 @@ namespace Funplay.Editor.Tools.Builtins
                 game_view_restored = viewRestored,
                 extra_root_classes = classes.Length > 0 ? classes : null,
                 cannot_emulate = CannotEmulate,
+                audit_note = audit ? AuditReport.ContrastNote : null,
                 elapsed_ms = (int)clock.Elapsed.TotalMilliseconds,
                 warnings = warnings.Count > 0 ? warnings : null
             });
         }
 
         private static bool _previewRunning;
+
+        private static void RemoveNulls(JToken token)
+        {
+            if (token is JObject obj)
+            {
+                foreach (var property in obj.Properties().ToList())
+                {
+                    if (property.Value.Type == JTokenType.Null) property.Remove();
+                    else RemoveNulls(property.Value);
+                }
+            }
+            else if (token is JArray array)
+            {
+                foreach (var item in array) RemoveNulls(item);
+            }
+        }
+
+        /// <summary>A capture path under the project as a project-relative path with forward slashes.</summary>
+        private static string ProjectRelative(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return path;
+            var root = System.IO.Path.GetDirectoryName(Application.dataPath).Replace('\\', '/') + "/";
+            var normalized = path.Replace('\\', '/');
+            return normalized.StartsWith(root, StringComparison.OrdinalIgnoreCase) ? normalized.Substring(root.Length) : normalized;
+        }
 
         /// <summary>A size name as a file-name part: no separators, traversal or reserved characters.</summary>
         internal static string FileSafe(string name)

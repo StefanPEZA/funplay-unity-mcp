@@ -58,17 +58,20 @@ namespace Funplay.Editor.Tools.Builtins
             public readonly Dictionary<string, int> Counts = new Dictionary<string, int>();
             public int IndeterminateContrast, Total, Omitted;
 
-            public object ToResponse() => new
+            internal const string ContrastNote = "Contrast is only judged over solid colours; text over images, vector content or a see-through panel counts as indeterminate.";
+
+            /// <param name="includeNotes">preview_ui_toolkit states the notes once for all its sizes.</param>
+            public object ToResponse(bool includeNotes = true) => new
             {
                 hosts = Hosts,
                 counts = Counts.OrderBy(c => c.Key, StringComparer.Ordinal).ToDictionary(c => c.Key, c => c.Value),
                 indeterminate_contrast = IndeterminateContrast,
                 findings_omitted = Omitted > 0 ? (int?)Omitted : null,
-                notes = new[]
+                notes = includeNotes ? new[]
                 {
-                    "Contrast is only judged over solid colours; text over images, vector content or a see-through panel counts as indeterminate.",
+                    ContrastNote,
                     "Touch detection, the device safe area and DPI are not emulated in the Editor; pass safe_area/play_area, or use preview_ui_toolkit(audit=true) for sizes."
-                }
+                } : null
             };
         }
 

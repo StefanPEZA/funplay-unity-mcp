@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- `get_component_properties`, `get_scriptable_object` (and `find_game_objects` projections/filters) read a serialized struct or class as `"Generic"` and an array as `"<Array length=N>"`; structs and classes (also `[SerializeReference]`) now read as `{field: value}` and arrays of up to 32 elements as lists, three levels deep (an Addressables `AssetReference` shows its `m_AssetGUID`). `Vector2Int`, `Vector3Int`, `RectInt`, `BoundsInt` and `Hash128` read as values instead of their type name.
+
+### Changed
+
+- `get_component_properties` / `get_scriptable_object` leave out `DisplayName` when it is only the nicified field name (`maxDistance` → "Max Distance"); custom labels stay.
+- `preview_ui_toolkit`: each size leaves out null fields and gives `render_width`/`render_height` only when they differ from the requested size; capture paths are project-relative; the audit notes are stated once (`audit_note`) instead of in every size's audit.
+
 ## [0.9.5] - 2026-10-12
 
 ### Fixed

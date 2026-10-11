@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -24,6 +25,8 @@ namespace Funplay.Editor.Tools.Helpers
         public sealed class PropertySnapshot
         {
             public string Name;
+            /// <summary>Only when it is not just the nicified Name ("maxDistance" gives "Max Distance").</summary>
+            [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
             public string DisplayName;
             public string Type;
             public object Value;
@@ -51,7 +54,7 @@ namespace Funplay.Editor.Tools.Helpers
                     list.Add(new PropertySnapshot
                     {
                         Name = prop.name,
-                        DisplayName = prop.displayName,
+                        DisplayName = prop.displayName == ObjectNames.NicifyVariableName(prop.name) ? null : prop.displayName,
                         Type = prop.propertyType.ToString(),
                         Value = ReadPropertyValue(prop)
                     });
@@ -111,7 +114,6 @@ namespace Funplay.Editor.Tools.Helpers
             return new PropertySnapshot
             {
                 Name = name,
-                DisplayName = name,
                 Type = memberType.Name,
                 Value = ToSerializableReflectionValue(value)
             };
@@ -173,7 +175,14 @@ namespace Funplay.Editor.Tools.Helpers
             return value.ToString();
         }
 
-        internal static object ReadPropertyValue(SerializedProperty p)
+        // Nested structs/classes and arrays are expanded up to this depth, and arrays only up to this many elements;
+        // beyond either the value is a placeholder such as "<Array length=120>".
+        private const int MaxNestedDepth = 3;
+        private const int MaxExpandedArrayLength = 32;
+
+        internal static object ReadPropertyValue(SerializedProperty p) => ReadPropertyValue(p, 0);
+
+        private static object ReadPropertyValue(SerializedProperty p, int depth)
         {
             switch (p.propertyType)
             {
@@ -211,11 +220,57 @@ namespace Funplay.Editor.Tools.Helpers
                     return p.intValue;
                 case SerializedPropertyType.AnimationCurve:
                     return "<AnimationCurve>";
+                case SerializedPropertyType.Gradient:
+                    return "<Gradient>";
+                case SerializedPropertyType.Vector2Int:
+                    var v2i = p.vector2IntValue; return new { x = v2i.x, y = v2i.y };
+                case SerializedPropertyType.Vector3Int:
+                    var v3i = p.vector3IntValue; return new { x = v3i.x, y = v3i.y, z = v3i.z };
+                case SerializedPropertyType.RectInt:
+                    var ri = p.rectIntValue; return new { x = ri.x, y = ri.y, width = ri.width, height = ri.height };
+                case SerializedPropertyType.BoundsInt:
+                    var bi = p.boundsIntValue;
+                    return new { position = new { x = bi.position.x, y = bi.position.y, z = bi.position.z },
+                                 size = new { x = bi.size.x, y = bi.size.y, z = bi.size.z } };
+                case SerializedPropertyType.Hash128:
+                    return p.hash128Value.ToString();
+                case SerializedPropertyType.ManagedReference:
+                    if (string.IsNullOrEmpty(p.managedReferenceFullTypename)) return null;
+                    return ReadComposite(p, depth);
                 default:
                     if (p.isArray)
-                        return $"<Array length={p.arraySize}>";
+                    {
+                        if (depth >= MaxNestedDepth || p.arraySize > MaxExpandedArrayLength)
+                            return $"<Array length={p.arraySize}>";
+                        var items = new List<object>(p.arraySize);
+                        for (int i = 0; i < p.arraySize; i++)
+                            items.Add(ReadPropertyValue(p.GetArrayElementAtIndex(i), depth + 1));
+                        return items;
+                    }
+                    if (p.hasVisibleChildren)
+                        return ReadComposite(p, depth);
                     return p.propertyType.ToString();
             }
+        }
+
+        /// <summary>A serialized struct or class as {field: value}, or "&lt;Type&gt;" past <see cref="MaxNestedDepth"/>.</summary>
+        private static object ReadComposite(SerializedProperty p, int depth)
+        {
+            if (depth >= MaxNestedDepth)
+                return $"<{p.type}>";
+            var fields = new Dictionary<string, object>();
+            var child = p.Copy();
+            var end = p.GetEndProperty();
+            if (child.NextVisible(true))
+            {
+                do
+                {
+                    if (SerializedProperty.EqualContents(child, end)) break;
+                    fields[child.name] = ReadPropertyValue(child, depth + 1);
+                }
+                while (child.NextVisible(false));
+            }
+            return fields;
         }
 
         // ---------- Writing ----------
