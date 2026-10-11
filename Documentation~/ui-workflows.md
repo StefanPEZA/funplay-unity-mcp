@@ -159,7 +159,7 @@ reports current layout, not all possible strings or screen sizes.
 
 ## Structured inspection instead of snippets
 
-`find_game_objects` preserves its legacy simple-query result when no structured options are
+`find_game_objects` returns compact hits (id, path, active state, component names, child count) when no structured options are
 provided. With `filter`, `scope`, or `snapshot_id` it returns a bounded, paged observation:
 
 ```json

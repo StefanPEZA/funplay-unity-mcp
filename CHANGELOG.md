@@ -18,6 +18,8 @@
 - `get_tool_capabilities` lists only the exceptions per tool (`enabled`/`exposed: false`, `read_only: true`, `role: fallback`) and explains them once in `tool_defaults`; every entry used to repeat `implemented`, `enabled` and `exposed: true`.
 - `get_editor_state` reports `readiness: {ready: true}` when the editor is ready instead of repeating the play/compile flags.
 - `get_mesh_info` drops the `uvChannels` map (`populatedUVChannels` lists the same channels).
+- `analyze_scene_complexity` lists copies of one mesh once, as `78x Sticker meshes (e.g. <path>): triangles=972 each, 75,816 in total`, grouped by mesh name stem and cost and ranked by their combined cost; the top entries used to be identical lines for one mesh.
+- `get_performance_snapshot` in Edit Mode says frame timing describes Editor repaints instead of reporting figures such as "49019 FPS"; the GC estimate line appears only when it differs from Mono Used by more than 1 MB.
 - Compact pruning also covers `capture_ui_toolkit_element`, `capture_scene_view`, `capture_simulator_view`, `capture_editor_window` and `diff_visual_tree` (its counts stay), and drops `truncated`/`snapshot_updated` when false.
 
 ## [0.9.4] - 2026-10-12

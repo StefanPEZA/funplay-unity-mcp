@@ -62,7 +62,8 @@ namespace Funplay.Editor.Tools.Builtins
         }
 
         [Description("Analyze the current scene for common performance hotspots. " +
-                     "Summarizes scene complexity and lists the heaviest objects by triangle count, material count, and component count.")]
+                     "Summarizes scene complexity and lists the heaviest objects by triangle count, material count, and component count; " +
+                     "copies of one mesh are listed once with their count and total.")]
         [ReadOnlyTool]
         public static string AnalyzeSceneComplexity(
             [ToolParam("Number of heaviest objects to return", Required = false)] int top_n = 10,
@@ -88,10 +89,14 @@ namespace Funplay.Editor.Tools.Builtins
                 if (counters.TopEntries.Count > 0)
                 {
                     sb.AppendLine("Heavy Objects:");
-                    for (int i = 0; i < counters.TopEntries.Count; i++)
+                    foreach (var group in counters.TopEntries)
                     {
-                        var entry = counters.TopEntries[i];
-                        sb.AppendLine($"- {entry.Path}: triangles={entry.Triangles:N0}, materials={entry.MaterialSlots}, components={entry.ComponentCount}");
+                        var entry = group.First;
+                        if (group.Count == 1)
+                            sb.AppendLine($"- {entry.Path}: triangles={entry.Triangles:N0}, materials={entry.MaterialSlots}, components={entry.ComponentCount}");
+                        else
+                            sb.AppendLine($"- {group.Count}x {HierarchyFunctions.NameStem(entry.MeshName ?? "object")} meshes (e.g. {entry.Path}): triangles={entry.Triangles:N0} each, " +
+                                          $"{(long)entry.Triangles * group.Count:N0} in total, materials={entry.MaterialSlots}, components={entry.ComponentCount}");
                     }
                 }
 
@@ -106,6 +111,12 @@ namespace Funplay.Editor.Tools.Builtins
         private static void AppendFrameTiming(StringBuilder sb)
         {
             sb.AppendLine("Frame Timing:");
+            if (!EditorApplication.isPlaying)
+            {
+                // Between Editor repaints the frame timers measure the Editor loop (e.g. 0.02 ms, "49000 FPS"), not the game.
+                sb.AppendLine("- Edit Mode: frame timing describes Editor repaints, not the game; enter Play Mode to measure frames");
+                return;
+            }
 
             var fallbackFrameMs = Time.unscaledDeltaTime > 0f
                 ? Time.unscaledDeltaTime * 1000.0
@@ -171,7 +182,9 @@ namespace Funplay.Editor.Tools.Builtins
             sb.AppendLine($"- Total Reserved: {FormatBytes(totalReserved)}");
             sb.AppendLine($"- Unused Reserved: {FormatBytes(totalUnusedReserved)}");
             sb.AppendLine($"- Mono Used: {FormatBytes(monoUsed)} / Heap: {FormatBytes(monoHeap)}");
-            sb.AppendLine($"- GC Managed Estimate: {FormatBytes(gcTotal)}");
+            // Usually the same figure as Mono Used; only worth a line when it is not.
+            if (Math.Abs(gcTotal - monoUsed) > 1024 * 1024)
+                sb.AppendLine($"- GC Managed Estimate: {FormatBytes(gcTotal)}");
         }
 
         private static SceneCounters CollectSceneCounters(bool includeInactive, int topN)
@@ -207,6 +220,7 @@ namespace Funplay.Editor.Tools.Builtins
                 int localRendererCount = 0;
                 int localTriangles = 0;
                 int localMaterialSlots = 0;
+                string localMesh = null;
 
                 for (int i = 0; i < components.Length; i++)
                 {
@@ -233,10 +247,12 @@ namespace Funplay.Editor.Tools.Builtins
                             {
                                 counters.SkinnedMeshRendererCount++;
                                 localTriangles += GetTriangleCount(skinnedMeshRenderer.sharedMesh);
+                                if (skinnedMeshRenderer.sharedMesh != null) localMesh = skinnedMeshRenderer.sharedMesh.name;
                             }
                             break;
                         case MeshFilter meshFilter:
                             localTriangles += GetTriangleCount(meshFilter.sharedMesh);
+                            if (meshFilter.sharedMesh != null) localMesh = meshFilter.sharedMesh.name;
                             break;
                         case Collider _:
                             counters.ColliderCount++;
@@ -272,12 +288,13 @@ namespace Funplay.Editor.Tools.Builtins
 
                 if (topN > 0 && (localTriangles > 0 || localMaterialSlots > 0 || components.Length > 8))
                 {
-                    counters.TopEntries.Add(new ComplexityEntry(
+                    counters.Entries.Add(new ComplexityEntry(
                         GetTransformPath(current),
                         localTriangles,
                         localMaterialSlots,
                         components.Length,
-                        CalculateEntryScore(localTriangles, localMaterialSlots, components.Length, localRendererCount)));
+                        CalculateEntryScore(localTriangles, localMaterialSlots, components.Length, localRendererCount),
+                        localMesh));
                 }
 
                 for (int childIndex = current.childCount - 1; childIndex >= 0; childIndex--)
@@ -286,12 +303,22 @@ namespace Funplay.Editor.Tools.Builtins
                 }
             }
 
-            if (topN > 0 && counters.TopEntries.Count > 1)
+            // Copies of one mesh (26 cubies, 100 tiles, or numbered variants such as "Sticker 10", "Sticker 15") would
+            // fill the list with identical lines; group them by mesh name stem and cost, and rank a group by what all
+            // its copies cost together.
+            var groups = new Dictionary<string, EntryGroup>();
+            foreach (var entry in counters.Entries)
             {
-                counters.TopEntries.Sort((left, right) => right.Score.CompareTo(left.Score));
-                if (counters.TopEntries.Count > topN)
-                    counters.TopEntries.RemoveRange(topN, counters.TopEntries.Count - topN);
+                var key = entry.MeshName == null
+                    ? "path:" + entry.Path
+                    : $"{HierarchyFunctions.NameStem(entry.MeshName)}|{entry.Triangles}|{entry.MaterialSlots}|{entry.ComponentCount}";
+                if (groups.TryGetValue(key, out var group)) group.Count++;
+                else groups[key] = new EntryGroup { First = entry, Count = 1 };
             }
+            counters.TopEntries.AddRange(groups.Values);
+            counters.TopEntries.Sort((left, right) => ((long)right.First.Score * right.Count).CompareTo((long)left.First.Score * left.Count));
+            if (counters.TopEntries.Count > topN)
+                counters.TopEntries.RemoveRange(topN, counters.TopEntries.Count - topN);
 
             return counters;
         }
@@ -426,7 +453,14 @@ namespace Funplay.Editor.Tools.Builtins
             public int CameraCount;
             public int CanvasCount;
             public int GraphicCount;
-            public readonly List<ComplexityEntry> TopEntries = new List<ComplexityEntry>();
+            public readonly List<ComplexityEntry> Entries = new List<ComplexityEntry>();
+            public readonly List<EntryGroup> TopEntries = new List<EntryGroup>();
+        }
+
+        private sealed class EntryGroup
+        {
+            public ComplexityEntry First;
+            public int Count;
         }
 
         private readonly struct ComplexityEntry
@@ -436,10 +470,12 @@ namespace Funplay.Editor.Tools.Builtins
             public readonly int MaterialSlots;
             public readonly int ComponentCount;
             public readonly int Score;
+            public readonly string MeshName;
 
-            public ComplexityEntry(string path, int triangles, int materialSlots, int componentCount, int score)
+            public ComplexityEntry(string path, int triangles, int materialSlots, int componentCount, int score, string meshName = null)
             {
                 Path = path;
+                MeshName = meshName;
                 Triangles = triangles;
                 MaterialSlots = materialSlots;
                 ComponentCount = componentCount;

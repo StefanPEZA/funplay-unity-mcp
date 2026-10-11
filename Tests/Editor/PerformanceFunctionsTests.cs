@@ -72,6 +72,31 @@ namespace Funplay.Editor.Tests
             }
         }
 
+        [Test]
+        public void AnalyzeSceneComplexity_ListsCopiesOfOneMeshOnce()
+        {
+            // Runs in whatever scene is open (the test runner's untitled scene included), so it is not skipped like
+            // the multi-scene test above.
+            var root = new GameObject("PerformanceGroupRoot_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                for (var i = 0; i < 4; i++)
+                {
+                    var copy = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                    copy.transform.SetParent(root.transform);
+                    copy.GetComponent<Renderer>().sharedMaterial = null; // one slot each, whatever the default material
+                }
+                var analysis = PerformanceFunctions.AnalyzeSceneComplexity(top_n: 25, include_inactive: true);
+                StringAssert.IsMatch(@"- \d+x Cube meshes \(e\.g\. [^)]*PerformanceGroupRoot_", analysis);
+                StringAssert.Contains("triangles=12 each", analysis);
+                StringAssert.DoesNotContain(root.name + "/Cube: triangles=12", analysis, "copies are not listed one by one");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+        }
+
         private static bool CanRestoreSceneSetup(SceneSetup[] setup)
         {
             foreach (var scene in setup)
