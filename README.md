@@ -409,7 +409,7 @@ The table below compares this repository with Unity Technologies' official `com.
 | License | MIT, open source | Unity Terms of Service, proprietary |
 | Deployment | Local HTTP MCP server in Editor, no cloud | Editor + native Relay subprocess + Unity Cloud backend |
 | Billing | Free, user brings their own AI client | Credits-based (Unity Dashboard) |
-| Tool exposure | 203 tools across 44 modules, `core` (57 + UI pack) / `full` profiles | ~15 MCP tools (mostly `Manage*` families) |
+| Tool exposure | 203 tools across 44 modules, `core` (59 + UI pack) / `full` profiles | ~15 MCP tools (mostly `Manage*` families) |
 | Generic escape hatch | `execute_code` — Roslyn-first in-memory compile, `IFunplayCommand` + Undo, no sandbox (client-side approval) | `RunCommand` — namespace blacklist sandbox |
 | Play mode validation | Full loop: enter / simulate input / capture / read logs / exit | Enter/Exit only; no input simulation |
 | Asset generators | Not built-in (compose external APIs via `execute_code`) | Native Image / Mesh / PBR / Sound / Animation generators |
