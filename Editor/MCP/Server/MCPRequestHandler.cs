@@ -173,7 +173,8 @@ namespace Funplay.Editor.MCP.Server
                     Id = request.Id,
                     Result = new Dictionary<string, object>
                     {
-                        ["content"] = BuildContentFromResult(result)
+                        ["content"] = BuildContentFromResult(ResponsePruner.Prune(toolName, result,
+                            arguments.TryGetValue("detail", out var detail) ? detail as string : null))
                     }
                 };
             }

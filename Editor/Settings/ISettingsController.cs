@@ -47,6 +47,12 @@ namespace Funplay.Editor.Settings
         bool PluginDebugLoggingEnabled { get; set; }
         bool MCPRecentActivityExpandedByDefault { get; set; }
         bool MCPBrokerModeEnabled { get; set; }
+
+        /// <summary>
+        /// True (default): receipt, capture and echo tools return compact results. False restores the 0.8.6 shapes.
+        /// A tool's own <c>detail</c> argument overrides this per call.
+        /// </summary>
+        bool MCPCompactResponses { get; set; }
         string MCPBrokerMonoPath { get; set; }
 
         /// <summary>

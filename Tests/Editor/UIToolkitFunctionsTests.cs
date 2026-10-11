@@ -358,7 +358,7 @@ namespace Funplay.Editor.Tests
             Assert.IsTrue((bool)click["success"], click.ToString());
             Assert.AreEqual(UIToolkitPanels.PathOf(liveRoot, custom), (string)click["data"]["element"]["path"], click.ToString());
             Assert.AreEqual(1, clicks);
-            var labelOnly = JObject.FromObject(UIToolkitFunctions.ClickElement(id, "Label", "Klotski", null, "left", false));
+            var labelOnly = JObject.FromObject(UIToolkitFunctions.ClickElement(id, "Label", "Klotski", null, "left", false, false, "full"));
             Assert.IsTrue((bool)labelOnly["success"], "an explicit Label selector keeps the label: " + labelOnly);
             Assert.AreEqual("Label", (string)labelOnly["data"]["element"]["type"]);
         }

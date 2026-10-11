@@ -397,11 +397,12 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Element path relative to one host: child indices from get_visual_tree (shift when the tree changes) or '/'-separated selectors over direct children, e.g. '#menu/Button:nth-of-type(2)'", Required = false)] string element_path = null,
             [ToolParam("left, right or middle", Required = false)] string button = "left",
             [ToolParam("Click even when another element covers the center", Required = false)] bool allow_covered = false,
-            [ToolParam("Scroll enclosing ScrollViews so a clipped element is in view before clicking", Required = false)] bool scroll_into_view = false)
+            [ToolParam("Scroll enclosing ScrollViews so a clipped element is in view before clicking", Required = false)] bool scroll_into_view = false,
+            [ToolParam("compact (default) or full: full echoes the complete element description", Required = false)] string detail = null)
         {
             if (!EditorApplication.isPlaying)
                 return Response.Error("PLAY_MODE_REQUIRED", new { hint = "UI callbacks are registered by runtime scripts; enter Play Mode first." });
-            return ClickElement(target, selector, text, element_path, button, allow_covered, scroll_into_view);
+            return ClickElement(target, selector, text, element_path, button, allow_covered, scroll_into_view, detail);
         }
 
         [Description("Scroll a UI Toolkit ScrollView (Edit or Play Mode; scroll state is not saved). Without deltas, scrolls every ScrollView around the matched element until it is in view (ScrollView.ScrollTo): the fix for ELEMENT_CLIPPED from click_ui_toolkit_element. With delta_x/delta_y (panel pixels; positive scrolls right/down), offsets the matched ScrollView, or the nearest one around the matched element; the ScrollView clamps the offset. Match by selector (Type#name.class), exact text and/or element_path as for clicks. Reports offsets and the element's visible_fraction afterwards.")]
@@ -478,7 +479,7 @@ namespace Funplay.Editor.Tools.Builtins
             catch (Exception ex) { return Response.Error("UI_TOOLKIT_SCROLL_FAILED", new { detail = ex.Message }); }
         }
 
-        internal static object ClickElement(string target, string selector, string text, string elementPath, string button, bool allowCovered, bool scrollIntoView = false)
+        internal static object ClickElement(string target, string selector, string text, string elementPath, string button, bool allowCovered, bool scrollIntoView = false, string detail = null)
         {
             try
             {
@@ -539,6 +540,7 @@ namespace Funplay.Editor.Tools.Builtins
                 var result = UIToolkitPanels.DispatchClick(panel, dispatchTarget, point, (int)inputButton);
                 var scheduler = result.Activated ? null : SchedulerStallMonitor.Report(UIToolkitPanels.GetRoot(matchHost));
                 var who = receiver is Button ? "the button" : "the receiver";
+                var compactEcho = ResponseDetail.IsCompact(detail);
                 var message = !result.Activated ? $"Pointer sequence sent to {Label(matched)}, but no ClickEvent or click handler reached it."
                     : result.ReceiverDetached ? $"Clicked {Label(matched)}; {who} was removed from its panel."
                     : result.ReceiverDisabled ? $"Clicked {Label(matched)}; {who} disabled itself."
@@ -546,9 +548,10 @@ namespace Funplay.Editor.Tools.Builtins
                 return Response.Success(message, new
                 {
                     host_id = ObjectIdHelper.GetSerializableId(matchHost.gameObject),
-                    element = UIToolkitPanels.DescribeElement(matched, matchPath, mapping, renderHeight, false),
-                    dispatched_to = Label(dispatchTarget),
-                    click_receiver = receiver != null ? Label(receiver) : null,
+                    element = compactEcho ? EchoElement(matched, matchPath)
+                        : UIToolkitPanels.DescribeElement(matched, matchPath, mapping, renderHeight, false),
+                    dispatched_to = compactEcho && ReferenceEquals(dispatchTarget, matched) ? null : Label(dispatchTarget),
+                    click_receiver = receiver != null && !(compactEcho && ReferenceEquals(receiver, matched)) ? Label(receiver) : null,
                     clicked = result.Activated,
                     handler_invoked = result.HandlerInvoked,
                     click_event_received = result.ClickEventReceived,
@@ -662,6 +665,9 @@ namespace Funplay.Editor.Tools.Builtins
         /// get_visual_tree's compact element: no null/empty fields, and panel_bounds/render_bottom_left
         /// dropped when screen bounds exist (image_top_left and center_render_pixels carry the same rect).
         /// </summary>
+        /// <summary>The compact echo of an element an action touched: where it is and what it is called.</summary>
+        internal static object EchoElement(VisualElement element, string path) => new { path, label = Label(element) };
+
         internal static JObject CompactElement(object described)
         {
             var json = JObject.FromObject(described);

@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Compact tool replies by default: capture tools return `geometry: {capture_id, size}` (plus `render`, `viewport`, `surface` only when they differ); the full contract stays available from `get_visual_coordinates(capture_id)`. `click_ui_toolkit_element` echoes `{path, label}`. Receipt and echo tools (`get_task`, `prepare_editor`, `run_tests`, play-mode toggles, UI Toolkit actions, captures) omit null/empty fields and a fixed list of default-`false` flags (absent means false). Data readers (`execute_code`, `get_visual_tree`, `get_component_properties`, ...) are never changed.
+- Turn this off with the new "Compact tool responses" toggle in the MCP window (`mcpCompactResponses`), or per call with `detail="full"` on `capture_game_view`, `capture_ui_toolkit_element` and `click_ui_toolkit_element`. New parameters need an MCP client reconnect (`/mcp` in Claude Code).
+
 ## [0.8.6] - 2026-10-10
 
 ### Added
