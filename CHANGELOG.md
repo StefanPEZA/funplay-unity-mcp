@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.3] - 2026-10-12
+
+### Fixed
+
+- `tools/list` contained `"default":-Infinity` (the `normalized_time` default of `play_animator_state`), which is not valid JSON. Strict clients such as Claude Code (Node) rejected the whole response, so the server showed "connected" with "Connection closed" and no tools. Non-finite number defaults are now omitted from tool schemas, and a test guards every registered tool.
+- `ping` now returns an empty result instead of "Method not found".
+
 ## [0.9.2] - 2026-10-11
 
 ### Fixed

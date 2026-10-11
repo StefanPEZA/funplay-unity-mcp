@@ -124,7 +124,11 @@ namespace Funplay.Editor.Tools
                 case "integer":
                     return Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
                 case "number":
-                    return Convert.ToDouble(value, System.Globalization.CultureInfo.InvariantCulture);
+                    {
+                        // NaN/Infinity sentinels ("omit") have no JSON form; emitting them breaks strict clients.
+                        var number = Convert.ToDouble(value, System.Globalization.CultureInfo.InvariantCulture);
+                        return double.IsNaN(number) || double.IsInfinity(number) ? null : (object)number;
+                    }
                 case "string":
                     return value is Enum ? value.ToString() : value as string;
                 default:

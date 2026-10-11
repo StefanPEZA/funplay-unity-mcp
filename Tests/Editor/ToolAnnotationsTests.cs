@@ -29,6 +29,19 @@ namespace Funplay.Editor.Tests
         }
 
         [Test]
+        public void NoToolSchemaDefaultIsNonFiniteNumber()
+        {
+            // NaN/Infinity are not valid JSON; a strict client (Node) rejects the whole tools/list.
+            var bad = ToolSchemaBuilder.BuildAll()
+                .SelectMany(tool => tool.function.parameters.properties
+                    .Where(p => p.Value.defaultValue is double d && (double.IsNaN(d) || double.IsInfinity(d)))
+                    .Select(p => tool.function.name + "." + p.Key))
+                .ToArray();
+
+            CollectionAssert.IsEmpty(bad);
+        }
+
+        [Test]
         public void ClassificationListsOnlyNameRegisteredTools()
         {
             var lists = ToolAnnotations.Destructive

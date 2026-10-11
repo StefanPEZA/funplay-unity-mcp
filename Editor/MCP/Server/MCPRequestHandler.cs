@@ -70,6 +70,7 @@ namespace Funplay.Editor.MCP.Server
                     "initialize" => HandleInitialize(request),
                     "notifications/initialized" => null,
                     "notifications/cancelled" => null,
+                    "ping" => new MCPResponse { Id = request.Id, Result = new Dictionary<string, object>() },
                     "tools/list" => HandleToolsList(request),
                     "tools/call" => await HandleToolsCallAsync(request, ct).ConfigureAwait(false),
                     "prompts/list" => HandlePromptsList(request),
