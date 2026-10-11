@@ -62,7 +62,8 @@ namespace Funplay.Editor.Tools.Builtins
                     var blocked = Response.Error("SAFETY_CHECK_BLOCKED",
                         new
                         {
-                            pattern,
+                            // The matched code, not the ~300-byte regex: it names the offending text and costs a fraction.
+                            matched = MatchedText(code, pattern),
                             reason,
                             strict_filesystem_checks = strictFilesystemChecks,
                             hint = "Strict filesystem safety allows writes to project-relative paths under Library/ or Temp/ (e.g. \"Library/FunplayMcp/crop.png\" or Path.Combine(\"Temp\", \"out.txt\")). Otherwise disable the strict filesystem guard in the MCP Settings window or pass safety_checks=false only for trusted local calls."
@@ -132,6 +133,12 @@ namespace Funplay.Editor.Tools.Builtins
                     outer_message = ReferenceEquals(root, ex) ? null : ex.Message
                 });
             }
+        }
+
+        internal static string MatchedText(string code, string pattern)
+        {
+            var value = Regex.Match(code ?? string.Empty, pattern).Value.Trim();
+            return value.Length > 80 ? value.Substring(0, 80) + "..." : value;
         }
 
         internal static Exception UnwrapTargetInvocationException(Exception exception)

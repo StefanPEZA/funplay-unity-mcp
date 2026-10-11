@@ -6,6 +6,25 @@
 
 - Compact tool replies by default: capture tools return `geometry: {capture_id, size}` (plus `render`, `viewport`, `surface` only when they differ); the full contract stays available from `get_visual_coordinates(capture_id)`. `click_ui_toolkit_element`, `scroll_ui_toolkit`, `pointer_ui_toolkit` and successful `wait_for_ui_toolkit` echo `{path, label}`. `extract_recording_frames` and `get_recording_frame` return frames as `{index, actual_seconds, delta_seconds, path}` with one shared `frame_size` and `geometry`. Receipt and echo tools (`get_task`, `prepare_editor`, `run_tests`, play-mode toggles, UI Toolkit actions, captures) omit null/empty fields and a fixed list of default-`false` flags (absent means false). Data readers (`execute_code`, `get_visual_tree`, `get_component_properties`, ...) are never changed.
 - Turn this off with the new "Compact tool responses" toggle in the MCP window (`mcpCompactResponses`), or per call with `detail="full"` on `capture_game_view`, `capture_ui_toolkit_element`, the UI Toolkit action tools above, `extract_recording_frames` and `get_recording_frame`. New parameters need an MCP client reconnect (`/mcp` in Claude Code).
+- `wait_seconds` may be up to 55 for editor and test tasks (30 for other kinds), halving the polls for long compiles and test runs.
+- Task receipts are compact: `phase` absent = status, `changed` absent = true, 16-character `revision` (16 or 64 accepted as `after_revision`), `operation.history` only on failure, `current_editor` is `{ready:true}` when ready, an unchanged poll returns only `task`, and `jobId` is dropped beside `task_id` (`tests:<jobId>`).
+- A `prepare_editor` or `start_ui_preview_session` call with a `request_key` that a domain reload interrupts now returns a success receipt (`status: running`, `phase: reloading`) instead of the `RELOAD_IN_PROGRESS` error.
+- `enter_play_mode` reports `refresh_needed` when script files changed; `request_recompile` is a deprecated alias of `prepare_editor(target=edit, refresh_assets=true)`.
+- `SAFETY_CHECK_BLOCKED` returns the matched code (`matched`) instead of the raw regex.
+- `frame_debugger_disable` restores the Play Mode pause state that enabling changed.
+- Shorter server instructions and `execute_code` description.
+
+### Added
+
+- `execute_code` body form: write plain statements, `ctx` is in scope and `return expr;` sets `returnValue`; System, Linq, UnityEngine, UnityEditor, UIElements and Reflection usings are included (UIElements is skipped when the snippet names `UnityEngine.UI`). The wrapper qualifies `ExecutionContext`, so `using System.Threading;` no longer breaks it. Type declarations are found by a small lexer, not `Contains("class ")`. Compile errors CS0535/CS0738, CS1061 (`Q`) and CS0619 return a one-line `fix`.
+- `execute_code(save_as=..., snippet=..., args=...)`: named snippets under `Library/FunplayMcp/Snippets`, `ctx.Args`, and a compile cache so a repeated snippet is not recompiled.
+- `run_ui_steps`: several UI Toolkit actions (click, wait, scroll, set_value, sleep) in one call, stopping at the first failure.
+- `capture_game_view(region, max_size)` and `compose_contact_sheet(paths)` reduce image tokens; a paused Play Mode capture now advances one frame first (`step_if_paused`).
+- `if_revision` on `get_visual_tree`, `get_hierarchy`, `get_scene_info`, `get_component_properties`, `get_console_logs`: replies of 1 KB or more carry a `revision`, and a repeat with the same revision returns `{unchanged:true}`.
+- `get_console_logs`: whole multi-line messages (2,000 characters), `after_cursor`, and `since_seconds` on an empty cache returns zero entries instead of `INVALID_SINCE_SECONDS`.
+- Local per-tool call and error counts in `Library/FunplayMcp/usage.json` (never sent anywhere), shown by `get_tool_capabilities`; `reset_usage=true` clears them.
+- `render` optional tool pack (materials, lighting settings, frame timing, counters); `mark_recording` is now in Core.
+- `ELEMENT_NOT_FOUND` from UI Toolkit tools lists up to five near-miss `candidates`; finished test jobs stay readable by id after a new run starts (last 8).
 
 ## [0.8.6] - 2026-10-10
 
