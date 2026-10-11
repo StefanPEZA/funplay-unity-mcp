@@ -362,6 +362,12 @@ namespace Funplay.Editor.MCP.Server
                         return;
                     }
 
+                    if (MCPLongWait.TryPlan(request, httpRequest.AcceptsEventStream, out var progressToken, out var longSeconds))
+                    {
+                        await ServeLongWaitAsync(stream, request, requestReceived, progressToken, longSeconds, ct);
+                        return;
+                    }
+
                     var responseTcs = new TaskCompletionSource<MCPResponse>();
                     requestReceived.Invoke(request, r => responseTcs.TrySetResult(r));
 
@@ -413,6 +419,46 @@ namespace Funplay.Editor.MCP.Server
                 Debug.LogError($"[Funplay MCP Server] Error handling request: {ex.Message}");
                 if (stream != null)
                     await SendErrorResponseAsync(stream, request?.Id, -32603, $"Internal error: {ex.Message}", CancellationToken.None);
+            }
+        }
+
+        /// <summary>
+        /// Answers a long get_task wait as an SSE stream: read-only slices of the wait, a progress notification at
+        /// least every MCPLongWait.HeartbeatSeconds, then the final reply. See <see cref="MCPLongWait"/>.
+        /// </summary>
+        private async Task ServeLongWaitAsync(NetworkStream stream, MCPRequest request, Action<MCPRequest, Action<MCPResponse>> handler,
+            object progressToken, int totalSeconds, CancellationToken ct)
+        {
+            async Task Write(string text)
+            {
+                var bytes = Encoding.UTF8.GetBytes(text);
+                await stream.WriteAsync(bytes, 0, bytes.Length, ct);
+            }
+
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            MCPResponse last = null;
+            try
+            {
+                await Write(MCPLongWait.StreamHeaders);
+                while (true)
+                {
+                    var remaining = totalSeconds - (int)clock.Elapsed.TotalSeconds;
+                    var tcs = new TaskCompletionSource<MCPResponse>();
+                    handler(MCPLongWait.Slice(request, Math.Max(1, Math.Min(MCPLongWait.SliceSeconds, remaining))), r => tcs.TrySetResult(r));
+                    while (!tcs.Task.IsCompleted)
+                    {
+                        var done = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(MCPLongWait.HeartbeatSeconds), ct));
+                        if (done != tcs.Task) await Write(MCPLongWait.ProgressEvent(progressToken, (int)clock.Elapsed.TotalSeconds, totalSeconds));
+                    }
+                    last = await tcs.Task;
+                    if (MCPLongWait.IsFinal(last) || clock.Elapsed.TotalSeconds >= totalSeconds - 0.5) break;
+                    await Write(MCPLongWait.ProgressEvent(progressToken, (int)clock.Elapsed.TotalSeconds, totalSeconds));
+                }
+                await Write(MCPLongWait.FinalEvent(SerializeResponse(last ?? CreateErrorResponse(request.Id, -32000, "No reply"))));
+            }
+            catch (Exception ex) when (IsExpectedClientDisconnect(ex, ct))
+            {
+                PluginDebugLogger.Log($"[Funplay MCP Server] Long wait ended because the client disconnected: {ex.Message}");
             }
         }
 
