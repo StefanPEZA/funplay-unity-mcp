@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Broker mode: a request sent while Unity reloads its domain is now held for the next domain's session instead of failing at once with "backend is reloading". A reload detach tells the broker to wait up to 120 s; held requests fail as before if no session comes back. Broker protocol bumped to 6.
+- `execute_code` body form: `UnityEngine.UIElements` was dropped whenever the snippet contained the text `UnityEngine.UI`, including `UnityEngine.UIElements.VisualElement` and comments; only the uGUI namespace itself (outside comments and strings) skips it now. Compile errors report the snippet's own line numbers instead of the generated wrapper's.
+- `prepare_editor(refresh_assets=true)` re-resolves packages when `Packages/manifest.json` changed (AssetDatabase.Refresh does not), so a version bump or a switch to a local `file:` package is picked up without focusing the Editor.
+- `run_tests` with filters that match nothing reported `resultState: Passed`; it now reports `NoTestsRan` with a hint about fully qualified names.
+- `run_ui_steps`: a failed step's data (near-miss `details`, last observed state) is an object in `failed`, not an escaped JSON string.
+- `ELEMENT_NOT_FOUND` names the near-miss list (`details`) and no longer asks to pick from candidates when there are none.
+- `compose_contact_sheet`: cells take the images' shape (the largest fitted width and height) with a 4 px gutter instead of `cell_max` squares, so 16:9 captures no longer leave about 44% of the sheet as bars.
+- `SAFETY_CHECK_BLOCKED` no longer suggests Library/ or Temp/ paths for calls blocked on any path (File.Delete, Process.Start ...).
+- `get_console_logs`: "No log entries found" instead of "No all entries found".
+
+### Changed
+
+- `record_game_view` (and its `get_task`) replies are compact: `size: [w, h]`, rounded times, compact `geometry`, no `mime_type`, `has_audio`, `started_at`, zero `bytes` or `dropped_markers`. `detail="full"` returns the previous receipt.
+- `get_visual_tree(compact=true)` also drops null host fields (`nested_hosts`, `scheduler`, `findings_omitted`), empty findings, `truncated: false` and null envelope fields; an empty `elements` list stays.
+- Compact task receipts drop the legacy top-level `poll_after_ms` when it equals `task.poll_after_ms`; recording frames round times to 4 decimals and drop `geometry.size` (it is `frame_size`).
+
 ## [0.9.3] - 2026-10-12
 
 ### Fixed

@@ -573,6 +573,57 @@ namespace Funplay.Editor
         }
 
         [UnityTest]
+        public IEnumerator BrokerTransport_RequestDuringReloadIsHeldForTheNextSession()
+        {
+            var root = CreateTempRoot();
+            var paths = CreateBrokerPaths(root);
+            var port = GetFreeTcpPort();
+            MCPBrokerClientTransport firstTransport = null;
+            MCPBrokerClientTransport secondTransport = null;
+
+            try
+            {
+                var mono = MCPBrokerProcessManager.ResolveMono(string.Empty);
+                Assume.That(!string.IsNullOrEmpty(mono), "Unity-bundled Mono is required for broker process tests.");
+
+                yield return AssertOffMainThread(() => MCPBrokerProcessManager.EnsureRunning(port, mono, paths));
+                Assert.IsTrue(MCPBrokerProcessManager.TryGetConnectionInfo(paths, port, out var connection));
+
+                firstTransport = new MCPBrokerClientTransport(port, connection.Token);
+                var firstStart = firstTransport.StartAsync();
+                yield return WaitForTask(firstStart);
+                Assert.IsTrue(firstStart.Result);
+
+                // The domain reload: the old session detaches saying it will be back.
+                MCPBrokerClientTransport.DetachingForReload = true;
+                try { firstTransport.Dispose(); }
+                finally { MCPBrokerClientTransport.DetachingForReload = false; }
+                firstTransport = null;
+
+                var requestTask = SendToolCallAsync(port, "get_editor_state");
+                yield return new WaitForSecondsRealtime(1.5f);
+                Assert.IsFalse(requestTask.IsCompleted, "a request during a reload waits for the next session: " + (requestTask.IsCompleted ? requestTask.Result : ""));
+
+                secondTransport = new MCPBrokerClientTransport(port, connection.Token);
+                secondTransport.OnRequestReceived += (request, sendResponse) => sendResponse(CreateToolTextResponse(request.Id, "held-until-reattach"));
+                var secondStart = secondTransport.StartAsync();
+                yield return WaitForTask(secondStart);
+                Assert.IsTrue(secondStart.Result);
+
+                yield return WaitForTask(requestTask, 8f);
+                Assert.That(requestTask.Result, Does.Contain("held-until-reattach"));
+            }
+            finally
+            {
+                MCPBrokerClientTransport.DetachingForReload = false;
+                secondTransport?.Dispose();
+                firstTransport?.Dispose();
+                MCPBrokerProcessManager.Stop(paths);
+                DeleteTempRoot(root);
+            }
+        }
+
+        [UnityTest]
         public IEnumerator BrokerTransport_StaleSessionIsSweptSoNewRequestsFailFast()
         {
             var root = CreateTempRoot();

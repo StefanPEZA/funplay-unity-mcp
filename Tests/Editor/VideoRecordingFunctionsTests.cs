@@ -67,6 +67,29 @@ namespace Funplay.Editor.Tests
         }
 
         [Test]
+        public void CompactReceipt_KeepsDecisionFieldsAndDropsConstants()
+        {
+            var state = new RecordingState
+            {
+                recording_id = "r1", status = "completed", path = "C:/p/r1.mp4", width = 480, height = 270, fps = 30,
+                duration_seconds = 2, frame_count = 60, elapsed_seconds = 2.000429199999985, last_frame_seconds = 1.993203499999936,
+                ready = true, bytes = 1234, stop_reason = "duration_limit", started_at = "2026-10-11T21:07:34Z",
+                geometry = new Funplay.Editor.Tools.Helpers.VisualGeometry
+                    { capture_id = "c1", surface = "game_view", render_width = 958, render_height = 539, output_width = 480, output_height = 270 }
+            };
+            var compact = Newtonsoft.Json.Linq.JObject.FromObject(View(state, "compact"));
+            foreach (var key in new[] { "recording_id", "status", "path", "ready", "stop_reason", "frame_count", "bytes" })
+                Assert.IsNotNull(compact[key], key + " stays: " + compact);
+            foreach (var key in new[] { "mime_type", "has_audio", "started_at", "width", "height", "dropped_markers" })
+                Assert.IsNull(compact[key], key + " is dropped: " + compact);
+            Assert.AreEqual(new[] { 480, 270 }, compact["size"].Select(t => (int)t).ToArray());
+            Assert.AreEqual(2.0, (double)compact["elapsed_seconds"]);
+            Assert.AreEqual(new[] { 958, 539 }, compact["geometry"]["render"].Select(t => (int)t).ToArray());
+            Assert.IsNull(compact["geometry"]["note"], compact.ToString());
+            Assert.AreSame(state, View(state, "full"));
+        }
+
+        [Test]
         public void ViewVisibility_RejectsMissingOrUnhostedWindow()
         {
             Assert.IsFalse(IsViewRendering(null));

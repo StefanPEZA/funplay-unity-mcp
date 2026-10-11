@@ -60,6 +60,8 @@ namespace Funplay.Editor.MCP.Server
                 var mcpServer = RootScopeServices.Services?.GetService(typeof(MCPServerService)) as MCPServerService;
                 if (mcpServer?.IsRunning == true)
                 {
+                    // Tells the broker this is a reload, so it holds new requests for the next domain's session.
+                    MCPBrokerClientTransport.DetachingForReload = true;
                     // Must run synchronously: Unity unloads the AppDomain right after this callback
                     // returns and will not wait for a fire-and-forget Stop task. Awaiting was the
                     // root cause of port 8765 staying bound across reloads (issue #1).

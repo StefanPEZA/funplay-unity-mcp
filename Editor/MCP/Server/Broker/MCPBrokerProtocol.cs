@@ -15,7 +15,7 @@ namespace Funplay.Editor.MCP.Server
         //     body. Replaces older brokers that returned a JSON-RPC reply with id:null.
         // v5: OAuth discovery/registration paths (/.well-known/*, /register, /authorize, /token)
         //     answer 404 instead of being treated as JSON-RPC, so MCP clients skip OAuth.
-        public const int Version = 5;
+        public const int Version = 6;
         public const string Name = "funplay-unity-mcp-broker";
         public const string HealthPath = "/_funplay/broker/health";
         public const string AttachPath = "/_funplay/broker/attach";

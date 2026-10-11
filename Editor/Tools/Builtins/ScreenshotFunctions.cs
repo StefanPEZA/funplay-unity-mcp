@@ -261,7 +261,7 @@ namespace Funplay.Editor.Tools.Builtins
             }
         }
 
-        [Description("Arrange up to 16 PNG files (paths under the project, e.g. from save_to_file captures) into one grid image so several states or sizes are viewed in one image. Cells are row by row, each fitted into cell_max pixels. Returns the sheet and the cell order.")]
+        [Description("Arrange up to 16 PNG files (paths under the project, e.g. from save_to_file captures) into one grid image so several states or sizes are viewed in one image. Cells are row by row; each image is fitted into cell_max pixels and cells take the images' shape, so same-sized captures leave no bars. Returns the sheet and the cell order.")]
         public static string ComposeContactSheet(
             [ToolParam("JSON array of PNG paths under the project root, e.g. [\"Library/a.png\",\"Library/b.png\"]")] string paths,
             [ToolParam("Columns, 1..8", Required = false)] int columns = 4,

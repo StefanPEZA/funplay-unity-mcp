@@ -101,7 +101,7 @@ namespace Funplay.Editor.Tests
             repository?.StartListening();
             var result = Funplay.Editor.Tools.Builtins.VisualFeedbackFunctions.GetConsoleLogs(clear_cache: true, since_seconds: 5);
             StringAssert.DoesNotContain("INVALID_SINCE_SECONDS", result);
-            StringAssert.Contains("No all entries found", result);
+            StringAssert.Contains("No log entries found", result);
         }
 
         [Test]

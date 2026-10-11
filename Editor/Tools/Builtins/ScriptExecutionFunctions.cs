@@ -59,6 +59,8 @@ namespace Funplay.Editor.Tools.Builtins
                 var strictFilesystemChecks = ResolveStrictFilesystemSafety();
                 if (ExecuteCodeSafetyPolicy.TryFindViolation(code, strictFilesystemChecks, out var pattern, out var reason))
                 {
+                    // A base rule (File.Delete, Process.Start ...) blocks whatever the path; only the strict rules allow Library/ and Temp/.
+                    var baseRule = ExecuteCodeSafetyPolicy.TryFindViolation(code, false, out _, out _);
                     var blocked = Response.Error("SAFETY_CHECK_BLOCKED",
                         new
                         {
@@ -66,7 +68,9 @@ namespace Funplay.Editor.Tools.Builtins
                             matched = MatchedText(code, pattern),
                             reason,
                             strict_filesystem_checks = strictFilesystemChecks,
-                            hint = "Strict filesystem safety allows writes to project-relative paths under Library/ or Temp/ (e.g. \"Library/FunplayMcp/crop.png\" or Path.Combine(\"Temp\", \"out.txt\")). Otherwise disable the strict filesystem guard in the MCP Settings window or pass safety_checks=false only for trusted local calls."
+                            hint = baseRule
+                                ? "This call is blocked on any path (see reason). Use a structured tool (e.g. delete_asset), or pass safety_checks=false only for trusted local calls."
+                                : "Strict filesystem safety allows writes to project-relative paths under Library/ or Temp/ (e.g. \"Library/FunplayMcp/crop.png\" or Path.Combine(\"Temp\", \"out.txt\")). Otherwise disable the strict filesystem guard in the MCP Settings window or pass safety_checks=false only for trusted local calls."
                         });
                     AppendHistory(code, false, $"Blocked: {reason}", preferred_namespaces);
                     return blocked;
@@ -743,11 +747,12 @@ namespace Funplay.Editor.Tools.Builtins
         // A body (statements, no type): runs as an IFunplayCommand so `ctx` is available and `return expr;` becomes
         // ctx.ReturnValue. UIElements/Reflection are added unless the snippet names the uGUI namespace, whose
         // Button/Image/Slider/Toggle would otherwise be ambiguous. The context type is fully qualified because a
-        // user's `using System.Threading;` makes the short name ambiguous.
-        private static string WrapCode(string code, string className, string projectUsings)
+        // user's `using System.Threading;` makes the short name ambiguous. `#line` maps compiler errors back to the
+        // snippet's own line numbers.
+        internal static string WrapCode(string code, string className, string projectUsings)
         {
-            var body = SnippetSyntax.SplitLeadingUsings(code, out var userUsings);
-            var uiElements = code.Contains("UnityEngine.UI") ? string.Empty : "using UnityEngine.UIElements;\n";
+            var body = SnippetSyntax.SplitLeadingUsings(code, out var userUsings, out var bodyFirstLine);
+            var uiElements = SnippetSyntax.NamesUguiNamespace(code) ? string.Empty : "using UnityEngine.UIElements;\n";
             return $@"using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -766,7 +771,9 @@ public sealed class {className} : {FunplayScriptingNamespace}.IFunplayCommand
 
     private object Body({FunplayScriptingNamespace}.ExecutionContext ctx)
     {{
-        {body}
+#line {bodyFirstLine}
+{body}
+#line default
         return null;
     }}
 }}";

@@ -19,9 +19,12 @@ namespace Funplay.UnityMcp.Broker
     {
         // v4 acknowledges empty backend pushes with HTTP 202 and no body. Older brokers
         // are replaced on package upgrade. Keep in sync with MCPBrokerProtocol.Version.
-        private const int ProtocolVersion = 5;
+        private const int ProtocolVersion = 6;
         private const int PullTimeoutMs = 25000;
         private const long HoldDeadlineMs = 300000;
+        // After a detach for a domain reload, new client requests are held this long for the next session
+        // instead of failing at once; a reload that never comes back fails them when it runs out.
+        private const long ReloadGraceMs = 120000;
         private const int MaxHeaderBytes = 64 * 1024;
         private const int MaxBodyBytes = 32 * 1024 * 1024;
         private const int BackendUnavailableCode = -32001;
@@ -49,6 +52,8 @@ namespace Funplay.UnityMcp.Broker
         private static string Token;
         private static long Sequence;
         private static bool Stopping;
+        // Epoch ms until which a reloading editor is expected back (0 = no reload pending).
+        private static long ReloadGraceUntil;
 
         // A session that has not pulled within this window is treated as dead and swept.
         // Defaults to HoldDeadlineMs: we already hold a client request up to that long waiting
@@ -282,7 +287,7 @@ namespace Funplay.UnityMcp.Broker
 
                 string session;
                 headers.TryGetValue(SessionHeader.ToLowerInvariant(), out session);
-                HandleDetach(session);
+                HandleDetach(session, path.IndexOf("reload=1", StringComparison.Ordinal) >= 0);
                 WriteResponse(stream, 200, "OK", "application/json", BrokerHeaderLine(), "{\"ok\":true}");
                 SafeClose(client);
                 return;
@@ -387,16 +392,23 @@ namespace Funplay.UnityMcp.Broker
                 return;
 
             lock (Gate)
+            {
                 AttachedSessions[session] = NowMs();
+                ReloadGraceUntil = 0;
+            }
         }
 
-        private static void HandleDetach(string session)
+        private static void HandleDetach(string session, bool reload)
         {
             if (string.IsNullOrEmpty(session))
                 return;
 
             lock (Gate)
+            {
                 RemoveSessionLocked(session);
+                if (reload)
+                    ReloadGraceUntil = NowMs() + ReloadGraceMs;
+            }
         }
 
         // Removes a session and reconciles its in-flight work. Caller must hold Gate.
@@ -462,7 +474,7 @@ namespace Funplay.UnityMcp.Broker
         {
             lock (Gate)
             {
-                if (WaitingPull == null && !HasActiveRequestLocked() && AttachedSessions.Count == 0)
+                if (WaitingPull == null && !HasActiveRequestLocked() && AttachedSessions.Count == 0 && NowMs() > ReloadGraceUntil)
                 {
                     WriteBackendUnavailableResponse(stream, body);
                     SafeClose(client);
@@ -588,6 +600,30 @@ namespace Funplay.UnityMcp.Broker
                     {
                         if (now - item.Value.EnqueuedAt > HoldDeadlineMs)
                             expired.Add(item.Key);
+                    }
+
+                    // A reload that never re-attached: fail the requests held for it, as if no grace had applied.
+                    if (ReloadGraceUntil != 0 && now > ReloadGraceUntil && AttachedSessions.Count == 0 && WaitingPull == null)
+                    {
+                        ReloadGraceUntil = 0;
+                        var orphaned = new List<long>();
+                        foreach (var item in Pending)
+                            if (item.Value.ActiveSession == null && !expired.Contains(item.Key))
+                                orphaned.Add(item.Key);
+                        foreach (var reqId in orphaned)
+                        {
+                            var pending = Pending[reqId];
+                            Pending.Remove(reqId);
+                            Queue.Remove(reqId);
+                            try
+                            {
+                                WriteBackendUnavailableResponse(pending.Stream, pending.Body);
+                            }
+                            catch
+                            {
+                            }
+                            SafeClose(pending.Client);
+                        }
                     }
 
                     foreach (var reqId in expired)

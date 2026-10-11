@@ -1,6 +1,8 @@
 // Copyright (C) Funplay. Licensed under MIT.
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading.Tasks;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using Funplay.Editor.Api;
@@ -18,7 +20,7 @@ namespace Funplay.Editor.Tools.Builtins
                      "steps is a JSON array of objects with op and the same match fields as the single tools (target, selector, text, element_path): " +
                      "click {button, allow_covered, scroll_into_view}, wait {state, timeout_seconds, settle_frames}, scroll {delta_x, delta_y}, " +
                      "set_value {value | type_text, submit}, sleep {ms, up to 5000}. Max 30 steps and 50 s in total. " +
-                     "Returns {completed, total} and, on failure, failed {index, op, code, detail}: later steps did not run and nothing is retried. Needs Play Mode for clicks.")]
+                     "Returns {completed, total} and, on failure, failed {index, op, code, detail} plus the failing step's own data (e.g. details with near misses): later steps did not run and nothing is retried. Needs Play Mode for clicks.")]
         public static async Task<object> RunUiSteps(
             [ToolParam("JSON array, e.g. [{\"op\":\"click\",\"selector\":\"#play\"},{\"op\":\"wait\",\"selector\":\"#menu\",\"state\":\"displayed\"}]")] string steps)
         {
@@ -38,13 +40,25 @@ namespace Funplay.Editor.Tools.Builtins
                 try { reply = JObject.FromObject(await RunStep(op, step)); }
                 catch (Exception ex) { return StepFailed(list.Count, i, op, "STEP_FAILED", ex.Message); }
                 if (reply["success"] != null && !(bool)reply["success"])
-                    return StepFailed(list.Count, i, op, (string)reply["code"] ?? "STEP_FAILED", reply["data"]?.ToString(Newtonsoft.Json.Formatting.None));
+                {
+                    // The step's own data (detail, near-miss details, last observed state) stays an object, not an escaped string.
+                    var rest = (reply["data"] as JObject)?.DeepClone() as JObject;
+                    var detail = (string)rest?["detail"] ?? (string)reply["error"];
+                    rest?.Remove("detail");
+                    foreach (var empty in rest?.Properties().Where(p => p.Value.Type == JTokenType.Null).ToList() ?? new List<JProperty>())
+                        empty.Remove();
+                    return StepFailed(list.Count, i, op, (string)reply["code"] ?? "STEP_FAILED", detail, rest != null && rest.HasValues ? rest : null);
+                }
             }
             return Response.Success($"Ran {list.Count} steps.", new { completed = list.Count, total = list.Count });
         }
 
-        private static object StepFailed(int total, int index, string op, string code, string detail)
-            => Response.Error("STEP_FAILED", new { completed = index, total, failed = new { index, op, code, detail } });
+        private static object StepFailed(int total, int index, string op, string code, string detail, JObject data = null)
+        {
+            var failed = new JObject { ["index"] = index, ["op"] = op, ["code"] = code, ["detail"] = detail };
+            if (data != null) failed.Merge(data);
+            return Response.Error("STEP_FAILED", new { completed = index, total, failed });
+        }
 
         private static string Str(JObject step, string name) => (string)step[name];
         private static T Val<T>(JObject step, string name, T fallback) => step[name] == null || step[name].Type == JTokenType.Null ? fallback : step[name].ToObject<T>();

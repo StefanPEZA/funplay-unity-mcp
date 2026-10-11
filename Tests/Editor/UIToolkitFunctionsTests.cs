@@ -587,7 +587,15 @@ namespace Funplay.Editor.Tests
             var host = (JObject)compact["hosts"][0]["host"];
             Assert.AreEqual(id, (string)host["object_id"]);
             Assert.IsNull(host["panel_settings"], host.ToString());
+            var hostEntry = (JObject)compact["hosts"][0];
+            Assert.IsNull(hostEntry["nested_hosts"], "null host fields are dropped: " + hostEntry);
+            Assert.IsNull(hostEntry["scheduler"], hostEntry.ToString());
+            Assert.IsNull(compact["snapshot_id"], compact.ToString());
+            Assert.IsNull(compact["truncated"], "truncated=false is dropped: " + compact);
             Assert.Less(compact.ToString().Length, full.ToString().Length);
+
+            var none = Data(UIToolkitFunctions.GetVisualTree(id, "Button#no-such-button", compact: true));
+            Assert.IsNotNull(none["hosts"][0]["elements"], "an empty match list stays: " + none);
         }
 
         [UnityTest]

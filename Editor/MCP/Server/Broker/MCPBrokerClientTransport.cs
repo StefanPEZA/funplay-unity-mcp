@@ -28,6 +28,9 @@ namespace Funplay.Editor.MCP.Server
         private CancellationTokenSource _cts;
         private volatile bool _isRunning;
 
+        /// <summary>Set just before a domain reload stops the server; static state resets with the new domain.</summary>
+        internal static bool DetachingForReload;
+
         public MCPBrokerClientTransport(int port, string token)
         {
             _port = port;
@@ -283,7 +286,7 @@ namespace Funplay.Editor.MCP.Server
 
         private void TryDetach()
         {
-            TryPostSession(MCPBrokerProtocol.DetachPath, DetachTimeoutMs);
+            TryPostSession(DetachingForReload ? MCPBrokerProtocol.DetachPath + "?reload=1" : MCPBrokerProtocol.DetachPath, DetachTimeoutMs);
         }
 
         private bool TryPostSession(string path, int timeoutMs)

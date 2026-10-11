@@ -15,6 +15,35 @@ namespace Funplay.Editor.Tools.Helpers
     {
         private static readonly TimeSpan TimestampTolerance = TimeSpan.FromSeconds(1);
         private static readonly TimeSpan DefaultStartDetectionTimeout = TimeSpan.FromSeconds(2);
+        private const string ManifestHashKey = "Funplay.EditorRefresh.ManifestHash";
+        private const string ManifestPath = "Packages/manifest.json";
+
+        // The manifest Unity resolved when this Editor session started.
+        [InitializeOnLoadMethod]
+        private static void RememberManifest()
+        {
+            if (string.IsNullOrEmpty(SessionState.GetString(ManifestHashKey, null)))
+                SessionState.SetString(ManifestHashKey, ManifestHash() ?? string.Empty);
+        }
+
+        private static string ManifestHash()
+        {
+            try { return File.Exists(ManifestPath) ? Convert.ToBase64String(System.Security.Cryptography.SHA1.Create().ComputeHash(File.ReadAllBytes(ManifestPath))) : null; }
+            catch (IOException) { return null; }
+        }
+
+        /// <summary>
+        /// AssetDatabase.Refresh does not re-resolve packages, so an edited Packages/manifest.json (a version bump,
+        /// a switch to a local file: package) would otherwise wait for the Editor to regain focus.
+        /// </summary>
+        internal static bool ResolvePackagesIfManifestChanged()
+        {
+            var hash = ManifestHash();
+            if (hash == null || hash == SessionState.GetString(ManifestHashKey, null)) return false;
+            SessionState.SetString(ManifestHashKey, hash);
+            UnityEditor.PackageManager.Client.Resolve();
+            return true;
+        }
 
         public static async Task<EditorRefreshResult> RefreshAndRequestCompilationAsync(
             bool forceUpdate = true,
@@ -31,6 +60,7 @@ namespace Funplay.Editor.Tools.Helpers
 
             try
             {
+                result.PackagesResolved = ResolvePackagesIfManifestChanged();
                 AssetDatabase.Refresh(forceUpdate ? ImportAssetOptions.ForceUpdate : ImportAssetOptions.Default);
                 result.PrimaryRefreshInvoked = true;
             }
@@ -456,6 +486,7 @@ namespace Funplay.Editor.Tools.Helpers
     internal sealed class EditorRefreshResult
     {
         public bool PrimaryRefreshInvoked;
+        public bool PackagesResolved;
         public bool MenuRefreshInvoked;
         public bool ScriptCompilationRequested;
         public bool ScriptReloadRequested;

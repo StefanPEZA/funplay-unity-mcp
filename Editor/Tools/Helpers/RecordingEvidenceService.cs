@@ -74,6 +74,7 @@ namespace Funplay.Editor.Tools.Helpers
                 json["frame_size"] = new JArray(job.frames[0].width, job.frames[0].height);
                 var geometry = job.frames[0].geometry?.ToCompact();
                 geometry?.Remove("capture_id");
+                geometry?.Remove("size"); // frame_size
                 if (geometry != null) json["geometry"] = geometry;
             }
             json["frames"] = new JArray(job.frames.Select(CompactFrame));
@@ -81,8 +82,8 @@ namespace Funplay.Editor.Tools.Helpers
         }
         private static JObject CompactFrame(RecordingFrame frame) => new JObject
         {
-            ["index"] = frame.index, ["actual_seconds"] = frame.actual_seconds,
-            ["delta_seconds"] = frame.delta_seconds, ["path"] = frame.path
+            ["index"] = frame.index, ["actual_seconds"] = Math.Round(frame.actual_seconds, 4),
+            ["delta_seconds"] = Math.Round(frame.delta_seconds, 4), ["path"] = frame.path
         };
         internal static RecordingFramesJob Find(string id) => jobs.FirstOrDefault(x => x.job_id == id);
         internal static double[] ParseTimes(string json, double lastFrame)

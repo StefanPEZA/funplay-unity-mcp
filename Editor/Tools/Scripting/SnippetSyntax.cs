@@ -74,8 +74,16 @@ namespace Funplay.Editor.Tools.Scripting
             return false;
         }
 
+        private static readonly Regex UguiNamespace = new Regex(@"\bUnityEngine\s*\.\s*UI\b", RegexOptions.Compiled);
+
+        /// <summary>True when code (outside comments and strings) names the uGUI namespace itself, not <c>UnityEngine.UIElements</c>.</summary>
+        internal static bool NamesUguiNamespace(string code) => UguiNamespace.IsMatch(Mask(code));
+
         /// <summary>Splits leading <c>using</c> directives from the statements after them.</summary>
-        internal static string SplitLeadingUsings(string code, out string usings)
+        internal static string SplitLeadingUsings(string code, out string usings) => SplitLeadingUsings(code, out usings, out _);
+
+        /// <summary>As above; <paramref name="bodyFirstLine"/> is the 1-based snippet line where the statements start.</summary>
+        internal static string SplitLeadingUsings(string code, out string usings, out int bodyFirstLine)
         {
             var kept = new List<string>();
             var found = new StringBuilder();
@@ -83,6 +91,7 @@ namespace Funplay.Editor.Tools.Scripting
             var i = 0;
             for (; i < lines.Length && (lines[i].Trim().Length == 0 || UsingLine.IsMatch(lines[i])); i++)
                 if (lines[i].Trim().Length > 0) found.AppendLine(lines[i].Trim());
+            bodyFirstLine = i + 1;
             for (; i < lines.Length; i++) kept.Add(lines[i]);
             usings = found.ToString();
             return string.Join("\n", kept);

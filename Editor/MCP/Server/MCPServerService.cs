@@ -607,19 +607,8 @@ namespace Funplay.Editor.MCP.Server
             var data = (Dictionary<string, object>)response.Error.Data;
             response.Error.Message = "A Unity domain reload (or MCP server stop) interrupted this request before it responded (RELOAD_IN_PROGRESS).";
             data["code"] = "RELOAD_IN_PROGRESS";
-
-            var kind = GetRecoverableTaskKind(request, out var requestKey);
-            if (kind != null)
-            {
-                data["kind"] = kind;
-                data["request_key"] = requestKey;
-                data["hint"] = $"The request may or may not have started before the reload. Once the server is back, call get_task(kind=\"{kind}\", request_key=\"{requestKey}\"): it returns the operation if it started (it keeps running across the reload); OPERATION_NOT_FOUND means this request never started, and repeating it with the same request_key is safe either way.";
-            }
-            else
-            {
-                data["hint"] = "Retry shortly. Call get_reload_recovery_status before repeating a call with side effects.";
-            }
-
+            // Keyed starts returned the running receipt above, so this request has no task to recover by key.
+            data["hint"] = "Retry shortly. Call get_reload_recovery_status before repeating a call with side effects.";
             return response;
         }
 

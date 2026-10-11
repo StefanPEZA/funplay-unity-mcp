@@ -51,6 +51,8 @@ namespace Funplay.Editor.State
                 data["current_editor"] = new JObject { ["ready"] = true };
             if (data["journal_error"] == null || data["journal_error"].Type == JTokenType.Null) data.Remove("journal_path");
             if (kind == "tests") data.Remove("jobId");
+            // The legacy top-level copy of the polling hint (kept equal by AlignPollingHint); task.poll_after_ms is the one to honour.
+            if (data["poll_after_ms"] != null && JToken.DeepEquals(data["poll_after_ms"], task["poll_after_ms"])) data.Remove("poll_after_ms");
 
             var message = (string)receipt["message"];
             if (message != null && message.StartsWith("Inspect operation.status")) receipt["message"] = kind + " " + status;

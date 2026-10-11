@@ -59,10 +59,11 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("Target capture rate, 1-60 frames per second. Slow frames retain their real timestamps.", Required = false)] int fps = 15,
             [ToolParam("Maximum output width or height, 128-1920. Preserves aspect ratio without upscaling.", Required = false)] int max_dimension = 1280,
             [ToolParam("Recording ID returned by start. Recommended for status/stop to avoid controlling a newer recording.", Required = false)] string recording_id = null,
-            [ToolParam("MCP wait for stop/status, 0..30 seconds; start always returns immediately", Required = false)] int wait_seconds = 2)
-            => TaskStatusService.ValidateWait(wait_seconds) ?? TaskStatusService.Attach("recording", RecordCore(action, duration_seconds, fps, max_dimension, recording_id));
+            [ToolParam("MCP wait for stop/status, 0..30 seconds; start always returns immediately", Required = false)] int wait_seconds = 2,
+            [ToolParam("compact (default) or full: full returns the complete receipt with the whole geometry contract", Required = false)] string detail = null)
+            => TaskStatusService.ValidateWait(wait_seconds) ?? TaskStatusService.Attach("recording", RecordCore(action, duration_seconds, fps, max_dimension, recording_id, detail));
 
-        private static object RecordCore(string action, int duration_seconds, int fps, int max_dimension, string recording_id)
+        private static object RecordCore(string action, int duration_seconds, int fps, int max_dimension, string recording_id, string detail)
         {
             switch ((action ?? "start").Trim().ToLowerInvariant())
             {
@@ -71,7 +72,7 @@ namespace Funplay.Editor.Tools.Builtins
                     if (!string.IsNullOrEmpty(recording_id) && (_last == null || _last.recording_id != recording_id))
                     {
                         var historical = FindRecording(recording_id);
-                        return historical == null ? Response.Error("RECORDING_NOT_FOUND") : Response.Success("Historical recording; no active recording was stopped.", historical);
+                        return historical == null ? Response.Error("RECORDING_NOT_FOUND") : Response.Success("Historical recording; no active recording was stopped.", View(historical, detail));
                     }
                     if (_last == null)
                         return Response.Error("NO_VIDEO_RECORDING", new { hint = "Start a recording first." });
@@ -82,18 +83,39 @@ namespace Funplay.Editor.Tools.Builtins
                         _active.RequestStop();
                         SaveState();
                     }
-                    return Response.Success("Video recording status: " + _last.status + ".", _last);
+                    return Response.Success("Video recording status: " + _last.status + ".", View(_last, detail));
                 case "start":
-                    return Start(duration_seconds, fps, max_dimension);
+                    return Start(duration_seconds, fps, max_dimension, detail);
                 default:
                     return Response.Error("INVALID_RECORDING_ACTION", new { action, accepted = new[] { "start", "status", "stop" } });
             }
         }
 
-        private static object Start(int durationSeconds, int fps, int maxDimension)
+        /// <summary>
+        /// The receipt as a reply. Compact: size as [w, h], times rounded, geometry in its compact form, and fields that
+        /// never vary (mime_type, has_audio) or only repeat the start (started_at) dropped; zero bytes and dropped_markers
+        /// are omitted. recording_id, status, ready, stop_reason and error always stay.
+        /// </summary>
+        internal static object View(RecordingState state, string detail)
+        {
+            if (state == null || !ResponseDetail.IsCompact(detail)) return state;
+            var json = Newtonsoft.Json.Linq.JObject.FromObject(state);
+            foreach (var name in new[] { "mime_type", "has_audio", "started_at", "width", "height", "geometry" }) json.Remove(name);
+            json["size"] = new Newtonsoft.Json.Linq.JArray(state.width, state.height);
+            json["elapsed_seconds"] = Math.Round(state.elapsed_seconds, 3);
+            json["last_frame_seconds"] = Math.Round(state.last_frame_seconds, 3);
+            if (state.bytes == 0) json.Remove("bytes");
+            if (state.dropped_markers == 0) json.Remove("dropped_markers");
+            var geometry = state.geometry?.ToCompact();
+            geometry?.Remove("size");
+            if (geometry != null && geometry.HasValues) json["geometry"] = geometry;
+            return json;
+        }
+
+        private static object Start(int durationSeconds, int fps, int maxDimension, string detail)
         {
             if (_active != null)
-                return Response.Error("VIDEO_RECORDING_ACTIVE", _last);
+                return Response.Error("VIDEO_RECORDING_ACTIVE", View(_last, detail));
             var problem = ValidateOptions(durationSeconds, fps, maxDimension);
             if (problem != null)
                 return Response.Error("INVALID_RECORDING_OPTIONS", new { hint = problem });
@@ -134,7 +156,7 @@ namespace Funplay.Editor.Tools.Builtins
                 SaveState();
                 EditorApplication.update += Update;
                 view.Repaint();
-                return Response.Success("Recording started. Perform actions, then poll status until ready=true or request stop.", state);
+                return Response.Success("Recording started. Perform actions, then poll status until ready=true or request stop.", View(state, detail));
             }
             catch (Exception ex)
             {

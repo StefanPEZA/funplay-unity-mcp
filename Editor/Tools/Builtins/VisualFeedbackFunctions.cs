@@ -80,6 +80,9 @@ namespace Funplay.Editor.Tools.Builtins
             return $"Displayed dialog: {title}";
         }
 
+        // "No all entries" read oddly for the default filter.
+        private static string NoEntries(string logType) => string.Equals(logType, "all", StringComparison.OrdinalIgnoreCase) ? "No log entries" : $"No {logType} entries";
+
         [Description("Get recent console log messages from Unity. " +
                      "Returns Debug.Log, Debug.LogWarning, and Debug.LogError output. " +
                      "Useful for checking runtime behavior after play mode actions. " +
@@ -120,13 +123,13 @@ namespace Funplay.Editor.Tools.Builtins
 
                 if (source == "cache")
                     return since_seconds > 0
-                        ? $"No {log_type} entries found in cached logs from the last {since_seconds} second(s)"
-                        : $"No {log_type} entries found in cached logs";
+                        ? $"{NoEntries(log_type)} found in cached logs from the last {since_seconds} second(s)"
+                        : $"{NoEntries(log_type)} found in cached logs";
             }
 
             // An empty cache (e.g. right after a domain reload) is a valid answer for a time window: zero entries.
             if (since_seconds > 0)
-                return $"No {log_type} entries found in cached logs from the last {since_seconds} second(s)";
+                return $"{NoEntries(log_type)} found in cached logs from the last {since_seconds} second(s)";
 
             var logEntriesType = Type.GetType("UnityEditor.LogEntries, UnityEditor");
             if (logEntriesType == null)
@@ -204,7 +207,7 @@ namespace Funplay.Editor.Tools.Builtins
                 }
 
                 if (lines.Count == 0)
-                    return $"No {log_type} entries found in console";
+                    return $"{NoEntries(log_type)} found in console";
 
                 var sb = new StringBuilder();
                 var uniqueCount = UnityLogsRepository.AppendLines(sb, lines, group_duplicates);

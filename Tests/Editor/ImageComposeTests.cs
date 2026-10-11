@@ -67,11 +67,21 @@ namespace Funplay.Editor.Tests
         public void ContactSheetPlacesCellsRowByRow()
         {
             var sheet = ImageCompose.ContactSheet(new List<byte[]> { TestPng(), TestPng(), TestPng() }, 2, 8, out var size);
-            Assert.AreEqual(new Vector2Int(16, 16), size);
-            // Cell 0 sits top-left: its 8x4 image is centred in the 8x8 cell (rows 2..5 from the top).
-            Assert.AreEqual(Color.green, (Color)PixelAt(sheet, 0, 2));
-            Assert.AreEqual(Color.green, (Color)PixelAt(sheet, 8, 2), "cell 1 is to the right of cell 0");
-            Assert.AreEqual(Color.green, (Color)PixelAt(sheet, 0, 10), "cell 2 starts the second row");
+            // Cells take the images' 8x4 shape (no bars), separated by the gutter.
+            const int g = ImageCompose.ContactSheetGutter;
+            Assert.AreEqual(new Vector2Int(16 + g, 8 + g), size);
+            Assert.AreEqual(Color.green, (Color)PixelAt(sheet, 0, 0), "cell 0 sits top-left");
+            Assert.AreEqual(Color.green, (Color)PixelAt(sheet, 8 + g, 0), "cell 1 is to the right of cell 0");
+            Assert.AreEqual(Color.green, (Color)PixelAt(sheet, 0, 4 + g), "cell 2 starts the second row");
+        }
+
+        [Test]
+        public void ContactSheetFitsLargeImagesIntoCellMax()
+        {
+            var sheet = ImageCompose.ContactSheet(new List<byte[]> { TestPng(), TestPng() }, 1, 4, out var size);
+            // 8x4 fitted into 4 -> 4x2; one column, two rows.
+            Assert.AreEqual(new Vector2Int(4, 4 + ImageCompose.ContactSheetGutter), size);
+            Assert.IsNotNull(sheet);
         }
 
         [Test]

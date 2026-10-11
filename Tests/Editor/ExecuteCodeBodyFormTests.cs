@@ -40,6 +40,24 @@ namespace Funplay.Editor.Tests
             StringAssert.DoesNotContain("using UnityEngine.UIElements;", code);
         }
 
+        [TestCase("var e = new UnityEngine.UIElements.VisualElement(); return e.Q(\"x\");", false)]
+        [TestCase("// no UnityEngine.UI here\nreturn 1;", false)]
+        [TestCase("var s = \"UnityEngine.UI\"; return s;", false)]
+        [TestCase("var b = new GameObject().AddComponent<UnityEngine.UI.Button>();", true)]
+        [TestCase("using UnityEngine . UI;\nreturn 1;", true)]
+        public void OnlyTheUguiNamespaceItselfDropsUIElements(string code, bool ugui)
+            => Assert.AreEqual(ugui, SnippetSyntax.NamesUguiNamespace(code));
+
+        [UnityTest]
+        public IEnumerator CompileErrorsReportSnippetLineNumbers()
+        {
+            var task = ScriptExecutionFunctions.ExecuteCode("using System.Threading;\nvar ok = 1;\nreturn ok.NoSuchMember;", false, true);
+            while (!task.IsCompleted) yield return null;
+            var result = JObject.FromObject(task.Result);
+            Assert.AreEqual("COMPILATION_FAILED", (string)result["code"], result.ToString());
+            Assert.AreEqual(3, (int)result["data"]["errors"][0]["line"], result.ToString());
+        }
+
         [UnityTest]
         public IEnumerator BodyWithCtxReturnsItsValueAndSurvivesAThreadingUsing()
         {

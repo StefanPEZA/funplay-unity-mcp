@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 namespace Funplay.Editor.Tools.Helpers
@@ -77,37 +78,51 @@ namespace Funplay.Editor.Tools.Helpers
             }
         }
 
-        /// <summary>Arranges PNGs row by row in a grid; each cell fits cellMax on its long edge and is centred. Returns PNG bytes and the sheet size.</summary>
+        internal const int ContactSheetGutter = 4;
+
+        /// <summary>Arranges PNGs row by row in a grid. Each image fits cellMax on its long edge; cells take the largest fitted
+        /// width and height (so same-shaped images leave no bars) and are separated by a small gutter. Returns PNG bytes and the sheet size.</summary>
         internal static byte[] ContactSheet(IList<byte[]> pngs, int columns, int cellMax, out Vector2Int sheetSize)
         {
             columns = Mathf.Clamp(columns, 1, Math.Max(1, pngs.Count));
             var rows = (pngs.Count + columns - 1) / columns;
-            sheetSize = new Vector2Int(columns * cellMax, rows * cellMax);
-            var sheet = new Texture2D(sheetSize.x, sheetSize.y, TextureFormat.RGBA32, false);
+            var cells = new List<Texture2D>();
+            Texture2D sheet = null;
             try
             {
-                var fill = new Color32[sheetSize.x * sheetSize.y];
-                for (var i = 0; i < fill.Length; i++) fill[i] = new Color32(32, 32, 32, 255);
-                sheet.SetPixels32(fill);
+                var fits = new List<Vector2Int>();
                 for (var i = 0; i < pngs.Count; i++)
                 {
                     var cell = new Texture2D(2, 2, TextureFormat.RGBA32, false);
-                    try
-                    {
-                        if (!cell.LoadImage(pngs[i])) throw new ArgumentException("Image " + i + " is not a PNG.");
-                        var fit = FitWithin(cell.width, cell.height, cellMax);
-                        var scaled = fit.x == cell.width && fit.y == cell.height ? cell.GetPixels32() : ScaledPixels(cell, fit);
-                        var x0 = (i % columns) * cellMax + (cellMax - fit.x) / 2;
-                        // Rows run top to bottom; texture rows run bottom to top.
-                        var y0 = (rows - 1 - i / columns) * cellMax + (cellMax - fit.y) / 2;
-                        sheet.SetPixels32(x0, y0, fit.x, fit.y, scaled);
-                    }
-                    finally { UnityEngine.Object.DestroyImmediate(cell); }
+                    cells.Add(cell);
+                    if (!cell.LoadImage(pngs[i])) throw new ArgumentException("Image " + i + " is not a PNG.");
+                    fits.Add(FitWithin(cell.width, cell.height, cellMax));
+                }
+                var cellSize = new Vector2Int(fits.Max(f => f.x), fits.Max(f => f.y));
+                var pitch = cellSize + new Vector2Int(ContactSheetGutter, ContactSheetGutter);
+                sheetSize = new Vector2Int(columns * pitch.x - ContactSheetGutter, rows * pitch.y - ContactSheetGutter);
+                sheet = new Texture2D(sheetSize.x, sheetSize.y, TextureFormat.RGBA32, false);
+                var fill = new Color32[sheetSize.x * sheetSize.y];
+                for (var i = 0; i < fill.Length; i++) fill[i] = new Color32(32, 32, 32, 255);
+                sheet.SetPixels32(fill);
+                for (var i = 0; i < cells.Count; i++)
+                {
+                    var cell = cells[i];
+                    var fit = fits[i];
+                    var scaled = fit.x == cell.width && fit.y == cell.height ? cell.GetPixels32() : ScaledPixels(cell, fit);
+                    var x0 = (i % columns) * pitch.x + (cellSize.x - fit.x) / 2;
+                    // Rows run top to bottom; texture rows run bottom to top.
+                    var y0 = (rows - 1 - i / columns) * pitch.y + (cellSize.y - fit.y) / 2;
+                    sheet.SetPixels32(x0, y0, fit.x, fit.y, scaled);
                 }
                 sheet.Apply();
                 return sheet.EncodeToPNG();
             }
-            finally { UnityEngine.Object.DestroyImmediate(sheet); }
+            finally
+            {
+                foreach (var cell in cells) UnityEngine.Object.DestroyImmediate(cell);
+                if (sheet != null) UnityEngine.Object.DestroyImmediate(sheet);
+            }
         }
 
         private static Color32[] ScaledPixels(Texture2D source, Vector2Int size)

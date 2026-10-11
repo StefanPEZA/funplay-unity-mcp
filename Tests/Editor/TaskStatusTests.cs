@@ -168,7 +168,9 @@ namespace Funplay.Editor.Tests
         {
             var receipt = TaskStatusService.Observe("editor", Response.Success("ready", new
             { operation = new { operation_id = Id, status = "ready" }, poll_after_ms = 1000 }));
-            Assert.AreEqual(0, (int)receipt["data"]["poll_after_ms"]);
+            // Compact replies drop the legacy top-level copy when it equals task.poll_after_ms; full detail keeps it.
+            Assert.AreEqual(0, (int)(receipt["data"]["poll_after_ms"] ?? receipt["data"]["task"]["poll_after_ms"]));
+            receipt["data"]["poll_after_ms"] = 1000;
             receipt["data"]["task"]["poll_after_ms"] = 5000;
             TaskStatusService.AlignPollingHint(receipt);
             Assert.AreEqual(5000, (int)receipt["data"]["poll_after_ms"]);

@@ -341,14 +341,15 @@ namespace Funplay.Editor.Tools.Builtins
                 }
 
                 var snapshotId = snapshot ? VisualTreeSnapshots.Take(target, hosts).Id : null;
+                object payload = new
+                {
+                    hosts = results, truncated = matched > max_elements, render_height = renderHeight > 0 ? (int?)renderHeight : null, geometry_error = geometryError, snapshot_id = snapshotId,
+                    snapshot_scope = snapshotId != null ? "whole_tree" : null
+                };
                 return Response.Success(filter.IsEmpty
                         ? $"Visual tree for {hosts.Count} host(s)."
                         : $"{matched} element(s) matched.",
-                    new
-                    {
-                        hosts = results, truncated = matched > max_elements, render_height = renderHeight > 0 ? (int?)renderHeight : null, geometry_error = geometryError, snapshot_id = snapshotId,
-                        snapshot_scope = snapshotId != null ? "whole_tree" : null
-                    });
+                    compact ? CompactTreePayload(payload) : payload);
             }
             catch (UIToolkitException ex) { return Response.Error(ex.Code, new { detail = ex.Message, details = ex.Details }); }
             catch (Exception ex) { return Response.Error("VISUAL_TREE_UNAVAILABLE", new { detail = ex.Message }); }
@@ -613,9 +614,13 @@ namespace Funplay.Editor.Tools.Builtins
             }
 
             if (matches.Count == 0)
-                throw new UIToolkitException("ELEMENT_NOT_FOUND",
-                    "No element matches. If the UI is still building, wait_for_ui_toolkit(state=exists) first; otherwise pick one of the candidates or inspect get_visual_tree.",
-                    NearMisses(hosts, filter));
+            {
+                var nearMisses = NearMisses(hosts, filter);
+                throw new UIToolkitException("ELEMENT_NOT_FOUND", nearMisses.Length > 0
+                        ? "No element matches; details lists similar elements. If the UI is still building, wait_for_ui_toolkit(state=exists) first."
+                        : "No element matches and none is similar. If the UI is still building, wait_for_ui_toolkit(state=exists) first; otherwise inspect get_visual_tree.",
+                    nearMisses.Length > 0 ? nearMisses : null);
+            }
             if (matches.Count > 1)
                 throw new UIToolkitException("AMBIGUOUS_ELEMENT", $"{matches.Count} elements match; narrow the selector or pass element_path.",
                     matches.Take(10).Select(m => new { host_id = ObjectIdHelper.GetSerializableId(m.host.gameObject), element_path = m.path, element = Label(m.element) }).ToArray());
@@ -623,7 +628,7 @@ namespace Funplay.Editor.Tools.Builtins
         }
 
         /// <summary>Up to five elements whose name, text or type resembles an unmatched query, so a miss can be corrected without a tree read.</summary>
-        private static object NearMisses(List<Component> hosts, UIToolkitPanels.Selector filter)
+        private static object[] NearMisses(List<Component> hosts, UIToolkitPanels.Selector filter)
         {
             bool Like(string value, string wanted) => !string.IsNullOrEmpty(value) && !string.IsNullOrEmpty(wanted) &&
                 (value.IndexOf(wanted, StringComparison.OrdinalIgnoreCase) >= 0 || wanted.IndexOf(value, StringComparison.OrdinalIgnoreCase) >= 0);
@@ -695,13 +700,13 @@ namespace Funplay.Editor.Tools.Builtins
             };
         }
 
+        /// <summary>The compact echo of an element an action touched: where it is and what it is called.</summary>
+        internal static object EchoElement(VisualElement element, string path) => new { path, label = Label(element) };
+
         /// <summary>
         /// get_visual_tree's compact element: no null/empty fields, and panel_bounds/render_bottom_left
         /// dropped when screen bounds exist (image_top_left and center_render_pixels carry the same rect).
         /// </summary>
-        /// <summary>The compact echo of an element an action touched: where it is and what it is called.</summary>
-        internal static object EchoElement(VisualElement element, string path) => new { path, label = Label(element) };
-
         internal static JObject CompactElement(object described)
         {
             var json = JObject.FromObject(described);
@@ -721,6 +726,25 @@ namespace Funplay.Editor.Tools.Builtins
             foreach (var key in new[] { "object_id", "path", "component", "tree_source", "issues" })
                 if (full[key] != null) json[key] = full[key];
             PruneEmpty(json);
+            return json;
+        }
+
+        /// <summary>
+        /// get_visual_tree's compact envelope: null fields, empty findings and truncated=false are dropped from the
+        /// reply and each host entry. elements stays even when empty: no match is the answer.
+        /// </summary>
+        internal static JObject CompactTreePayload(object payload)
+        {
+            var json = JObject.FromObject(payload);
+            if (json["truncated"]?.Type == JTokenType.Boolean && !(bool)json["truncated"]) json.Remove("truncated");
+            foreach (var host in (json["hosts"] as JArray ?? new JArray()).OfType<JObject>())
+            {
+                var elements = host["elements"];
+                host.Remove("elements");
+                PruneEmpty(host);
+                if (elements != null) host["elements"] = elements;
+            }
+            foreach (var property in json.Properties().Where(p => p.Value.Type == JTokenType.Null).ToList()) property.Remove();
             return json;
         }
 

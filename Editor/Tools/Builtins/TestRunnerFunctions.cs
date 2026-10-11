@@ -416,6 +416,13 @@ namespace Funplay.Editor.Tools.Builtins
                 job["totalTests"] = finalTotal;
                 job["durationSeconds"] = Math.Round(result.Duration, 2);
                 job["failures"] = failures;
+                // NUnit reports an empty run as Passed; a filter that matched nothing (e.g. a test name without its
+                // namespace) must not read as a green run.
+                if (finalTotal == 0)
+                {
+                    job["resultState"] = "NoTestsRan";
+                    job["hint"] = "No test matched the filters. test_names needs the fully qualified name (namespace.Class or namespace.Class.Method); check the assembly and mode.";
+                }
                 if (job["blockingTests"] is JArray blocking && blocking.Count > 0)
                     job["blockingHint"] = TestRunnerFunctions.BlockingTestsHint;
                 TestRunnerFunctions.SaveJob(job);
