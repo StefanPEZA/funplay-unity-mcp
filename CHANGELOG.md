@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.9.7] - 2026-10-29
+
 ### Changed
 
 - Merged upstream v0.7.1–v0.7.3 (trusted execution: project-scoped endpoints and `expected_context`, `verification_scope`, `patch_serialized_reference`, `inspect_render_bindings`, verification evidence tools; real-frame `simulate_mouse_drag`; strict `input_route` for `simulate_mouse_click`; built-in Skills `unity-mcp-workflow` 1.0.8 and `unity-ui-composition` 1.0.10). Broker protocol is now v7.
