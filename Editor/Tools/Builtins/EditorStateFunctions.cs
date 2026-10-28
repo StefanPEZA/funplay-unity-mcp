@@ -41,8 +41,10 @@ namespace Funplay.Editor.Tools.Builtins
                 applicationPath = EditorApplication.applicationPath,
                 timeSinceStartup = EditorApplication.timeSinceStartup,
                 unityVersion = Application.unityVersion,
+                context = Funplay.Editor.MCP.Server.MCPProjectContext.Current,
                 // When ready, every other readiness field is false/null and repeats the flags above.
-                readiness = readiness.ready ? new { ready = true } : (object)readiness
+                readiness = readiness.ready ? new { ready = true } : (object)readiness,
+                player = Funplay.Editor.State.PlayerLoopWitness.Snapshot()
             });
         }
 

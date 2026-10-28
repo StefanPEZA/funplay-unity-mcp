@@ -14,9 +14,13 @@ namespace Funplay.Editor.Tools.Builtins
             [ToolParam("JSON timestamps, e.g. [0,1.5,3]", Required = false)] string timestamps = null,
             [ToolParam("Extraction job ID for status/cancel/cleanup", Required = false)] string job_id = null,
             [ToolParam("MCP completion wait, 0..30 seconds", Required = false)] int wait_seconds = 2,
+            [ToolParam("auto, unity or ffmpeg", Required = false)] string decoder_backend = "auto",
+            [ToolParam("Explicitly allow execution of already-installed ffmpeg; never installs anything", Required = false)] bool allow_external_decoder = false,
+            [ToolParam("Optional absolute installed ffmpeg executable path", Required = false)] string decoder_path = null,
+            [ToolParam("Optional active verification scope to own extraction", Required = false)] string verification_id = null,
             [ToolParam("compact (default) or full: full returns per-frame geometry and requested_seconds", Required = false)] string detail = null)
             => TaskStatusService.ValidateWait(wait_seconds) ?? TaskStatusService.Attach("recording_frames",
-                action == "start" ? RecordingEvidenceService.Start(recording_id, timestamps, detail) : RecordingEvidenceService.Control(job_id, action, detail));
+                action == "start" ? RecordingEvidenceService.Start(recording_id, timestamps, decoder_backend, allow_external_decoder, decoder_path, verification_id, detail) : RecordingEvidenceService.Control(job_id, action, detail));
 
         [Description("Return one extracted video frame as a native MCP image plus timestamp/geometry metadata, or path-only. Historical frames are not valid live click captures. Index is in the extraction job's sorted timestamp list.")]
         [ReadOnlyTool]

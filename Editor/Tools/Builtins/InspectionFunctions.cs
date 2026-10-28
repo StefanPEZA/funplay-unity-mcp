@@ -131,6 +131,9 @@ namespace Funplay.Editor.Tools.Builtins
                     if (!exposed) tool["exposed"] = false;
                     if (ToolRegistry.GetMethod(name) != null && ToolRegistry.IsReadOnly(ToolRegistry.GetMethod(name))) tool["read_only"] = true;
                     if (name == "execute_code") tool["role"] = "fallback";
+                    var runtime = name == "extract_recording_frames" ? RecordingEvidenceService.DecoderAvailability() :
+                        name == "simulate_mouse_click" ? State.InputFrameJob.Availability() : null;
+                    if (runtime != null) tool["runtime"] = runtime;
                     if (usage.TryGetValue(name, out var used)) { tool["calls"] = used.calls; if (used.errors > 0) tool["errors"] = used.errors; }
                     return tool;
                 }).ToArray(),

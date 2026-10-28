@@ -301,9 +301,10 @@ $@"Goal: reach a stable Play Mode to validate{(goal != null ? $": {goal}" : " a 
 
 1. prepare_editor(target=play, refresh_assets=true, request_key=<unique>): exits a running Play session first, imports edited files (USS/UXML/scripts), compiles and enters Play Mode.
 2. The HTTP server may briefly drop during a domain reload. Follow data.task.task_id with get_task(wait_seconds, after_revision), or get_task(kind=editor, request_key=<same key>) after a lost response, until operation.status=ready BEFORE issuing the next tool call.
-3. Run the validation (inspect objects, read get_console_logs(group_duplicates=true)), then prepare_editor(target=edit, refresh_assets=false) when done.
+3. Editor readiness is not PlayerLoop progress: inspect actual frame progression separately before relying on runtime state.
+4. Run the validation (inspect objects, read get_console_logs(group_duplicates=true)), then prepare_editor(target=edit, refresh_assets=false) when done.
 
-Guidance: treat any result between the Play request and a confirmed ready task as unknown. Confirm via get_task plus a readback; do not assume the interrupted tool failed or succeeded.";
+Guidance: treat any result between the Play request and a confirmed ready task as unknown. Confirm via get_task plus a readback; do not assume the interrupted tool failed or succeeded. Frame progression, dispatch success and business acceptance are different evidence layers.";
                     break;
                 }
 
@@ -351,6 +352,10 @@ Guidance: keep the scene minimal; save only the assets you intentionally create 
                 }
             }
 
+            if ((name == "verify_compilation" || name == "enter_play_and_recover") &&
+                (!MCPRecoveryGuidance.Allowed("prepare_editor") || !MCPRecoveryGuidance.Allowed("get_task")))
+                body = "The recoverable preparation workflow is not fully exposed by the current configuration. Inspect tools/list and available exact-state readers; do not widen custom exposure, guess hidden tools or replay an interrupted mutation. Report the missing preparation/status capability before changing Editor mode.";
+            body += "\n\n" + MCPRecoveryGuidance.Describe();
             var header = $"Unity project: {_projectName} ({_projectPath}).\n\n";
 
             var messages = new List<object>

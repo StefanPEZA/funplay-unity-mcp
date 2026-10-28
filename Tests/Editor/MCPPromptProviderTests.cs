@@ -51,10 +51,11 @@ namespace Funplay.Editor.Tests
         }
 
         [Test]
-        public void GetPrompt_VerifyCompilation_HasPlayModeAndRecompileSequence()
+        public void GetPrompt_VerifyCompilation_UsesRecoverablePreparationRatherThanLegacyReloadPolling()
         {
             var text = MessageText(NewProvider().GetPrompt("verify_compilation", new Dictionary<string, object>()));
             Assert.That(text, Does.Contain("prepare_editor(target=edit"));
+            Assert.That(text, Does.Contain("request_key"));
             Assert.That(text, Does.Contain("get_task"));
             Assert.That(text, Does.Contain("get_compilation_errors"));
             Assert.That(text, Does.Not.Contain("exit_play_mode"), "Core prompts use prepare_editor, not Full-only Play tools");

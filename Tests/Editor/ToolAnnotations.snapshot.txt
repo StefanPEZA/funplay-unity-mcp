@@ -108,6 +108,7 @@ get_undo_state ro idempotent
 get_visual_coordinates ro idempotent
 get_visual_tree ro idempotent
 get_windows ro idempotent
+inspect_render_bindings ro idempotent
 inspect_ui_sprites ro idempotent
 install_package destructive openworld
 instantiate_prefab
@@ -135,6 +136,7 @@ open_scene destructive idempotent
 particle_control
 paste_component_values
 patch_script destructive
+patch_serialized_reference
 physics2d_overlap_point ro idempotent
 physics_overlap ro idempotent
 physics_raycast ro idempotent
@@ -149,6 +151,7 @@ profiler_status ro idempotent
 profiler_stop
 raycast_at_point ro idempotent
 read_file ro idempotent
+read_verification_evidence ro idempotent
 record_game_view
 redo destructive
 remove_package destructive openworld
@@ -162,6 +165,7 @@ run_ui_steps
 save_all_scenes destructive idempotent
 save_prefab_stage destructive idempotent
 save_scene destructive idempotent
+save_verification_evidence
 scroll_ui_toolkit
 search_files ro idempotent
 select_object idempotent
@@ -198,6 +202,7 @@ undo destructive
 unload_scene destructive
 unpack_prefab destructive
 validate_menu_item ro idempotent
+verification_scope
 wait_for_compilation
 wait_for_ui_toolkit ro idempotent
 write_file destructive idempotent

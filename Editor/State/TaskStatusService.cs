@@ -19,7 +19,7 @@ namespace Funplay.Editor.State
     // All provider reads and the bounded observation cache are accessed on the Editor thread.
     internal static class TaskStatusService
     {
-        internal static readonly string[] Kinds = { "editor", "ui_audit", "ui_preview", "recording", "recording_frames", "tests" };
+        internal static readonly string[] Kinds = { "editor", "ui_audit", "ui_preview", "recording", "recording_frames", "tests", "input", "verification" };
         private sealed class Observation { internal string revision; internal double changedAt, seenAt; }
         private static readonly Dictionary<string, Observation> observations = new Dictionary<string, Observation>();
 
@@ -52,6 +52,8 @@ namespace Funplay.Editor.State
                 case "recording": return new[] { "record_game_view" };
                 case "recording_frames": return new[] { "extract_recording_frames", "get_recording_frame" };
                 case "tests": return new[] { "run_tests", "get_test_job" };
+                case "input": return new[] { "simulate_mouse_click", "simulate_mouse_drag" };
+                case "verification": return new[] { "verification_scope" };
                 default: return Array.Empty<string>();
             }
         }
@@ -82,6 +84,10 @@ namespace Funplay.Editor.State
                 case "recording": receipt = VideoRecordingFunctions.RecordGameView("status", recording_id: taskId); break;
                 case "recording_frames": receipt = RecordingEvidenceService.Control(taskId, "status"); break;
                 case "tests": receipt = TestRunnerFunctions.GetTestJob(taskId); break;
+                case "input":
+                    if (!InputFrameJob.CanRead(taskId, key, Allowed)) return JObject.FromObject(Response.Error("TASK_KIND_NOT_EXPOSED"));
+                    receipt = InputFrameJob.Read(taskId, key); break;
+                case "verification": receipt = VerificationScope.Read(taskId, key); break;
                 default: return JObject.FromObject(Response.Error("INVALID_TASK_KIND"));
             }
             return Observe(kind, receipt, afterRevision);
@@ -127,8 +133,8 @@ namespace Funplay.Editor.State
             if (!Kinds.Contains(kind)) return Response.Error("INVALID_TASK_KIND", new { accepted = Kinds });
             if (string.IsNullOrWhiteSpace(id) && string.IsNullOrWhiteSpace(key)) return Response.Error("TASK_ID_OR_REQUEST_KEY_REQUIRED");
             if (id != null && !Guid.TryParse(id, out _)) return Response.Error("INVALID_TASK_ID");
-            if (key != null && (key.Length > 128 || string.IsNullOrWhiteSpace(key) || kind != "editor" && kind != "ui_preview"))
-                return Response.Error("INVALID_TASK_REQUEST_KEY", new { hint = "request_key lookup is supported only for editor and ui_preview." });
+            if (key != null && (key.Length > 128 || string.IsNullOrWhiteSpace(key) || kind != "editor" && kind != "ui_preview" && kind != "verification" && kind != "input"))
+                return Response.Error("INVALID_TASK_REQUEST_KEY", new { hint = "request_key lookup is supported only for editor, ui_preview, verification and input." });
             return null;
         }
 
@@ -198,9 +204,16 @@ namespace Funplay.Editor.State
             // elapsed second or scanned object must not wake the model on every Editor update.
             var stable = new JObject { ["kind"] = kind, ["id"] = id, ["status"] = status, ["phase"] = phase };
             foreach (var name in new[] { "error", "error_code", "message", "compilation_errors", "complete", "ready", "stop_reason",
-                "scenes_restored", "view_restored", "selection_restored", "assets_cleaned", "warnings", "possiblyStuck" })
+                "scenes_restored", "view_restored", "selection_restored", "assets_cleaned", "warnings", "possiblyStuck", "cleanup_pending", "scene_unchanged" })
                 if (state[name] != null) stable[name] = state[name].DeepClone();
-            if (data["current_editor"] != null) stable["current_editor"] = data["current_editor"].DeepClone();
+            if (data["current_editor"] is JObject editor)
+            {
+                var readiness = (JObject)editor.DeepClone();
+                // Live frame clocks are evidence, not task phase changes. Never wake a waiter
+                // for each PlayerLoop pulse while the import/compile/mode task is unchanged.
+                readiness.Remove("player");
+                stable["current_editor"] = readiness;
+            }
             string revision;
             using (var sha = SHA256.Create()) revision = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(stable.ToString(Formatting.None)))).Replace("-", "").ToLowerInvariant();
             bool pending = new[] { "running", "queued", "decoding", "recording", "stopping", "setting_up", "preparing", "ending" }.Contains(status);

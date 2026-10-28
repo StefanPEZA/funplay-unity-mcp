@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Merged upstream v0.7.1–v0.7.3 (trusted execution: project-scoped endpoints and `expected_context`, `verification_scope`, `patch_serialized_reference`, `inspect_render_bindings`, verification evidence tools; real-frame `simulate_mouse_drag`; strict `input_route` for `simulate_mouse_click`; built-in Skills `unity-mcp-workflow` 1.0.8 and `unity-ui-composition` 1.0.10). Broker protocol is now v7.
+
+### Fixed
+
+- `extract_recording_frames` with an installed ffmpeg passed `-vsync 0`, which ffmpeg 8+ rejects ("Unrecognized option 'vsync'"); it now passes `-fps_mode passthrough` (ffmpeg 5.1+) and keeps `-vsync 0` only for older builds.
+
 ## [0.9.6] - 2026-10-12
 
 ### Fixed
@@ -228,6 +238,83 @@
 ### Validation
 
 - Unity 6000.6.5f1 on Windows: batch mode with a graphics device ran 757 EditMode cases with 0 failures (29 environment skips); an interactive Editor ran 751 with 0 failures and 22 skips (scene-lifecycle/preview fixtures need a saved scene the test framework replaces, TMP fixture, and the pre-6.6-only PanelRenderer case). Package compilation reports 0 warnings. A live MCP session created a PanelRenderer from UXML/USS, captured it in the Game View and clicked it in Play Mode through `simulate_mouse_click` and `click_ui_toolkit_element`, reaching the game's own `Button.clicked` handler. Unity 2022.3 was not re-run.
+
+## [0.7.3] - 2026-10-28
+
+### Changed
+
+- Built-in `unity-mcp-workflow` v1.0.8 and `unity-ui-composition` v1.0.10 recommend **Active Input Handling = Both** for legacy-input-only projects that need New Input System click/drag simulation, after checking compatibility and obtaining user approval. Guidance preserves existing input consumers, EventSystem modules and bindings; Both does not inject synthetic input into legacy `UnityEngine.Input` polling.
+- Both Skills recommend **Player > Run In Background** when background verification is needed, with user approval. The linked execution-trust reference distinguishes persistent Player settings, runtime overrides, actual PlayerLoop progression and Input System background/focus policies. Editor execution is not diagnosed from that checkbox alone, and background execution is not claimed as input acceptance or mobile background support. Explicitly authorized temporary verification scopes retain their owned cleanup/restoration requirements.
+- Short shared recommendations reach all six supported client targets; detailed setup, restart/reconnect, compatibility and focus checks remain in the conditional reference. Existing managed Skills installations receive the usual update notice. No tools, dependencies or automatic project-setting mutations are added: Core remains 40 and Full remains 185 across 43 modules.
+
+### Fixed
+
+- The owned drag-cleanup test keeps its temporary in-memory InputSettings through the final Play Mode exit, instead of restoring focus restrictions before starting that last gesture. This removes a background-window test failure without weakening its cleanup assertions or changing production input policies/project settings.
+
+### Pull requests and issues
+
+- Implements the user's direct suggestions about dual input backends and background verification. No numbered GitHub issue is closed or PR merged by this release.
+
+### Validation
+
+- All **824 EditMode cases passed** with zero failures/skips in the owned, graphics-enabled FunplayMcp Unity 2022.3.62f3c1 / Input System 1.14 session on macOS, including 141 Skills-related cases and all 27 drag cases. Skills export preserves an existing legacy-only/background-disabled configuration and package manifest byte-for-byte; the actual test project's Player settings and dependency manifests also retained their original SHA256 hashes.
+- All six client targets were exported: ten SKILL.md files passed the skill validator, two Cursor rules retained their metadata, and all 30 relative reference links resolved. The .NET 8 v0.7.3 bridge passed version, Content-Length UTF-8 framing, empty HTTP 202 notification and project-scoped path checks against an isolated local HTTP fixture. Other platforms and Unity versions are not claimed as live-tested.
+
+## [0.7.2] - 2026-10-26
+
+### Fixed
+
+- `simulate_mouse_drag` now presses, moves, holds at the destination and explicitly releases across actual Dynamic PlayerLoop frames. `duration` is real unscaled movement time instead of synchronous interpolation count. The existing tool supports an owned mouse or single-touch New Input System device, with no hardware mutation, manual input updates, business callbacks or silent legacy-input fallback.
+- Drag receipts use the existing `get_task` input status path, retain bounded position/frame/clock evidence and keep application acceptance unknown. Idempotent request keys recover lost starts without replay; the original drag tool cancels its own tasks. Cancellation, timeout, pause, changed geometry/update mode, Play exit and reload release owned resources; failed cleanup remains explicit. Custom tool exposure is checked against each input task's originating tool.
+
+### Compatibility
+
+- Existing drag coordinates, screenshot mapping and button arguments remain available. `duration` now controls real movement time (0.05..10 seconds); invalid values fail instead of being silently clamped. Short MCP calls briefly wait for completion, while longer gestures return an `input:<id>` task rather than claiming that a completed drag was already dispatched. The tool definition, server instructions and workflow documentation describe status, cancellation and pointer-device selection. No tool was added: Core remains 40 and Full remains 185 across 43 modules.
+- New Input System Dynamic updates and an unpaused, advancing PlayerLoop are required. Mouse and single touch are explicit synthetic devices, not hardware or legacy `UnityEngine.Input` injection. Project focus/background input policies are preserved; a disabled device is reported instead of silently changing settings. The pictured game's actual merge result still requires verification in that project.
+
+### Pull requests and issues
+
+- Addresses the user's report that a merge-style continuous drag could not be completed through MCP. No numbered GitHub issue or PR is closed or merged by this release.
+
+### Validation
+
+- All **818 EditMode cases passed** in the owned, graphics-enabled FunplayMcp Unity 2022.3.62f3c1 / Input System 1.14 test session, including 27 new drag cases. Actual Update consumers observed mouse left/right/middle and single-touch start/intermediate/target/release states, including `timeScale=0`; an isolated uGUI fixture received BeginDrag, Drag, Drop and EndDrag. Owned temporary InputSettings isolate tests from other foreground Editors without modifying project input assets; the production tool never changes those policies.
+- Real project-scoped HTTP MCP checks retained 40 Core tools, completed short mouse/touch drags in the initiating response, recovered task IDs by request key, cancelled without coordinates, and interrupted/cleaned a gesture during an actual script reload. The fixture/settings were restored, no owned synthetic devices remained, and the Editor returned to Edit Mode. This verifies input delivery, not the pictured game's board logic, legacy polling, physical-device provenance or other Unity/package versions.
+
+## [0.7.1] - 2026-10-26
+
+### Added
+
+- Project-scoped HTTP endpoints, including Broker forwarding, and verified project/Editor-session guards on tool mutations. Legacy root URLs remain readable; writes require the `expected_context` token from an independently verified initialize response. JSON/image evidence includes identity metadata. Broker protocol v5 replaces older brokers when the package starts.
+- Passive PlayerLoop frame/clock evidence separates Editor import/compile/mode readiness, scaled-time pause, actual Update progress and application acceptance. Recording receipts distinguish encoded captures from observed gameplay frames.
+- Strict mouse routes for EventSystem, direct-button, physics and cross-frame synthetic New Input System input. Explicit routes never silently fall back; unsupported legacy polling injection fails without patching game input. Input jobs use `get_task(kind=input)` and own only their synthetic device.
+- Five low-frequency Full tools: `verification_scope`, `patch_serialized_reference`, `inspect_render_bindings`, `save_verification_evidence`, `read_verification_evidence`. Core remains 40; Full has 185 tools across 43 modules. Scoped verification uses the actual authored scene, bounded ownership and compare-before-restore cleanup; `get_task(kind=verification)` is observation only. Serialized reference transactions require exact preconditions, disposable-copy preflight, untouched PPtr-slot comparisons and verified byte recovery. Rendering inspection traces actual shared slots, particle trails and camera/canvas context without instantiating materials. Persisted checkpoints reuse hash-validated static inputs only, never current runtime observations.
+- Recording frame extraction can explicitly opt into an already-installed ffmpeg when the Unity decoder is unavailable. It uses no shell or network protocols, never installs dependencies, enforces existing time/frame/dimension limits and reports presentation timestamps, PNG/source hashes and executable provenance.
+
+### Changed
+
+- The MCP Server window reuses the existing blue Project Skills notice card to flag a selected client's legacy, unbound endpoint; it does not add a second banner. Connection and Skills guidance share one card with a single **Reconfigure MCP + Skills** action and client-reconnect instructions. It uses the existing combined configuration/managed-Skills workflow; clients without Skills support explicitly offer MCP only. Resolving one concern preserves the other. The status no longer labels those old entries as configured; unreadable configuration files disable the action and show a review message without breaking the window or offering an unverified rewrite.
+- Built-in workflow v1.0.7 and UI composition v1.0.9 separate compile/resource/input/render/end-to-end acceptance and add conditional execution-trust guidance. A confirmed blocking native Unity modal that MCP cannot handle may use computer use for that modal only, followed by identity/state readback; consequential save/discard/overwrite/install/security choices still require existing authority.
+- Recovery hints use the actual enabled/exposed readers; custom allowlists remain authoritative. Capability discovery reports decoder/input backend availability separately from exposure. Task revisions exclude live frame-clock counters.
+
+### Compatibility
+
+- Existing pinned ports are preserved, but generated URLs now include the project identity. Re-run **Reconfigure MCP + Skills** in the existing blue notice card, then reconnect/restart the client. Old unbound URLs still support reads; writes require `expected_context` from an independently verified intended Editor. These guards prevent accidental misrouting, not authentication. See [migration details](Documentation~/execution-trust.md).
+
+### Fixed
+
+- Keyboard press/combo tools are no longer misclassified as read-only.
+- Native initialize/tool-result identity metadata is serialized as structural dictionaries rather than a DTO type-name string. Identity is cached on the Editor thread before transport startup so pooled status reads do not perform first-use Unity API access.
+
+### Pull requests and issues
+
+- Implements direct user feedback from the supplied restoration retrospective and MCP setup-window review. No GitHub PR is merged or issue closed by this release.
+
+### Validation
+
+- All **791 EditMode cases passed** in the graphics-enabled FunplayMcp Unity 2022.3.62f3c1 Editor on macOS, with zero failures or skips (61 cases added over v0.7.0). Coverage includes actual PlayerLoop input edges, reference-preserving transactions with 168 slots/unresolved subassets, render-material non-instantiation, checkpoint invalidation, native/external decoder pixels/timestamps, Broker routing, structural native metadata and 52 connection/Skills notice cases. The external decoder was supplied only in an isolated test environment; no system or Unity package dependency was added.
+- Real HTTP MCP checks verified identity guards, 40 Core / 185 Full tools, runtime render bindings, recording/frame extraction and scoped cleanup. The v0.7.1 .NET 8 bridge additionally completed initialization, tool discovery and a real read-only tool call against the intended Editor, and preserved missing/stale/wrong-project rejections. Content-Length UTF-8 framing and empty HTTP 202 notifications were verified without spurious replies. Owned sessions returned to Edit Mode/Core; unrelated Editors were untouched.
+- Both built-in Skills were exported for all six client targets. Ten SKILL.md files passed the skill validator, two Cursor rules retained metadata, and all 30 relative reference links resolved. The single blue-card/combined-action layout was also captured and visually verified in the actual Unity window. Windows and other Unity versions are not claimed as live-tested.
 
 ## [0.7.0] - 2026-10-08
 

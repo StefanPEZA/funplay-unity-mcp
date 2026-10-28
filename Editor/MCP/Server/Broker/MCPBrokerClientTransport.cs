@@ -144,7 +144,10 @@ namespace Funplay.Editor.MCP.Server
             {
                 var request = ParseJsonRequest(pull.Body);
                 if (request != null)
+                {
                     request.IsBrokerRedelivery = pull.IsRedelivery;
+                    request.TransportProjectId = pull.ExpectedProject;
+                }
 
                 var handler = OnRequestReceived;
                 if (request == null || handler == null)
@@ -248,6 +251,7 @@ namespace Funplay.Editor.MCP.Server
                         RequestId = reqId,
                         IsRedelivery = string.Equals(redeliveryText, "1", StringComparison.Ordinal),
                         AcceptsSse = string.Equals(acceptsSseText, "1", StringComparison.Ordinal),
+                        ExpectedProject = response.Headers[MCPBrokerProtocol.ProjectHeader],
                         Body = reader.ReadToEnd()
                     };
                 }
@@ -387,6 +391,7 @@ namespace Funplay.Editor.MCP.Server
             public bool IsRedelivery;
             public bool AcceptsSse;
             public string Body;
+            public string ExpectedProject;
         }
     }
 }
